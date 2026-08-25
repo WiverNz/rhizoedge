@@ -1,0 +1,43 @@
+# Line endings are LF in the repository and LF in the working tree.
+#
+# This is repo-local and explicit, so behaviour does not depend on each
+# developer's core.autocrlf setting. It matters here because shell scripts and
+# the Mosquitto configuration are consumed inside Linux containers, where CRLF
+# breaks both in confusing ways, and because CI runs on Linux while the primary
+# development machine is Windows.
+
+* text=auto eol=lf
+
+# Explicit for the file types this project actually contains.
+*.rs        text eol=lf
+*.toml      text eol=lf
+*.md        text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sql       text eol=lf
+*.conf      text eol=lf
+*.sh        text eol=lf
+*.lock      text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+.env.example    text eol=lf
+Dockerfile      text eol=lf
+
+# Windows-only scripts keep CRLF; some Windows tooling requires it.
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Binary — never touched, never diffed as text.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.pdf       binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary
+*.bin       binary
+*.elf       binary
+*.sqlite    binary

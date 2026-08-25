@@ -1,0 +1,272 @@
+# Local Development
+
+How to run, test, and debug Rhizo Edge on a developer machine. No hardware
+required for anything in this document.
+
+---
+
+## 1. Prerequisites
+
+| Tool | Version | Needed for |
+|---|---|---|
+| Rust | **1.98.0**, pinned by `rust-toolchain.toml` | everything |
+| Docker + Compose v2 | current | the full topology |
+| `sqlx-cli` | `cargo install sqlx-cli --no-default-features --features sqlite,postgres` | migrations, offline query cache |
+| `mosquitto-clients` | any | manual MQTT inspection |
+| `jq` | any | reading JSON logs |
+
+Firmware and UI toolchains are only needed from M9 and M12 respectively; see
+[ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md) and
+[ADR-009](../adr/009-ui-architecture-and-rust-web-stack.md).
+
+---
+
+## 2. First run
+
+```bash
+cp .env.example .env          # fill in MQTT and Postgres passwords
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+This starts Mosquitto, the device simulator, the edge controller, the cloud API,
+and PostgreSQL. After roughly a minute:
+
+```bash
+curl -s localhost:8080/api/v1/overview | jq
+curl -s localhost:8080/api/v1/devices  | jq
+curl -s localhost:8080/metrics | grep -E 'devices_online|pending_cloud_events'
+```
+
+---
+
+## 3. Running pieces individually
+
+Often faster than rebuilding a container:
+
+```bash
+# broker only
+docker compose -f deploy/docker-compose.yml up mosquitto
+
+# edge on the host, against the containerised broker
+RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 \
+RHIZO_EDGE__STORAGE__PATH=./data/edge.sqlite \
+RHIZO_EDGE__LOG__FORMAT=pretty \
+RHIZO_EDGE__CLOUD__ENABLED=false \
+cargo run -p edge-controller
+
+# simulator on the host, fast virtual time
+cargo run -p device-simulator -- \
+  --device-id plant-node-01 \
+  --broker mqtt://localhost:1883 \
+  --initial-moisture 42 \
+  --time-scale 600
+```
+
+`RHIZO_EDGE__CLOUD__ENABLED=false` is the default and is the normal way to work
+on M0–M6: the cloud is genuinely optional
+([ADR-003](../adr/003-edge-first-ownership-model.md)).
+
+---
+
+## 4. Watching MQTT directly
+
+The fastest way to understand what is happening:
+
+```bash
+# everything
+mosquitto_sub -h localhost -u rhizo-edge -P "$MQTT_PASSWORD" -t 'rhizo/v1/#' -v
+
+# commands only — the interesting ones
+mosquitto_sub -h localhost -u rhizo-edge -P "$MQTT_PASSWORD" \
+  -t 'rhizo/v1/devices/+/commands/#' -v
+
+# check retained state (should show status and config, and NOTHING on commands)
+mosquitto_sub -h localhost -u rhizo-edge -P "$MQTT_PASSWORD" \
+  -t 'rhizo/v1/#' -v --retained-only
+```
+
+That last command is worth running after any change to the publish paths. A
+retained message on a `commands/*` topic is a protocol violation and would cause
+repeated watering ([ADR-002](../adr/002-mqtt-topic-versioning-and-qos.md)).
+
+Injecting a command by hand, to test the device's independent veto:
+
+```bash
+mosquitto_pub -h localhost -u rhizo-edge -P "$MQTT_PASSWORD" \
+  -t 'rhizo/v1/devices/plant-node-01/commands/water' -q 1 -m '{
+    "v":1,"kind":"command.water","message_id":"018fd7b1-4c2e-7f10-a3b8-9d1e2f304050",
+    "device_id":"plant-node-01",
+    "data":{"command_id":"018fd7b1-4c2e-7f10-a3b8-9d1e2f304051",
+            "requested_ml":10000,"issued_at_ms":1756121500000,
+            "expires_at_ms":1756121620000}}'
+```
+
+The simulator must clamp or reject this (SAFETY-007). If it delivers 10 000 ml,
+that is the most serious class of bug this project has.
+
+---
+
+## 5. Inspecting the database
+
+```bash
+sqlite3 ./data/edge.sqlite
+
+.headers on
+.mode column
+
+-- latest readings
+SELECT device_id, datetime(received_at/1000,'unixepoch') AS t,
+       moisture_vwc, tank_level_percent, leak_detected
+FROM measurements ORDER BY received_at DESC LIMIT 10;
+
+-- what the machine did
+SELECT plant_id, mode, delivered_ml, status,
+       datetime(completed_at/1000,'unixepoch') AS done
+FROM watering_events ORDER BY completed_at DESC LIMIT 20;
+
+-- rolling 24h total (the SAFETY-006 query)
+SELECT plant_id, SUM(delivered_ml)
+FROM watering_events
+WHERE completed_at > (strftime('%s','now')*1000 - 86400000)
+  AND mode IN ('automatic','recommended')
+GROUP BY plant_id;
+
+-- current control state
+SELECT * FROM irrigation_state;
+
+-- outbox health
+SELECT status, COUNT(*) FROM pending_cloud_events GROUP BY status;
+```
+
+---
+
+## 6. Accelerated scenarios
+
+Real time makes a watering cycle take an hour. Don't wait:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
+  up --abort-on-container-exit --exit-code-from scenario-runner
+```
+
+A single scenario:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
+  run --rm scenario-runner --scenario scenario_cloud_outage_recovery
+```
+
+At `--time-scale 600`, a full multi-dose cycle with two 15-minute absorption
+waits finishes in about six seconds.
+
+---
+
+## 7. Injecting faults
+
+```bash
+# at startup
+cargo run -p device-simulator -- --device-id plant-node-01 --fault leak
+
+# at runtime
+curl -X POST localhost:9090/sim/fault -d '{"fault":"leak","enabled":true}'
+curl -X POST localhost:9090/sim/fault -d '{"fault":"tank-empty","enabled":true}'
+curl -X POST localhost:9090/sim/fault -d '{"fault":"clock-unsync","enabled":true}'
+```
+
+The full catalogue is in
+[simulator-strategy.md](simulator-strategy.md) §6.
+
+---
+
+## 8. Tests
+
+```bash
+cargo test --workspace --all-features           # everything
+cargo test -p rhizo-domain                      # fast, pure, the common loop
+cargo test safety_                              # the entire safety suite
+cargo test --test integration                   # needs a broker
+
+cargo test -p rhizo-domain -- --nocapture prop_  # property tests with output
+PROPTEST_CASES=10000 cargo test -p rhizo-domain safety_006   # hammer one invariant
+```
+
+`cargo test safety_` is the command that answers "are the invariants still
+enforced?". It should be reflexive before pushing anything that touches the
+domain crate.
+
+---
+
+## 9. Working with `sqlx` offline mode
+
+`sqlx::query!` verifies SQL against a real schema at compile time. CI has no
+database, so an offline cache is committed.
+
+After changing a query or a migration:
+
+```bash
+export DATABASE_URL="sqlite://$PWD/data/edge.sqlite"
+sqlx database create
+sqlx migrate run --source migrations/edge
+cargo sqlx prepare --workspace -- --all-targets
+git add .sqlx
+```
+
+A stale `.sqlx/` cache produces confusing compile errors. If a query "should
+compile" and does not, regenerate the cache first
+([ADR-004](../adr/004-sqlite-edge-persistence-model.md)).
+
+---
+
+## 10. Logs
+
+```bash
+RHIZO_EDGE__LOG__FORMAT=pretty RUST_LOG=debug cargo run -p edge-controller
+
+# JSON output, filtered
+docker compose logs -f edge-controller | jq 'select(.fields.plant_id == "monstera-01")'
+docker compose logs -f edge-controller | jq 'select(.level == "ERROR")'
+
+# per-module verbosity
+RUST_LOG=info,edge_controller::pipeline=trace,rumqttc=warn cargo run -p edge-controller
+```
+
+INFO should be quiet — a few lines per hour. If INFO is noisy, something is
+logging a per-message event at the wrong level
+([ADR-010](../adr/010-observability-strategy.md)).
+
+---
+
+## 11. Common problems
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Edge starts, no telemetry | broker auth failure | check `.env`; `docker compose logs mosquitto` |
+| `SQLITE_BUSY` under load | two writers | all writes go through the pipeline task ([ADR-004](../adr/004-sqlite-edge-persistence-model.md)) |
+| `sqlx` compile errors after a schema change | stale offline cache | `cargo sqlx prepare` (§9) |
+| Plant never leaves `Lock(StaleData)` | simulator not publishing, or scale mismatch | check `--sensors`; confirm edge and simulator use the same `--time-scale` |
+| Plant never waters despite dry soil | `auto_watering_enabled` is `false` | it defaults to false by design ([ADR-011](../adr/011-configuration-and-secrets-model.md)) |
+| Watering cycle never completes in a test | real time, not virtual | set `--time-scale` |
+| `pending_cloud_events` grows forever | `cloud.enabled=true` with no cloud running | set it to `false`, or start the cloud |
+| Device rejects every command | `clock_synced: false` | check SNTP reachability; in the simulator, clear the `clock-unsync` fault |
+
+---
+
+## 12. Before opening a change
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo run --manifest-path tools/docscheck/Cargo.toml
+docker compose -f deploy/docker-compose.yml config >/dev/null
+```
+
+If the change touches the MQTT contract, also:
+
+```bash
+cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+```
+
+That last command is what stops a `std`-only dependency from silently breaking
+the firmware build, which the default CI job does not exercise
+([ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md)).

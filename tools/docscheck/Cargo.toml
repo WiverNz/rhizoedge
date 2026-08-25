@@ -1,0 +1,15 @@
+[package]
+name = "rhizo-docscheck"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.0"
+description = "Planning-artefact consistency validator for Rhizo Edge"
+publish = false
+
+# Deliberately dependency-free: this must build and run offline, before the
+# project workspace exists, with nothing but a pinned rustc.
+[dependencies]
+
+[[bin]]
+name = "rhizo-docscheck"
+path = "src/main.rs"

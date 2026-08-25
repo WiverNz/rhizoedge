@@ -1,0 +1,88 @@
+# Issue M9-015 — M9 verification and exit criteria
+
+**Milestone:** M9 · **PRD:** [PRD 090](../../prd/090-esp32-rust-firmware.md) · **Depends on:** M9-001, M9-002, M9-003, M9-004, M9-005, M9-014, M9-007, M9-008, M9-009, M9-010, M9-011, M9-012, M9-013, M9-006
+
+## Context
+
+Final gate for M9. Board-dependent criteria are marked so the milestone can
+be substantially completed and reviewed before hardware arrives.
+
+## Goal
+
+Verify every PRD 090 acceptance criterion.
+
+## Scope
+
+- Host tests, compile verification, and the conformance test
+- With a board: HIL-1 and HIL-2
+- Update ADR-007, safety-invariants.md, ROADMAP.md; record the report
+
+## Non-goals
+
+- Real sensors or pump.
+
+## Dependencies
+
+- M9-001
+- M9-002
+- M9-003
+- M9-004
+- M9-005
+- M9-014
+- M9-007
+- M9-008
+- M9-009
+- M9-010
+- M9-011
+- M9-012
+- M9-013
+- M9-006
+
+## Implementation notes
+
+**HIL-1 is the gate that matters.** Put a multimeter on the pump driver input
+and confirm it never asserts across twenty resets, a watchdog reset, and ten
+mid-boot power cuts. If the pump so much as twitches, the hardware pull-down is
+wrong and no firmware correctness compensates.
+
+Everything else in M9 can be verified on the host.
+
+## Acceptance criteria
+
+- [ ] `cargo build --release` succeeds for the ESP target with no board.
+- [ ] The CI firmware job passes.
+- [ ] ADR-007's toolchain section has been executed and corrected.
+- [ ] Host tests cover boot safety, interrupted dose, dedup ring, and command validation.
+- [ ] The conformance test shows identical behaviour to the simulator.
+- [ ] **With a board:** it connects, appears online, publishes telemetry, applies config.
+- [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
+- [ ] **With a board:** an oversized command is clamped or rejected.
+- [ ] **With a board:** HIL-1 passes on a multimeter.
+- [ ] **With a board:** blocking SNTP refuses commands while telemetry continues.
+- [ ] Documentation updated; report recorded.
+
+## Verification
+
+```bash
+cd firmware/esp32-node && cargo build --release && cargo test
+espflash flash target/riscv32imc-esp-espidf/release/esp32-node --monitor
+```
+
+## Tests required
+
+- Host suite, conformance, and the HIL-1/HIL-2 checklists.
+
+## Documentation impact
+
+- ADR-007.
+- safety-invariants.md.
+- ROADMAP.md.
+- hil-runs record.
+- Milestone report.
+
+## Files likely affected
+
+```text
+ROADMAP.md
+docs/testing/hil-runs/
+```
