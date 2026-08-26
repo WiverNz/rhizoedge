@@ -1,3 +1,5 @@
+![Rhizo Edge — a seedling with soil sensor, drip emitter and wireless link, beside the Rhizo Edge wordmark](preview.png)
+
 # Rhizo Edge
 
 An **offline-first Rust platform for plant monitoring and fail-safe automated
