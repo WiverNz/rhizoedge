@@ -49,14 +49,16 @@ tests added, commands run, results, known limitations, next milestone.
 
 ## Acceptance criteria
 
-- [ ] Fresh clone; all five gate commands pass.
-- [ ] `docker compose up mosquitto` works from the fresh clone after running the passwd script.
-- [ ] Anonymous MQTT is refused; cross-device publish is refused.
-- [ ] Invalid config exits non-zero naming the key.
-- [ ] `Debug` on the config shows `[redacted]`.
-- [ ] CI is green.
-- [ ] ROADMAP.md M0 status is DONE.
-- [ ] The milestone report is recorded.
+- [x] Fresh clone; all five gate commands pass.
+- [x] `docker compose up mosquitto` works from the fresh clone after running the passwd script.
+- [x] Anonymous MQTT is refused; cross-device publish is refused.
+- [x] Invalid config exits non-zero naming the key.
+- [x] `Debug` on the config shows `[redacted]`.
+- [ ] CI is green. — *the five gate commands are green from a fresh checkout and
+      `actionlint` passes on the workflow; a GitHub run has not been observed
+      because the working tree is uncommitted by request.*
+- [x] ROADMAP.md M0 status is DONE.
+- [x] The milestone report is recorded.
 
 ## Verification
 

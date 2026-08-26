@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** not started.
+**Planning status:** complete. **Implementation status:** M0 complete; M1 next.
 **Host toolchain:** Rust 1.98.0 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md)).
 
 - Source of truth for *what* each milestone builds: [docs/prd/](docs/prd/)
@@ -17,7 +17,7 @@ be trusted with a real plant.
 
 | ID | Name | Objective | Depends on | Issues | Status |
 |---|---|---|---|---|---|
-| M0 | Foundation and Engineering Baseline | A clean Rust repository whose tooling, lint, test, container, and observability baseline every later milestone inherits | — | 13 | **READY** |
+| M0 | Foundation and Engineering Baseline | A clean Rust repository whose tooling, lint, test, container, and observability baseline every later milestone inherits | — | 13 | **DONE** |
 | M1 | Domain Model and MQTT Protocol | The shared wire contract and pure domain types that let simulator, edge, and firmware be written independently | M0 | 14 | **READY** |
 | M2 | Device Simulator | A host device indistinguishable from firmware at the protocol level, with fault injection and virtual time | M1 | 15 | **READY** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 16 | **READY** |
@@ -55,7 +55,7 @@ on physical hardware and on ADR-007's toolchain being executed on a real machine
 
 ## 2. Milestone detail
 
-### M0 — Foundation and Engineering Baseline · READY
+### M0 — Foundation and Engineering Baseline · DONE
 
 **Objective.** Establish workspace, toolchain, lint policy, configuration,
 observability, containers, and CI so that every later milestone adds behaviour
@@ -555,8 +555,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
-cargo run --manifest-path tools/docscheck/Cargo.toml   # planning-artefact validator
-# (becomes `cargo run -p rhizo-docscheck` once M0-011 adopts it into the workspace)
+cargo run -p rhizo-docscheck                      # planning-artefact validator
 ```
 
 ### Definition of milestone completion

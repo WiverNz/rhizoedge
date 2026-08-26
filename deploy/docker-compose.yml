@@ -1,0 +1,112 @@
+# Rhizo Edge — local software topology.
+#
+# M0 establishes the file with the services that actually exist. Later
+# milestones add their own service rather than restructuring this one, and the
+# services below that are commented out name the milestone that turns them on.
+#
+# Commented-out services keep this file honest: it always reflects what really
+# runs. A stanza referring to a Dockerfile nobody has written yet would make
+# `docker compose config` pass while `docker compose up` failed, which is the
+# worst of both.
+#
+# First run:
+#
+#     cp .env.example .env                      # fill in the passwords
+#     ./scripts/gen-mosquitto-passwd.sh         # generates the broker's passwd
+#     docker compose -f deploy/docker-compose.yml up -d mosquitto
+#
+# No secret appears in this file. Credentials come from `.env` (gitignored) and
+# from the generated `deploy/mosquitto/passwd` (also gitignored).
+
+name: rhizo-edge
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: rhizo-mosquitto
+    restart: unless-stopped
+    ports:
+      # Published for development only: the simulator and a developer's
+      # `mosquitto_sub` both run on the host. A home deployment keeps the
+      # broker on the internal network.
+      - "1883:1883"
+    volumes:
+      # Read-only: the broker never writes its own configuration, and the
+      # passwd file is generated on the host by scripts/gen-mosquitto-passwd.sh.
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/aclfile:/mosquitto/config/aclfile:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+    networks:
+      - rhizo
+    healthcheck:
+      # An authenticated QoS 1 publish, not a port check. The broker accepts
+      # TCP connections well before it has loaded its password and ACL files,
+      # so a port check would report healthy while every client was being
+      # rejected. A QoS 1 publish only succeeds once connection, authentication
+      # AND the ACL have all worked, because it waits for the PUBACK.
+      #
+      # The topic is inside `rhizo/v1/` because that is what the edge account
+      # is permitted (deploy/mosquitto/aclfile), and outside
+      # `rhizo/v1/devices/` so it never reaches the edge's own subscription.
+      #
+      # `$$` escapes the variable for Compose so the container's shell expands
+      # it rather than Compose interpolating it here.
+      test:
+        - CMD-SHELL
+        - >-
+          mosquitto_pub -h localhost -p 1883
+          -u "$$MQTT_USERNAME" -P "$$MQTT_PASSWORD"
+          -t 'rhizo/v1/health/broker' -m 'ok' -q 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    env_file:
+      # Supplies MQTT_USERNAME and MQTT_PASSWORD to the healthcheck. The broker
+      # itself authenticates from the mounted passwd file and never reads these.
+      #
+      # `required: false` so `docker compose config` — a CI gate — is green on
+      # a fresh clone, where `.env` does not exist because it is gitignored.
+      # Nothing is silently degraded by its absence: without `.env` there is
+      # also no `deploy/mosquitto/passwd`, and the broker will not start at all
+      # until `scripts/gen-mosquitto-passwd.sh` has been run.
+      - path: ../.env
+        required: false
+
+  # --------------------------------------------------------------------------
+  # Services below are defined by later milestones. Each is uncommented by the
+  # issue that first builds its image — not before, so that `up` and `config`
+  # never disagree about what exists.
+  #
+  # edge-controller — M8-001 (Dockerfile), M8-002 (topology)
+  #   build:
+  #     context: ..
+  #     dockerfile: deploy/edge-controller.Dockerfile
+  #   depends_on:
+  #     mosquitto:
+  #       condition: service_healthy
+  #   environment:
+  #     RHIZO_EDGE__MQTT__BROKER_URL: mqtt://mosquitto:1883
+  #     RHIZO_EDGE__MQTT__PASSWORD: ${MQTT_PASSWORD}
+  #     RHIZO_EDGE__STORAGE__PATH: /var/lib/rhizo/edge.sqlite
+  #   volumes:
+  #     - edge-data:/var/lib/rhizo
+  #   ports:
+  #     - "8080:8080"
+  #
+  # device-simulator — M2 (the simulator), M8-002 (topology)
+  #   Scalable: one instance per device id.
+  #
+  # cloud-api — M7 (the service), M8-002 (topology)
+  #
+  # postgres — M7-002. Not started before there is a schema to put in it.
+
+networks:
+  rhizo:
+    driver: bridge
+
+volumes:
+  # Broker persistence, so a QoS 1 message queued for a sleeping device
+  # survives a broker restart (ADR-002). Survives `down`; removed by `down -v`.
+  mosquitto-data:

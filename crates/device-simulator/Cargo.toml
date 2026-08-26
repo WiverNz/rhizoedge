@@ -1,0 +1,14 @@
+[package]
+name = "device-simulator"
+description = "Rhizo Edge reference device: protocol-identical host simulator with fault injection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

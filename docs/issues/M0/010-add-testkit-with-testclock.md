@@ -40,11 +40,11 @@ have it implement the trait in M1-012. Avoid inventing a second trait.
 
 ## Acceptance criteria
 
-- [ ] `TestClock::new(t).now() == t`.
-- [ ] `advance(d)` moves time forward by exactly `d`.
-- [ ] `set` works backwards as well as forwards (clock-step tests need it).
-- [ ] A clone observes the same time as the original.
-- [ ] Concurrent reads from several tasks are consistent.
+- [x] `TestClock::new(t).now() == t`.
+- [x] `advance(d)` moves time forward by exactly `d`.
+- [x] `set` works backwards as well as forwards (clock-step tests need it).
+- [x] A clone observes the same time as the original.
+- [x] Concurrent reads from several tasks are consistent.
 
 ## Verification
 

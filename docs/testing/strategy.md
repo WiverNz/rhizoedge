@@ -240,20 +240,20 @@ Every change:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi  # from M1-011
 docker compose -f deploy/docker-compose.yml config
-cargo run --manifest-path tools/docscheck/Cargo.toml
+cargo run -p rhizo-docscheck
 ```
 
 Additional jobs:
 
 | Job | Trigger | Blocking |
 |---|---|---|
-| integration tests (with broker) | every change | yes |
+| integration tests (with broker) | every change | yes, from M3 |
 | end-to-end scenarios | every change to `crates/**` or `deploy/**` | yes, from M8 |
 | firmware build (`riscv32imc-esp-espidf`) | `firmware/**` or `crates/mqtt-contract/**` | yes, from M9 |
 | UI build (wasm + Tauri) | `ui/**` | yes, from M12 |
-| Docker image build | every change | yes |
+| Docker image build | every change | yes, from M8 |
 
 **No milestone is complete while its acceptance tests are red.** This is stated
 in every milestone's exit criteria and is the only definition of "done" the

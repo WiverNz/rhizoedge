@@ -44,12 +44,12 @@ not yet cover — do not weaken the `eol=lf` default.
 
 ## Acceptance criteria
 
-- [ ] The directory tree exists and is committed (empty dirs carry a `.gitkeep`).
-- [ ] `.gitignore` excludes `target/`, `*.sqlite*`, `.env`, `deploy/mosquitto/passwd`, `ui/**/dist/`, `firmware/**/.embuild/`.
-- [ ] `git ls-files --eol` reports `i/lf w/lf` for every tracked file.
-- [ ] `git add .` produces no CRLF/LF warnings.
-- [ ] `.env.example` lists every variable with a placeholder and no real value.
-- [ ] `git status` is clean after a build produces artefacts.
+- [x] The directory tree exists and is committed (empty dirs carry a `.gitkeep`).
+- [x] `.gitignore` excludes `target/`, `*.sqlite*`, `.env`, `deploy/mosquitto/passwd`, `ui/**/dist/`, `firmware/**/.embuild/`.
+- [x] `git ls-files --eol` reports `i/lf w/lf` for every tracked file.
+- [x] `git add .` produces no CRLF/LF warnings.
+- [x] `.env.example` lists every variable with a placeholder and no real value.
+- [x] `git status` is clean after a build produces artefacts.
 
 ## Verification
 

@@ -40,11 +40,11 @@ startup logs readable.
 
 ## Acceptance criteria
 
-- [ ] `docker compose -f deploy/docker-compose.yml config` exits 0.
-- [ ] `docker compose up mosquitto` starts a healthy broker.
-- [ ] Volumes persist across `down`/`up` without `-v`.
-- [ ] `down -v` resets cleanly.
-- [ ] No secret appears literally in the Compose file.
+- [x] `docker compose -f deploy/docker-compose.yml config` exits 0.
+- [x] `docker compose up mosquitto` starts a healthy broker.
+- [x] Volumes persist across `down`/`up` without `-v`.
+- [x] `down -v` resets cleanly.
+- [x] No secret appears literally in the Compose file.
 
 ## Verification
 

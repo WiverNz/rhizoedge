@@ -44,11 +44,11 @@ the ESP-IDF build for every developer, including those who never touch hardware.
 
 ## Acceptance criteria
 
-- [ ] `cargo build --workspace` succeeds.
-- [ ] `cargo test --workspace` succeeds (no tests yet, but the command works).
-- [ ] Every dependency version appears exactly once, in `[workspace.dependencies]`.
-- [ ] `cargo tree -d` reports no duplicate versions of a shared dependency.
-- [ ] `firmware/` and `ui/` are excluded and their absence does not break the build.
+- [x] `cargo build --workspace` succeeds.
+- [x] `cargo test --workspace` succeeds (no tests yet, but the command works).
+- [x] Every dependency version appears exactly once, in `[workspace.dependencies]`.
+- [x] `cargo tree -d` reports no duplicate versions of a shared dependency.
+- [x] `firmware/` and `ui/` are excluded and their absence does not break the build.
 
 ## Verification
 

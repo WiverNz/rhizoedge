@@ -1,6 +1,6 @@
 # PRD 000 — Platform Foundation
 
-**Milestone:** M0 · **Status:** PLANNED · **Depends on:** nothing
+**Milestone:** M0 · **Status:** DELIVERED · **Depends on:** nothing
 
 ## Summary
 
@@ -147,11 +147,13 @@ docker compose -f deploy/docker-compose.yml config               # exit 0
 cargo run --manifest-path tools/docscheck/Cargo.toml                                       # exit 0
 ```
 
-- [ ] Mosquitto starts and **rejects** an anonymous connection.
-- [ ] `cargo run -p edge-controller -- --config missing.toml` exits non-zero with
+- [x] Mosquitto starts and **rejects** an anonymous connection.
+- [x] `cargo run -p edge-controller -- --config missing.toml` exits non-zero with
       a specific message.
-- [ ] A config containing `password` in the TOML logs a warning and is ignored.
-- [ ] CI is green on a clean checkout with no local state.
+- [x] A config containing `password` in the TOML logs a warning and is ignored.
+- [ ] CI is green on a clean checkout with no local state. — *all five commands
+      verified green from a fresh checkout of the M0 tree, and `actionlint`
+      passes on the workflow; a GitHub Actions run has not been observed.*
 
 ## Dependencies
 
@@ -159,10 +161,14 @@ None. M0 is the root of the dependency graph.
 
 ## Open questions
 
-1. **`figment` vs `config` for layered configuration.** Resolved during M0-005
-   by comparing error message quality for a malformed key — a misconfigured edge
-   that starts with silently wrong values is worse than one that refuses to
-   start. Not a blocking question; either works.
+1. **`figment` vs `config` for layered configuration.** **Resolved in M0-005:
+   `figment`.** Both name the offending key in the message. `figment` was
+   chosen for two things `config` does not offer: a *structured* key path
+   (`Error::path`), so `ConfigError::key` is built from data rather than by
+   scraping prose; and layer attribution, so the message says which of the four
+   layers supplied the bad value — for environment variables as well as files.
+   The full comparison is recorded in the module documentation of
+   `crates/edge-controller/src/config/mod.rs`.
 2. **Exact pinned Rust version.** Resolved: **1.98.0**, recorded in
    `rust-toolchain.toml`. The firmware workspace may differ; see
    [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md).

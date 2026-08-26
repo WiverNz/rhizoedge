@@ -1,0 +1,7 @@
+# Workspace clippy configuration.
+#
+# `disallowed-methods` is deliberately empty here. M1-013 populates it with the
+# direct clock accessors that `rhizo-domain` must never call
+# (ADR-001 §Risks, ADR-013) — that ban cannot be written until the domain crate
+# has content to defend.
+disallowed-methods = []

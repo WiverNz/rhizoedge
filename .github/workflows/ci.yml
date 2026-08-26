@@ -1,0 +1,115 @@
+# Rhizo Edge — the gate.
+#
+# Runs the five commands from PRD 000's acceptance criteria on every push and
+# every pull request. A gate that runs only on a developer's machine is a gate
+# that eventually stops running.
+#
+# This workflow reflects the repository as it is today, not as it will be. Jobs
+# for the milestones still to come are listed at the bottom with the issue that
+# adds them; a job referring to a crate that does not exist yet would fail for a
+# reason that has nothing to do with the change being tested.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A new push to the same branch makes the previous run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI builds are throwaway; incremental artefacts only make the cache larger.
+  CARGO_INCREMENTAL: 0
+  # A global `RUSTFLAGS: -D warnings` is deliberately NOT set: it applies to
+  # dependencies as well, so a warning in someone else's crate would fail this
+  # repository's build for a reason nobody here can fix. The clippy step below
+  # passes `-D warnings` explicitly, which applies to workspace members only —
+  # and clippy runs the rustc lints too, so the workspace lint table
+  # (`missing_docs`, `unwrap_used`, …) is still enforced as errors.
+
+jobs:
+  # The documentation validator first, and on its own. It is dependency-free,
+  # needs no network and no registry access, and takes seconds — so a broken
+  # cross-reference is reported before anyone waits on a compile.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No toolchain action and no cache: `rust-toolchain.toml` pins the
+      # version, and the runner's preinstalled rustup honours it.
+      - name: Validate planning artefacts
+        run: cargo run -p rhizo-docscheck
+
+  rust:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs exactly what rust-toolchain.toml pins. The version lives in
+      # that file and nowhere else, so a bump is one deliberate edit rather
+      # than a hunt through the CI config.
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      # Keyed on the lockfile and the toolchain version together: a stale
+      # cache after a toolchain bump produces failures that look like code
+      # problems and are not.
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: >-
+            ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml') }}-
+
+      # First, because it is the cheapest check and a formatting failure makes
+      # every other diff in the run noisy.
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
+  compose:
+    name: compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Deliberately no `.env`. The file is gitignored, so this asserts what a
+      # fresh clone can do — the property M0's exit criteria are actually
+      # about.
+      - name: Validate the Compose topology
+        run: docker compose -f deploy/docker-compose.yml config
+
+  # ---------------------------------------------------------------------------
+  # Jobs added by later milestones. Listed so their absence is visible rather
+  # than merely unnoticed:
+  #
+  #   no_std contract build    M1-011  cargo build -p rhizo-mqtt-contract
+  #                                      --no-default-features
+  #                                      --target thumbv7em-none-eabi
+  #   integration (broker)     M3
+  #   end-to-end               M8-014
+  #   firmware                 M9-002
+  #   UI                       M12
+  #   release                  M13

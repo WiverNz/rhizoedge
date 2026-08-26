@@ -1,0 +1,28 @@
+# Rhizo Edge — Mosquitto access control (ADR-012 §Credentials).
+#
+# Order matters in this file: Mosquitto applies `user` blocks to that user and
+# `pattern` rules to everyone. A device gets ONLY the pattern rules.
+
+# ---------------------------------------------------------------- the edge
+# The control plane reads every device's traffic and writes commands and
+# retained config to every device's subtree. It is the only account with a
+# fleet-wide view, and it is not a device.
+user rhizo-edge
+topic readwrite rhizo/v1/#
+
+# --------------------------------------------------------------- every device
+# The line that makes device identity a real boundary rather than a convention.
+#
+# `%u` is substituted with the *authenticated* username, and ADR-012 makes the
+# username the `device_id`. A device authenticated as `plant-node-01` therefore
+# cannot publish to, or subscribe to, `rhizo/v1/devices/plant-node-02/...` —
+# the broker rejects it, with no cooperation required from the device.
+#
+# This is also why ADR-002 puts `device_id` before the message kind in the
+# topic tree: `rhizo/v1/devices/{id}/telemetry/soil` can be confined with one
+# rule, while `rhizo/v1/telemetry/soil/{id}` could not.
+#
+# Nothing else is granted. A device has no reason to see the fleet, and a
+# compromised or simply buggy one must not be able to impersonate its
+# neighbour or watch another plant's telemetry.
+pattern readwrite rhizo/v1/devices/%u/#

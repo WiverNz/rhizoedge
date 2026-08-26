@@ -1,0 +1,57 @@
+# Rhizo Edge — edge instance configuration (layer L2).
+#
+# Every value here is the built-in default, written out so a deployer can see
+# the complete shape of the configuration in one place. Delete anything you do
+# not want to override; a missing file is fine, and so is a partial one.
+#
+# Precedence, later wins:
+#
+#     built-in defaults -> this file -> RHIZO_EDGE__* -> command-line flags
+#
+# Nested keys become environment variables by uppercasing and joining with a
+# double underscore: `mqtt.broker_url` is `RHIZO_EDGE__MQTT__BROKER_URL`.
+#
+# NO SECRETS IN THIS FILE. A `password`, `token`, or `secret` key here is
+# stripped at startup and reported as a warning — config files get pasted into
+# bug reports, environment variables do not (ADR-011 §Secrets). Set
+# `RHIZO_EDGE__MQTT__PASSWORD` instead; `.env.example` documents it.
+
+# Stable identity for this edge; the cloud partition key. Changing it after a
+# deployment exists orphans that deployment's history.
+edge_id = "home-01"
+
+[mqtt]
+broker_url = "mqtt://localhost:1883"
+client_id  = "rhizo-edge-home-01"
+# The edge's own broker account. ADR-012 gives it `readwrite rhizo/v1/#`,
+# separate from every device's own per-device account.
+username   = "rhizo-edge"
+
+[storage]
+# The SQLite database. Its schema is an M3 deliverable; M0 only records where
+# it will live.
+path = "./data/edge.sqlite"
+
+[control]
+# How often every plant is re-evaluated.
+tick_interval_seconds = 30
+# How long an issued watering command stays valid (SAFETY-002). Must be at
+# least tick_interval_seconds, or a command expires before the loop that
+# issued it runs again.
+command_ttl_seconds   = 120
+
+[cloud]
+# Opt-in. An edge with the cloud disabled is fully functional (SAFETY-008).
+enabled  = false
+base_url = "http://localhost:8081"
+
+[api]
+# Loopback by default. V1 has no authentication on this API, so reachability
+# is the entire access-control story — widen it deliberately or not at all.
+bind = "127.0.0.1:8080"
+
+[log]
+# A RUST_LOG-compatible directive. `RUST_LOG` overrides it when set.
+level  = "info"
+# `json` in production, `pretty` in development.
+format = "json"

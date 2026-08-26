@@ -1,15 +1,21 @@
 [package]
 name = "rhizo-docscheck"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.98.0"
 description = "Planning-artefact consistency validator for Rhizo Edge"
-publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
 
-# Deliberately dependency-free: this must build and run offline, before the
-# project workspace exists, with nothing but a pinned rustc.
+# Deliberately dependency-free: this must build and run in CI with no network
+# and no registry access, before any other crate compiles. It validates
+# planning artefacts and is never shipped or depended on by a runtime crate.
 [dependencies]
 
 [[bin]]
 name = "rhizo-docscheck"
 path = "src/main.rs"
+
+[lints]
+workspace = true

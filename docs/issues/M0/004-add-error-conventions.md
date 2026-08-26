@@ -42,9 +42,9 @@ it is the entire point.
 
 ## Acceptance criteria
 
-- [ ] `FailureKind` and `Classify` exist and are documented.
-- [ ] The doc comment states the no-catch-all rule explicitly.
-- [ ] The convention (thiserror vs anyhow) is documented in the crate docs.
+- [x] `FailureKind` and `Classify` exist and are documented.
+- [x] The doc comment states the no-catch-all rule explicitly.
+- [x] The convention (thiserror vs anyhow) is documented in the crate docs.
 
 ## Verification
 

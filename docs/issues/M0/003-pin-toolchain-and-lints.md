@@ -42,11 +42,11 @@ pins its own toolchain and is unaffected by this file
 
 ## Acceptance criteria
 
-- [ ] `rust-toolchain.toml` names exactly `1.98.0`, not `stable`.
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` exits 0.
-- [ ] An `unwrap()` added to a library crate fails the clippy run.
-- [ ] The same `unwrap()` in a `#[cfg(test)]` module does not fail.
-- [ ] `cargo fmt --all --check` exits 0.
+- [x] `rust-toolchain.toml` names exactly `1.98.0`, not `stable`.
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` exits 0.
+- [x] An `unwrap()` added to a library crate fails the clippy run.
+- [x] The same `unwrap()` in a `#[cfg(test)]` module does not fail.
+- [x] `cargo fmt --all --check` exits 0.
 
 ## Verification
 

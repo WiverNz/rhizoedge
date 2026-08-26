@@ -41,11 +41,11 @@ explicit that metrics are added when a real question needs them.
 
 ## Acceptance criteria
 
-- [ ] JSON output parses as JSON and includes level, target, and fields.
-- [ ] Pretty output is readable in a terminal.
-- [ ] `render_prometheus()` output parses as valid exposition format.
-- [ ] `RUST_LOG=debug` raises verbosity.
-- [ ] A structured field appears as a field, not interpolated into the message.
+- [x] JSON output parses as JSON and includes level, target, and fields.
+- [x] Pretty output is readable in a terminal.
+- [x] `render_prometheus()` output parses as valid exposition format.
+- [x] `RUST_LOG=debug` raises verbosity.
+- [x] A structured field appears as a field, not interpolated into the message.
 
 ## Verification
 

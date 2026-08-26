@@ -1,0 +1,9 @@
+# Explicit rather than implied: `cargo fmt --all --check` is a CI gate, so the
+# settings it enforces are stated rather than inherited from a default that
+# could shift between releases.
+
+edition = "2024"
+max_width = 100
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true

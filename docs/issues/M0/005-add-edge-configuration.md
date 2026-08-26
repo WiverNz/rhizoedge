@@ -46,13 +46,13 @@ Defaults: `cloud.enabled = false`, `api.bind = 127.0.0.1:8080`,
 
 ## Acceptance criteria
 
-- [ ] Defaults load with no file and no env.
-- [ ] A TOML file overrides defaults; env overrides the file; flags override env.
-- [ ] `RHIZO_EDGE__MQTT__BROKER_URL` reaches `config.mqtt.broker_url`.
-- [ ] An invalid value exits non-zero naming the key.
-- [ ] `format!("{:?}", config)` contains `[redacted]` and no secret.
-- [ ] A `password` key in the TOML logs a warning and is ignored.
-- [ ] `cloud.enabled` defaults to `false`.
+- [x] Defaults load with no file and no env.
+- [x] A TOML file overrides defaults; env overrides the file; flags override env.
+- [x] `RHIZO_EDGE__MQTT__BROKER_URL` reaches `config.mqtt.broker_url`.
+- [x] An invalid value exits non-zero naming the key.
+- [x] `format!("{:?}", config)` contains `[redacted]` and no secret.
+- [x] A `password` key in the TOML logs a warning and is ignored.
+- [x] `cloud.enabled` defaults to `false`.
 
 ## Verification
 

@@ -23,13 +23,49 @@ Firmware and UI toolchains are only needed from M9 and M12 respectively; see
 
 ## 2. First run
 
+Three steps, and the middle one is the easy one to forget: the broker refuses
+to start without a password file, and that file is generated rather than
+committed.
+
 ```bash
-cp .env.example .env          # fill in MQTT and Postgres passwords
-docker compose -f deploy/docker-compose.yml up --build
+cp .env.example .env               # replace every change-me-* placeholder
+./scripts/gen-mosquitto-passwd.sh  # generates deploy/mosquitto/passwd
+docker compose -f deploy/docker-compose.yml up -d mosquitto
 ```
 
-This starts Mosquitto, the device simulator, the edge controller, the cloud API,
-and PostgreSQL. After roughly a minute:
+`gen-mosquitto-passwd.sh` creates one broker account per entry in `DEVICE_IDS`
+plus the edge's own, and refuses to run while any password is still a
+placeholder. It runs `mosquitto_passwd` inside the same `eclipse-mosquitto:2`
+image the broker uses, so nothing needs to be installed locally. Re-running it
+is safe — the file is rebuilt from `.env` each time.
+
+Check the broker is up, authenticating, and enforcing its ACLs:
+
+```bash
+docker compose -f deploy/docker-compose.yml ps        # expect (healthy)
+./scripts/verify-mosquitto-acls.sh                    # expect 8 passed, 0 failed
+```
+
+`verify-mosquitto-acls.sh` asserts what
+[ADR-012](../adr/012-device-identity-and-provisioning.md) promises: anonymous
+and wrong-password connections are refused, a device can use its own
+`rhizo/v1/devices/{device_id}/#` subtree, and it is denied every other
+device's. Configuring an ACL and enforcing one are different things, and a
+typo in the pattern leaves a broker that starts cleanly and protects nothing.
+
+Then run the edge against it:
+
+```bash
+RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 \
+RHIZO_EDGE__LOG__FORMAT=pretty \
+cargo run -p edge-controller
+```
+
+**As of M0 that is the whole topology.** The simulator, the edge's ingestion
+and API, the cloud API, and PostgreSQL arrive in M2, M3–M4, and M7; their
+Compose services are written out but commented in
+`deploy/docker-compose.yml`, each naming the issue that turns it on. Once M8
+completes the topology, `up --build` starts everything and:
 
 ```bash
 curl -s localhost:8080/api/v1/overview | jq
@@ -257,7 +293,7 @@ logging a per-message event at the wrong level
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo run --manifest-path tools/docscheck/Cargo.toml
+cargo run -p rhizo-docscheck
 docker compose -f deploy/docker-compose.yml config >/dev/null
 ```
 

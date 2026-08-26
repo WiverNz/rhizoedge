@@ -44,12 +44,14 @@ every other diff noisy.
 
 ## Acceptance criteria
 
-- [ ] The workflow runs on push and pull request.
-- [ ] All five gate commands run and must pass.
-- [ ] A formatting violation fails CI.
-- [ ] A clippy warning fails CI.
-- [ ] A failing test fails CI.
-- [ ] Caching measurably reduces the second run's time.
+- [ ] The workflow runs on push and pull request. — *declared in `.github/workflows/ci.yml`
+      and validated with `actionlint` (clean); needs a real GitHub run to observe.*
+- [x] All five gate commands run and must pass.
+- [x] A formatting violation fails CI.
+- [x] A clippy warning fails CI.
+- [x] A failing test fails CI.
+- [ ] Caching measurably reduces the second run's time. — *needs two GitHub runs
+      to compare; cannot be observed locally.*
 
 ## Verification
 

@@ -1,7 +1,7 @@
 # Rhizo Edge — Documentation Index
 
 Everything needed to implement Rhizo Edge without rediscovering the
-architecture. **Planning is complete; implementation has not started.**
+architecture. **Planning is complete; implementation is in progress (M0).**
 
 **If you are here to write code, read these four, in this order:**
 
@@ -140,7 +140,7 @@ order can safely be widened into parallel work.
 ## Validation
 
 ```bash
-cargo run --manifest-path tools/docscheck/Cargo.toml
+cargo run -p rhizo-docscheck
 ```
 
 `rhizo-docscheck` is a dependency-free Rust tool that verifies the planning
@@ -149,8 +149,9 @@ unique, every `M*-*` / `ADR-*` / `PRD *` / `SAFETY-*` / `SCEN-*` reference
 resolves, relative links resolve, the issue dependency graph is acyclic, and
 issue numbering is a valid execution order.
 
-It is planning tooling, not a product crate. M0-011 adopts it into the
-workspace and the CI gate.
+It is planning tooling, not a product crate — never shipped, and never a
+dependency of a runtime crate. M0-011 adopted it into the root workspace, which
+is why the command above is `-p rhizo-docscheck` rather than a `--manifest-path`.
 
 ## Conventions
 

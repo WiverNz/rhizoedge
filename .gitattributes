@@ -24,6 +24,13 @@
 .env.example    text eol=lf
 Dockerfile      text eol=lf
 
+# Extensionless files consumed inside Linux containers. Covered by the
+# `* text=auto eol=lf` default above, but stated because CRLF in either of
+# these produces a broker that starts and then behaves as if the file were
+# empty.
+aclfile         text eol=lf
+passwd          text eol=lf
+
 # Windows-only scripts keep CRLF; some Windows tooling requires it.
 *.ps1       text eol=crlf
 *.bat       text eol=crlf

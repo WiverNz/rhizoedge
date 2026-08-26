@@ -61,7 +61,10 @@ struct Report {
 
 impl Report {
     fn new() -> Self {
-        Report { failures: Vec::new(), checks: 0 }
+        Report {
+            failures: Vec::new(),
+            checks: 0,
+        }
     }
     fn check(&mut self, ok: bool, msg: impl Into<String>) {
         self.checks += 1;
@@ -117,8 +120,12 @@ fn main() {
 }
 
 fn repo_root() -> PathBuf {
-    // Run from the repository root, or from tools/docscheck via --manifest-path.
-    let cwd = std::env::current_dir().expect("cwd");
+    // Run from the repository root, or from a subdirectory such as
+    // tools/docscheck when invoked via --manifest-path.
+    //
+    // A working directory that cannot be read is not worth panicking over: the
+    // repository root is more usefully looked for from `.` than not at all.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     if cwd.join("docs").is_dir() && cwd.join("ROADMAP.md").is_file() {
         return cwd;
     }
@@ -136,7 +143,7 @@ fn repo_root() -> PathBuf {
 
 fn collect_markdown(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for top in ["ROADMAP.md", "README.md"] {
+    for top in ["ROADMAP.md", "README.md", "CLAUDE.md"] {
         let p = root.join(top);
         if p.is_file() {
             out.push(p);
@@ -148,7 +155,9 @@ fn collect_markdown(root: &Path) -> Vec<PathBuf> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -171,7 +180,11 @@ fn read(p: &Path) -> String {
 }
 
 fn rel(root: &Path, p: &Path) -> String {
-    p.strip_prefix(root).unwrap_or(p).display().to_string().replace('\\', "/")
+    p.strip_prefix(root)
+        .unwrap_or(p)
+        .display()
+        .to_string()
+        .replace('\\', "/")
 }
 
 /// Extract three-digit ids following a prefix, e.g. "SAFETY-" -> {"001", ...}.
@@ -207,19 +220,25 @@ fn check_issues(root: &Path, r: &mut Report) -> BTreeMap<usize, BTreeSet<String>
         }
         let mut nums = BTreeSet::new();
         let mut seen: BTreeMap<String, String> = BTreeMap::new();
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if !name.ends_with(".md") {
                 continue;
             }
             if name.len() < 4 || !name[..3].chars().all(|c| c.is_ascii_digit()) {
-                r.fail(format!("M{m}: issue file '{name}' does not start with a 3-digit id"));
+                r.fail(format!(
+                    "M{m}: issue file '{name}' does not start with a 3-digit id"
+                ));
                 continue;
             }
             let num = name[..3].to_string();
             if let Some(prev) = seen.insert(num.clone(), name.clone()) {
-                r.fail(format!("M{m}: duplicate issue id {num} ({prev} and {name})"));
+                r.fail(format!(
+                    "M{m}: duplicate issue id {num} ({prev} and {name})"
+                ));
             }
             nums.insert(num);
         }
@@ -243,7 +262,9 @@ fn check_adrs(root: &Path, r: &mut Report) -> BTreeSet<String> {
             continue;
         }
         if name.len() < 4 || !name[..3].chars().all(|c| c.is_ascii_digit()) {
-            r.fail(format!("ADR file '{name}' does not start with a 3-digit id"));
+            r.fail(format!(
+                "ADR file '{name}' does not start with a 3-digit id"
+            ));
             continue;
         }
         let id = name[..3].to_string();
@@ -274,7 +295,9 @@ fn check_prds(root: &Path, r: &mut Report) -> BTreeSet<String> {
             continue;
         }
         if name.len() < 4 || !name[..3].chars().all(|c| c.is_ascii_digit()) {
-            r.fail(format!("PRD file '{name}' does not start with a 3-digit id"));
+            r.fail(format!(
+                "PRD file '{name}' does not start with a 3-digit id"
+            ));
             continue;
         }
         let id = name[..3].to_string();
@@ -286,7 +309,10 @@ fn check_prds(root: &Path, r: &mut Report) -> BTreeSet<String> {
     // One PRD per milestone: 000, 010, ... 140.
     for m in 0..MILESTONES {
         let id = format!("{:03}", m * 10);
-        r.check(ids.contains(&id), format!("required PRD {id} (milestone M{m}) is missing"));
+        r.check(
+            ids.contains(&id),
+            format!("required PRD {id} (milestone M{m}) is missing"),
+        );
     }
     ids
 }
@@ -301,7 +327,10 @@ fn check_safety_registry(root: &Path, r: &mut Report) -> BTreeSet<String> {
     let ids = collect_ids(&path, "SAFETY-");
     for n in 1..=12 {
         let id = format!("{n:03}");
-        r.check(ids.contains(&id), format!("SAFETY-{id} is missing from the registry"));
+        r.check(
+            ids.contains(&id),
+            format!("SAFETY-{id} is missing from the registry"),
+        );
         // Each invariant needs its own section and a planned test.
         let heading = format!("## SAFETY-{id}");
         if txt.contains(&heading) {
@@ -408,14 +437,14 @@ fn check_references(
                     let d: String = chars[j + 1..].iter().take(3).collect();
                     if d.len() == 3 && d.chars().all(|c| c.is_ascii_digit()) {
                         let after = chars.get(j + 4).copied().unwrap_or(' ');
-                        if !after.is_ascii_digit() {
-                            if let Ok(mi) = num.parse::<usize>() {
-                                let exists = issues
-                                    .get(&mi)
-                                    .map(|s| s.contains(&d))
-                                    .unwrap_or(false);
-                                r.check(exists, format!("{name}: references M{mi}-{d}, which does not exist"));
-                            }
+                        if !after.is_ascii_digit()
+                            && let Ok(mi) = num.parse::<usize>()
+                        {
+                            let exists = issues.get(&mi).is_some_and(|s| s.contains(&d));
+                            r.check(
+                                exists,
+                                format!("{name}: references M{mi}-{d}, which does not exist"),
+                            );
                         }
                     }
                 }
@@ -547,27 +576,21 @@ fn strip_code_fences(txt: &str) -> String {
 }
 
 /// Parse each issue's `**Depends on:**` header and verify the graph is sane.
-fn check_dependency_graph(
-    root: &Path,
-    issues: &BTreeMap<usize, BTreeSet<String>>,
-    r: &mut Report,
-) {
+fn check_dependency_graph(root: &Path, issues: &BTreeMap<usize, BTreeSet<String>>, r: &mut Report) {
     let mut deps: BTreeMap<(usize, String), Vec<(usize, String)>> = BTreeMap::new();
 
     for (m, nums) in issues {
         for num in nums {
             let dir = root.join(format!("docs/issues/M{m}"));
-            let Ok(entries) = fs::read_dir(&dir) else { continue };
-            let Some(file) = entries
-                .flatten()
-                .map(|e| e.path())
-                .find(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with(num.as_str()))
-                        .unwrap_or(false)
-                })
-            else {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            let Some(file) = entries.flatten().map(|e| e.path()).find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with(num.as_str()))
+                    .unwrap_or(false)
+            }) else {
                 continue;
             };
             let txt = read(&file);

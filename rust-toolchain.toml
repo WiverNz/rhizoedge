@@ -1,0 +1,15 @@
+# Host workspace toolchain (ADR-001, ROADMAP.md §6).
+#
+# An exact version, never `stable`: CI runs clippy with `-D warnings`, so a new
+# lint in a later release would turn a green main branch red with no code
+# change. Bumping this is a deliberate, standalone change — never a side effect
+# of another issue.
+#
+# The firmware workspace pins its own toolchain (ADR-007) and is unaffected by
+# this file. The host workspace is never downgraded to match an embedded
+# constraint.
+
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

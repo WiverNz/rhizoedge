@@ -27,6 +27,7 @@ Bring the existing planning validator into the Rust workspace and keep it green.
 ## Scope
 
 - Add `tools/docscheck` to the root workspace `members`
+- **Remove the empty `[workspace]` table** from `tools/docscheck/Cargo.toml` — it exists only to keep the validator standalone until this issue lands
 - Ensure it builds under the pinned 1.98.0 toolchain and passes `clippy -D warnings`
 - Adopt `lints.workspace = true` like every other member
 - Confirm it still runs clean against the current documentation
@@ -73,15 +74,16 @@ registry access, before any other crate compiles.
 
 ## Acceptance criteria
 
-- [ ] `tools/docscheck` is a member of the root workspace.
-- [ ] `cargo run -p rhizo-docscheck` exits 0 against the current documentation.
-- [ ] `cargo clippy -p rhizo-docscheck -- -D warnings` is clean.
-- [ ] It has no third-party dependencies.
-- [ ] It exits non-zero with a specific message for: a broken relative link, a
+- [x] `tools/docscheck` is a member of the root workspace.
+- [x] The standalone `[workspace]` table has been removed from its manifest.
+- [x] `cargo run -p rhizo-docscheck` exits 0 against the current documentation.
+- [x] `cargo clippy -p rhizo-docscheck -- -D warnings` is clean.
+- [x] It has no third-party dependencies.
+- [x] It exits non-zero with a specific message for: a broken relative link, a
       safety-invariant reference with no registry entry, a duplicate ADR id, a
       duplicate issue id, and a dependency on a non-existent issue.
-- [ ] All failures are reported in a single run, not one per invocation.
-- [ ] ROADMAP.md §5 and docs/README.md state the `-p rhizo-docscheck` form.
+- [x] All failures are reported in a single run, not one per invocation.
+- [x] ROADMAP.md §5 and docs/README.md state the `-p rhizo-docscheck` form.
 
 ## Verification
 

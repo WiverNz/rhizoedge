@@ -1,0 +1,83 @@
+# Root workspace — all host code (ADR-001).
+#
+# `firmware/` and `ui/` are deliberately excluded so `cargo test --workspace`
+# means exactly "all host code" and never attempts a cross build. Each of those
+# is its own workspace with its own lockfile and its own toolchain pin.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/mqtt-contract",
+    "crates/domain",
+    "crates/storage",
+    "crates/telemetry",
+    "crates/cloud-client",
+    "crates/testkit",
+    "crates/edge-controller",
+    "crates/device-simulator",
+    "crates/cloud-api",
+    "tools/docscheck",
+]
+exclude = ["firmware", "ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.98.0"
+repository = "https://github.com/wivernz/rhizoedge"
+publish = false
+
+# Shared dependency versions (ADR-001 §Shared dependency versions).
+#
+# Every member writes `tokio = { workspace = true }` rather than a version
+# literal, so two crates cannot disagree on a `chrono` or `uuid` version and
+# have their types stop unifying. A version appears here and nowhere else.
+#
+# `cargo tree -d` is the check. It currently reports one duplicate — `getrandom`
+# 0.3 and 0.4 — which lives entirely inside `proptest`'s own tree (`rand_core`
+# pulls 0.3, `tempfile` pulls 0.4). Nothing declared here appears twice, and
+# that one is not resolvable from this file.
+[workspace.dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4.6.6", features = ["derive", "env"] }
+figment = { version = "0.10.19", features = ["toml", "env"] }
+proptest = "1.11.0"
+prometheus = { version = "0.14.0", default-features = false }
+# Pinned to the 0.9 line so it unifies with the one `proptest` depends on:
+# `cargo tree -d` must show no shared dependency twice (M0-002).
+rand = "0.9.5"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls-tls"] }
+rumqttc = "0.25.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.25.0", features = ["v4", "serde"] }
+
+# Workspace lint policy (ADR-014, PRD 000 F-000-04).
+#
+# `unwrap_used` and `expect_used` are denied so a library cannot panic its way
+# out of a failure it should have classified. Tests opt out per-module with
+# `#![cfg_attr(test, allow(clippy::unwrap_used))]` or a scoped `#[allow]`.
+# Where an invariant genuinely cannot be violated, `expect()` is permitted with
+# a message stating *why* — that message is the documentation.
+#
+# `missing_docs` and `todo` are warnings, which CI's `-D warnings` promotes to
+# errors: an undocumented public item and a `todo!()` are both ways for
+# scaffolding to reach main looking like finished work.
+#
+# Every member writes `lints.workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "warn"

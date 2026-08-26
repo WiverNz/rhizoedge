@@ -44,12 +44,12 @@ The `rhizo-edge` account needs `topic readwrite rhizo/v1/#`.
 
 ## Acceptance criteria
 
-- [ ] An anonymous connection is refused.
-- [ ] A wrong password is refused.
-- [ ] `plant-node-01` can publish to its own telemetry topic.
-- [ ] `plant-node-01` is **denied** publishing to `plant-node-02`'s topic.
-- [ ] The `rhizo-edge` account can subscribe to `rhizo/v1/devices/+/#`.
-- [ ] `deploy/mosquitto/passwd` is gitignored and absent from the index.
+- [x] An anonymous connection is refused.
+- [x] A wrong password is refused.
+- [x] `plant-node-01` can publish to its own telemetry topic.
+- [x] `plant-node-01` is **denied** publishing to `plant-node-02`'s topic.
+- [x] The `rhizo-edge` account can subscribe to `rhizo/v1/devices/+/#`.
+- [x] `deploy/mosquitto/passwd` is gitignored and absent from the index.
 
 ## Verification
 

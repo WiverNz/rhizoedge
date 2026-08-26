@@ -1,0 +1,28 @@
+[package]
+name = "edge-controller"
+description = "Rhizo Edge control plane: MQTT ingestion, irrigation control, edge REST API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "edge_controller"
+path = "src/lib.rs"
+
+[[bin]]
+name = "edge-controller"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+figment = { workspace = true }
+rhizo-telemetry = { path = "../telemetry" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

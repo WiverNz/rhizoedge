@@ -39,12 +39,12 @@ occasionally surprising — document it so nobody 'fixes' it into a minimum.
 
 ## Acceptance criteria
 
-- [ ] `next_delay()` never exceeds `cap`.
-- [ ] `next_delay()` is always non-negative.
-- [ ] Delay distribution widens with attempt count up to the cap.
-- [ ] `reset()` returns to the first attempt.
-- [ ] 1000 attempts do not overflow or panic.
-- [ ] With a seeded RNG, the sequence is reproducible.
+- [x] `next_delay()` never exceeds `cap`.
+- [x] `next_delay()` is always non-negative.
+- [x] Delay distribution widens with attempt count up to the cap.
+- [x] `reset()` returns to the first attempt.
+- [x] 1000 attempts do not overflow or panic.
+- [x] With a seeded RNG, the sequence is reproducible.
 
 ## Verification
 
