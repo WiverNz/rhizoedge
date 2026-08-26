@@ -106,15 +106,22 @@ exist in pots.
 
 **Deliverables.** `rhizo-mqtt-contract` (`no_std` + `alloc`) implementing
 [mqtt-v1.md](docs/protocol/mqtt-v1.md) · `DeviceId` grammar · `UtcMillis` ·
-envelope with identity checking · topic grammar · all ten payload types ·
-**`validate_water_command`, the single shared actuation gate** · protocol
-fixture corpus · `rhizo-domain` skeleton with the `Clock` trait · `no_std` CI
-verification · clippy ban on direct clock access in the domain.
+envelope with identity checking · topic grammar · **all MQTT v1 message and
+payload types defined by the normative protocol** (§5.2–§5.12: batched typed
+telemetry, actuator state, device events, status with declared capabilities, LWT,
+config, the three command kinds, command results, the offline policy, and
+`edge.time`) · the `MeasurementKind` enum with its `const fn spec()` · the
+`TimeSyncState` strict-acceptance helper · **`validate_water_command`, the single
+shared actuation gate** · protocol fixture corpus · `rhizo-domain` skeleton with
+the `Clock` trait · `no_std` CI verification · clippy ban on direct clock access
+in the domain.
 
 **Exit criteria.** Every clause of mqtt-v1.md §2–§10 implemented or explicitly
-noted. `validate_water_command`'s ordering matches §5.8 exactly. The contract
-crate builds for a bare-metal target with default features off. `Utc::now()` in
-`rhizo-domain` fails clippy. Every fixture behaves as documented.
+noted, checked against the §11 conformance checklist. `validate_water_command`'s
+ordering matches §5.8 exactly. `TimeSyncState` accepts only a **strictly** newer
+`edge_time_ms` (§5.12). The contract crate builds for a bare-metal target with
+default features off. `Utc::now()` in `rhizo-domain` fails clippy. Every fixture
+behaves as documented.
 
 **Invariants.** Delivers the mechanism for SAFETY-002, SAFETY-007, SAFETY-012;
 enforcement tested in M6.
@@ -129,19 +136,28 @@ enforcement tested in M6.
 and that is **never more permissive than firmware**.
 
 **Deliverables.** Full protocol conformance including LWT and retained status ·
-soil model with absorption lag, probe overshoot, and drainage · weight rising
+**declared sensor and actuator capabilities**, so the edge assumes nothing ·
+batched typed measurements across the kinds the simulated hardware exposes · soil
+model with absorption lag, probe overshoot, and drainage · weight rising
 immediately while VWC lags · tank, leak, EC models · **actuation exclusively
-through `validate_water_command`** · NVS-equivalent persistent state · control
-API · thirteen injectable faults · accelerated virtual time.
+through `validate_water_command`** · **wall clock maintained solely from
+`edge.time`**, with strict duplicate rejection · NVS-equivalent persistent state ·
+**a persisted, versioned offline policy applied atomically** · **offline
+autonomous dosing through the shared `rhizo_policy::evaluate_offline`, giving
+evaluator parity with the firmware** · **a bounded offline event buffer with
+ordered replay and explicit gap reporting** · control API · thirteen injectable
+faults · accelerated virtual time.
 
 **Exit criteria.** Runs standalone against a bare broker. Exactly one call site
-of `validate_water_command`. `requested_ml: 10000` published directly to the
-broker never delivers above the hard limit. No retained messages on command or
-telemetry topics. ACL isolation holds. A full cycle completes in under 10 s at
-scale 600.
+of `validate_water_command` and exactly one of `evaluate_offline`.
+`requested_ml: 10000` published directly to the broker never delivers above the
+hard limit. No retained messages on command, telemetry, event, or `time` topics.
+A replayed `edge.time` never extends `clock_synced`. An isolated simulator with
+no policy never actuates. ACL isolation holds. A full cycle completes in under
+10 s at scale 600.
 
-**Invariants.** Makes SAFETY-002, SAFETY-007, SAFETY-011 testable before
-hardware exists.
+**Invariants.** Makes SAFETY-002, SAFETY-007, SAFETY-011 testable before hardware
+exists, and gives SAFETY-013 … SAFETY-020 their first executable device.
 
 **PRD.** [020](docs/prd/020-device-simulator.md)
 
@@ -199,19 +215,30 @@ stopped. No endpoint changes `device_id`.
 issuing no commands, so the logic can be validated against a real plant for a
 week before anything can pump.
 
-**Deliverables.** Plant and profile CRUD with `auto_watering_enabled` defaulting
-false · profile validation that **rejects rather than clamps** · least-squares
+**Deliverables.** Plant CRUD with `auto_watering_enabled` defaulting false ·
+**explicit `SensorBinding[]` with `control`/`required`/`advisory` roles, bound to
+declared device capabilities** · **an optional `ActuatorBinding` (0..1), whose
+absence is a normal monitoring plant, not a degraded one** · **per-measurement
+policies: target band, warning and critical thresholds, staleness, hysteresis,
+confirmation duration** · **threshold evaluation raising alerts that never cause
+watering** · **authoring and validating the per-plant offline policy the device
+may later act on** · profile validation that **rejects rather than clamps**, with
+the profile demoted to a template that pre-populates policies · least-squares
 moisture trend returning `None` on sparse data · dry-duration tracking with gap
 handling · manual-watering detection with command attribution · stuck-sensor
 detection · rule-based recommendation with typed reasons · plant state
 derivation · EC trend and warning · evaluation tick and endpoints.
 
 **Exit criteria.** Drying produces `WaterRecommended` with a non-empty reason
-list and **zero MQTT commands published**. A profile with `dose_ml = 200` is
-rejected with 422 naming the firmware limit. A moisture step following a command
-creates no second event.
+list and **zero MQTT commands published**. A plant with no `ActuatorBinding`
+returns **422**, not 409, from every actuation path, and still receives telemetry,
+thresholds, and alerts. A binding to a capability the device never declared is
+rejected. A critical temperature raises an alert and waters nothing. A profile
+with `dose_ml = 200` is rejected with 422 naming the firmware limit. A moisture
+step following a command creates no second event.
 
-**Invariants.** None enforced (no actuation). Builds the gate's inputs.
+**Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path).
+Otherwise builds the gate's inputs without actuating.
 
 **PRD.** [050](docs/prd/050-plant-model-and-recommendations.md)
 
@@ -229,16 +256,24 @@ derived from rows · command persistence **before** publication · publication
 with `retain = false` · result handling that never invents a watering event ·
 **retry with the same `command_id`, never a new one** · restart reconciliation ·
 config publication · control metrics · clock-step detection · watering and
-lockout endpoints with **no override parameter** · no-delivery detection · the
-full property-test suite.
+lockout endpoints with **no override parameter** · no-delivery detection ·
+**`rhizo_policy::evaluate_offline`, the single shared offline evaluator — pure,
+`no_std`, taking elapsed time as a parameter and reading no clock** ·
+**reconciliation of offline actions on reconnect, idempotent by `event_id`, with
+the plant held `Uncertain` and no dose issued until replay completes** · the full
+property-test suite, including the offline safety properties.
 
 **Exit criteria.** `cargo test safety_` fully green. `PROPTEST_CASES=10000 cargo
 test safety_006` passes. `POST /water` during a leak returns 409 with nothing
 published. Restart after publish produces no second command and one watering
-event. No `_ =>` arm on any safety match.
+event. Replaying a buffered offline batch three times out of order produces one
+`watering_event` per `event_id` and one budget charge. No `_ =>` arm on any
+safety match.
 
 **Invariants enforced.** SAFETY-001, -002, -003, -004, -005, -006, -007 (via the
-shared validator), -010, -012.
+shared validator), -010, -012, and — against the simulator as the reference
+device — SAFETY-013, -014, -015, -016, -017. SAFETY-019 and SAFETY-020 are
+firmware-owned and land in M9.
 
 **PRD.** [060](docs/prd/060-irrigation-control-and-safety.md)
 
@@ -300,18 +335,27 @@ and pump, so the simulator's fidelity claim is tested.
 firmware CI job · own workspace with the contract crate by **path** · NVS and
 MAC-derived identity · hardware traits with `Clock::now_ms() -> Option` · the
 simulator/firmware conformance test · **pump off as the first statement in
-`main`** · Wi-Fi · MQTT with LWT · time sync from `edge.time` · telemetry ·
-command handling through
-the shared validator with an NVS dedup ring · config handling · interrupted-dose
+`main`** · Wi-Fi · MQTT with LWT · **wall clock synchronised from `edge.time`
+over that same MQTT connection — no SNTP client — with strictly-increasing
+acceptance** · telemetry · command handling through the shared validator with an
+NVS dedup ring · config handling · **an NVS-persisted, versioned offline policy
+activated atomically, where a bad update never replaces a good one** ·
+**integration of the shared `rhizo_policy::evaluate_offline`, called from exactly
+one place** · **a bounded offline event buffer with audit and telemetry tiers,
+ordered replay, and explicit gap markers** · **monotonic budget and cooldown state
+persisted across reboot, never replenished by a restart** · interrupted-dose
 reporting · serial provisioning.
 
 **Exit criteria.** Builds for the ESP target with no board. Conformance test
-shows identical behaviour to the simulator. **With a board:** HIL-1 passes on a
-multimeter across 20 resets; a duplicate `command_id` survives a power cycle;
-withholding `edge.time` refuses commands while telemetry continues.
+shows identical behaviour to the simulator, including the offline evaluator.
+**With a board:** HIL-1 passes on a multimeter across 20 resets; a duplicate
+`command_id` survives a power cycle; withholding `edge.time` refuses commands
+while telemetry continues; power-cycling mid-cooldown neither shortens the
+cooldown nor replenishes the budget.
 
 **Invariants enforced.** SAFETY-011 (firmware); SAFETY-002 and SAFETY-007 on
-real silicon; SAFETY-001 gains its device-side enforcement point.
+real silicon; SAFETY-001 gains its device-side enforcement point; SAFETY-013,
+-015, -019, -020 on the device that actually owns them.
 
 **External dependency.** One ESP32-C3 board; ADR-007's toolchain verified on the
 development machine.
@@ -376,14 +420,22 @@ multimeter, in-line power switch.
 **Deliverables.** Tauri 2 + Leptos CSR + Trunk workspace with **no `package.json`
 and no MQTT or `rhizo-domain` dependency** · shared API DTOs where 409 maps to a
 distinct `Refused` state · overview, plant, device, events, and sync views ·
-watering actions with **no override control** · inline SVG charts with the target
-band and watering markers · profile editor · connection-state handling that never
-shows a blank screen · packaging with WebView2 bootstrap · CI job asserting no
-Node artefacts.
+**a binding editor offering only capabilities the device actually declared, and
+presenting a plant with no actuator binding as a first-class monitoring plant** ·
+**per-measurement threshold configuration with warning and critical bands** ·
+**connectivity views distinguishing cloud offline, site offline, and device
+isolated, showing the applied offline-policy version and whether autonomous
+control is active** · **offline history showing autonomously delivered doses with
+`origin: offline_autonomous` and any reported gaps** · watering actions with **no
+override control** · inline SVG charts with the target band and watering markers ·
+profile editor · connection-state handling that never shows a blank screen ·
+packaging with WebView2 bootstrap · CI job asserting no Node artefacts.
 
 **Exit criteria.** Builds on Windows and Linux. No JS toolchain anywhere. A leak
 lockout is prominent with no clear button and manual watering shows the reason.
-Stopping the edge shows greyed last-known data with its age.
+A monitoring-only plant shows no watering control at all rather than a disabled
+one. An isolated device's autonomous doses appear in history, attributed, once
+reconciled. Stopping the edge shows greyed last-known data with its age.
 
 **Invariants.** Enforces none; must be incapable of violating any. Verified by
 the absent dependencies and the absent override control.
@@ -404,12 +456,18 @@ the absent dependencies and the absent override control.
 validation · notifications **dispatched from a separate task** · backup with
 verified restore · systemd deployment for a Raspberry Pi · measurement
 downsampling that never aggregates the ledger · multi-device scenarios · UI at
-scale.
+scale · **release CI publishing checksummed binaries from a `v*` tag** · **a CI
+matrix building on the MSRV 1.98.0 and on current stable, so the MSRV cannot rise
+by accident** · **an opt-in `observability` Compose profile adding Prometheus and
+Grafana, which nothing depends on**.
 
 **Exit criteria.** SCEN-080 shows byte-identical state for unaffected plants.
 Provisioning refuses reuse without `--force`. A dead notification channel does
 not delay the control loop. The system survives a Pi reboot. Backup and restore
-reproduce identical watering history. 20 plants evaluate within one tick.
+reproduce identical watering history. 20 plants evaluate within one tick. A tag
+produces downloadable archives whose `--version` matches. The MSRV job fails on
+an accidental bump and names ADR-001. Everything works with the observability
+profile disabled.
 
 **Invariants.** Every existing invariant must hold **per plant and per device**;
 SAFETY-004 extends to shared reservoirs.
@@ -430,10 +488,16 @@ assumptions traced to specific code with duty-cycle arithmetic · v2 protocol
 requirements for constrained radio, including the unsolved TTL-without-a-clock
 problem · zone and multi-depth model with the valve-stuck-open analysis · weather
 boundary (recommendation input only, never the gate) · field security
-requirements stated plainly.
+requirements stated plainly · **optional Helm packaging specified for server-side
+components only, with the plant-side edge controller explicitly out of scope** ·
+**the future actuator capability model — what `valve`, `grow_light`, `fan`,
+`heater`, `humidifier`, and `fertiliser_dosing_pump` would each require, and which
+need a different automation model rather than an extension**.
 
 **Exit criteria.** Every reservation verified against code. **`git diff` shows no
-speculative implementation.** Open questions recorded as genuinely unresolved.
+speculative implementation** — no chart, no actuator kind, no zone table.
+Kubernetes remains absent from the product architecture. Open questions recorded
+as genuinely unresolved.
 
 **PRD.** [140](docs/prd/140-field-readiness.md)
 
@@ -677,11 +741,16 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-The next session begins at:
+**M0 is `DONE`.** The next unstarted issue is:
 
 ```text
-M0-001 — Create repository skeleton and directory layout
+M1-001 — Create the no_std mqtt-contract crate skeleton
 ```
 
-Its `Dependencies` section is empty and every planning artefact it references
-exists. See [docs/issues/M0/001-create-repository-skeleton.md](docs/issues/M0/001-create-repository-skeleton.md).
+It depends only on M0, which is complete, so it is executable now. See
+[docs/issues/M1/001-add-mqtt-contract-crate-skeleton.md](docs/issues/M1/001-add-mqtt-contract-crate-skeleton.md)
+and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md)
+for where M1 can be widened into parallel work.
+
+This pointer must move with the milestone table above; `rhizo-docscheck` fails
+the build if it names an issue from a milestone already marked `DONE`.

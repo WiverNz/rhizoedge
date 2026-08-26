@@ -37,7 +37,7 @@ their untrustworthiness visible.
   presenting them as nutrient measurements would be a false claim
   ([PRD 140](140-field-readiness.md)).
 - pH sensing (deferred).
-- Multi-depth probes (M14 — the `measurement_point` column is already reserved).
+- Multi-depth probes (M14 — the `point` column is already reserved).
 
 ## User/system flows
 
@@ -136,7 +136,7 @@ Device config gains:
 ## Data model
 
 No schema change. `measurements.moisture_vwc`, `soil_temperature_c`, and
-`ec_us_cm` already exist, and `measurement_point` is already reserved for
+`ec_us_cm` already exist, and `point` is already reserved for
 multi-probe use ([ADR-004](../adr/004-sqlite-edge-persistence-model.md)).
 
 Calibration lives in device config, not in the database, because it is a

@@ -78,8 +78,8 @@ short list of reserved seams.
 
 | Concern | Reservation | Where |
 |---|---|---|
-| Multiple measurement points per device | `measurements.measurement_point` column, defaulted | [ADR-004](../adr/004-sqlite-edge-persistence-model.md) |
-| Multiple plants per device | `plants.device_id` many-to-one | ADR-004 |
+| Multiple measurement points per device | `measurements.point` column, defaulted to `'default'` | [ADR-004](../adr/004-sqlite-edge-persistence-model.md) |
+| Multiple plants per device, and multiple devices per plant | many-to-many `sensor_bindings`; optional `actuator_bindings` | [ADR-016](../adr/016-plant-binding-and-policy-model.md) |
 | Multiple edge instances | `edge_id` partitioning throughout the cloud schema | [ADR-005](../adr/005-cloud-event-model-and-idempotency.md) |
 | Transport independence | MQTT contract carries no transport concern | [ADR-002](../adr/002-mqtt-topic-versioning-and-qos.md) |
 | Hardware independence | trait-based sensor and pump adapters | [PRD 090](090-esp32-rust-firmware.md) |
@@ -131,7 +131,7 @@ directly — the state machine does not care whether its actuator is a pump or a
 valve, which is why `evaluate` returns `IssueDose { ml }` rather than
 `PumpOn { seconds }`.
 
-**Multi-depth.** `measurement_point` already exists. What is missing is a
+**Multi-depth.** `point` already exists. What is missing is a
 root-zone aggregation: available water over a depth profile, weighted by root
 density. That is a domain function, not a schema change.
 
@@ -160,7 +160,7 @@ stated in [PRD 100](100-real-soil-sensor.md) as well.
 
 | Addition | Recommendation |
 |---|---|
-| `measurement_point` column | **already present** |
+| `point` column | **already present** |
 | `edge_id` partitioning | **already present** |
 | Trait-based adapters | **already present** |
 | A `zone` entity | **no** — no consumer; add with valves |

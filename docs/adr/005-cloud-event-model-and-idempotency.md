@@ -151,9 +151,11 @@ CREATE TABLE devices (
     PRIMARY KEY (edge_id, device_id)
 );
 
+-- No device_id: a plant reaches hardware through bindings (ADR-016), and the
+-- cloud mirrors the edge's shape rather than inventing a simpler one.
 CREATE TABLE plants (
     edge_id TEXT NOT NULL, plant_id TEXT NOT NULL,
-    device_id TEXT, name TEXT, species TEXT, profile_json JSONB,
+    name TEXT, species TEXT, bindings_json JSONB, policies_json JSONB,
     PRIMARY KEY (edge_id, plant_id)
 );
 

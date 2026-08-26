@@ -57,6 +57,8 @@ The tool already validates:
 - every SAFETY invariant has a section and a "Planned tests" subsection
 - required architecture, protocol, and testing files exist
 - ROADMAP.md lists every milestone and states the real issue counts
+- ROADMAP.md's implementation starting point names a real issue whose milestone
+  is **not** already marked `DONE` — the pointer goes stale silently otherwise
 - relative markdown links resolve
 - the issue dependency graph is acyclic
 - issue numbering is a valid execution order (dependencies point to lower

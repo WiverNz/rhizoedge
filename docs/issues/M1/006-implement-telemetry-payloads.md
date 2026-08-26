@@ -19,7 +19,7 @@ Implement the telemetry payloads with per-field range validation.
 - Range constants for every field
 - `validate()` returning a `ValidationReport` naming each out-of-range field
 - `NaN`/`Infinity` treated as out of range
-- `measurement_point` defaulting to `"default"`
+- `point` defaulting to `"default"`
 - `leak_detected: null` decoding to an explicit Unknown, never to `false`
 
 ## Non-goals
@@ -50,7 +50,7 @@ weight 0-100000.
 - [ ] Boundary values 0.0 and 100.0 are valid; -0.1 and 100.1 are not.
 - [ ] `NaN` and `Infinity` are reported out of range.
 - [ ] A payload with one invalid field still decodes; the report names that field.
-- [ ] `measurement_point` defaults when absent.
+- [ ] `point` defaults when absent.
 - [ ] `leak_detected: null` yields Unknown, and `Unknown != Clear` is asserted.
 
 ## Verification

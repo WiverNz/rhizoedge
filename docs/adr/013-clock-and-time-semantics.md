@@ -133,11 +133,19 @@ Four properties do the safety work:
 1. **Never retained.** A retained timestamp is stale the moment it is stored, and
    a reconnecting device applying one would set its clock backwards to the
    publication time — making expired commands appear valid.
-2. **Monotonically non-decreasing.** An `edge.time` older than the last applied
-   one is ignored. MQTT does not guarantee ordering across a reconnect, so a
-   delayed message can arrive after a newer one; refusing to move the clock
-   backwards fails safe, because a device clock slightly *ahead* expires commands
-   sooner.
+2. **Strictly increasing.** An `edge.time` whose `edge_time_ms` is **less than
+   or equal to** the last applied one is ignored entirely — the clock is not set
+   *and* `synced_at_monotonic` is not refreshed. The strictness is the point.
+   QoS 1 permits redelivery, so the same value can arrive repeatedly; if an equal
+   value extended the validity window, one captured message replayed indefinitely
+   would hold `clock_synced` true forever while the device learned nothing new
+   about the Edge's clock. The window must measure synchronisation freshness, not
+   message arrival. The `<` half of the rule is the ordering defence: MQTT does
+   not guarantee ordering across a reconnect, so a delayed message can arrive
+   after a newer one, and refusing to move the clock backwards fails safe —
+   a device clock slightly *ahead* expires commands sooner. Two genuinely
+   distinct synchronisations are 300 s apart, so equality never occurs in normal
+   operation and the strict rule costs nothing.
 3. **Age-bounded validity.** `clock_synced` means the last applied
    synchronisation is younger than `TIME_SYNC_MAX_AGE_SECONDS`, measured on the
    monotonic clock. It no longer means "an SNTP transaction succeeded".
@@ -328,9 +336,12 @@ Negative, accepted:
   consumed by both services; M8-004 asserts the edge and simulator report the
   same scale at startup.
 - **A stale or replayed `edge.time`** moving a device clock backwards, making an
-  expired command appear valid. *Mitigation:* the monotonically-non-decreasing
-  acceptance rule, plus a test that replays an older timestamp and asserts it is
-  ignored (SAFETY-002).
+  expired command appear valid, **or a duplicate keeping `clock_synced` alive
+  without a genuinely newer Edge timestamp.** *Mitigation:* the strictly-increasing
+  acceptance rule — an `edge_time_ms` less than *or equal to* the last applied one
+  is ignored and does not refresh `synced_at_monotonic` — plus two tests: one
+  replaying an older timestamp, one replaying the *same* timestamp indefinitely and
+  asserting `clock_synced` still ages out (SAFETY-002).
 - **A device silently drifting out of synchronisation** because refreshes are
   lost, then refusing every command. *Mitigation:* `clock_synced` is reported in
   every status heartbeat and surfaced as a first-class lockout reason in the UI;

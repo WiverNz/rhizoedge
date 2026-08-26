@@ -23,7 +23,8 @@ device wall clock from `edge.time`.
 - `config_version <= applied` ignored
 - Unrecognised config fields ignored
 - Applied config persisted (M2-007 provides the store)
-- `edge.time` applied only when `edge_time_ms >= last_applied_edge_time_ms`
+- `edge.time` applied only when `edge_time_ms > last_applied_edge_time_ms`
+  (**strictly** newer); an ignored message must not refresh `synced_at_monotonic`
 - `clock_synced` derived from monotonic age against `TIME_SYNC_MAX_AGE_SECONDS`
 - Status republished at most every 60 s while `clock_synced` is false, so the
   edge has a trigger to resend `edge.time`
@@ -49,6 +50,7 @@ a rollback republishes an old retained config and the device silently regresses.
 - [ ] Status is published on connect and on the heartbeat schedule.
 - [ ] An `edge.time` sets the clock and makes `clock_synced` true.
 - [ ] An `edge.time` **older** than the last applied one is ignored — the clock never moves backwards.
+- [ ] An `edge.time` **equal** to the last applied one is ignored and does **not** refresh `synced_at_monotonic`.
 - [ ] `clock_synced` becomes false once the last sync is older than `TIME_SYNC_MAX_AGE_SECONDS`.
 - [ ] While unsynchronised, status is republished at a bounded rate.
 - [ ] `applied_config_version` echoes an applied config.
@@ -68,7 +70,8 @@ cargo test -p device-simulator config::
 
 - Config validation.
 - Version monotonicity.
-- `edge.time` monotonicity: a stale or duplicated message never moves the clock.
+- `edge.time` strict monotonicity: an older message never moves the clock, and a
+  duplicate of the last applied value never extends the validity window.
 - `clock_synced` ages out on the monotonic clock.
 - Smuggled-limit no-op.
 - Integration: retained config delivered to a late-connecting simulator.

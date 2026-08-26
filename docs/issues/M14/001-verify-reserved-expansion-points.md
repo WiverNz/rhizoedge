@@ -14,8 +14,10 @@ Confirm the reservations are real.
 
 ## Scope
 
-- `measurements.measurement_point` exists and is populated
-- `plants.device_id` is genuinely many-to-one
+- `measurements.point` exists and is populated
+- `sensor_bindings` genuinely supports many plants per device **and** many devices
+  per plant, and `plants` carries no `device_id` column
+- `actuator_bindings` is genuinely optional — a plant without one is unremarkable
 - `edge_id` partitions every cloud table
 - The MQTT contract carries no transport concern
 - Sensor and pump traits are genuinely swappable
@@ -48,7 +50,7 @@ hardware in with no edge changes, which is the property being verified.
 ## Verification
 
 ```bash
-sqlite3 data/edge.sqlite '.schema measurements' | grep measurement_point
+sqlite3 data/edge.sqlite '.schema measurements' | grep point
 grep -rn 'reservoir_id\|edge_id' migrations/
 ```
 

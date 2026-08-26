@@ -26,7 +26,8 @@ the Edge.
 - Retained `status: online` on connect
 - Subscribe to own `config`, `policy`, `time` and `commands/+` only
 - Reconnect with backoff
-- Apply `edge.time` only when `edge_time_ms >= last_applied_edge_time_ms`
+- Apply `edge.time` only when `edge_time_ms > last_applied_edge_time_ms`
+  (**strictly** newer); an ignored message updates nothing at all
 - Record the monotonic instant of application; derive `clock_synced` from its age
   against `TIME_SYNC_MAX_AGE_SECONDS`
 - `clock_synced` reported truthfully in status, meaning *synchronised to the Edge
@@ -55,10 +56,14 @@ Report `clock_synced` honestly. A device that claimed synchronisation it did not
 have would turn SAFETY-002 into a lie, and there is no way to detect that from
 the edge.
 
-The monotonically-non-decreasing acceptance rule is the piece here that is easy
-to omit and expensive to miss: MQTT does not guarantee ordering across a
-reconnect, so an older `edge.time` can arrive after a newer one, and applying it
-would move the clock backwards and make expired commands look valid again.
+The strictly-increasing acceptance rule is the piece here that is easy to get
+subtly wrong. MQTT does not guarantee ordering across a reconnect, so an older
+`edge.time` can arrive after a newer one, and applying it would move the clock
+backwards and make expired commands look valid again. Equally: QoS 1 permits
+redelivery, so writing `>=` instead of `>` would let one duplicated message,
+replayed indefinitely, hold `clock_synced` true forever. An ignored `edge.time`
+must update **nothing** — not the clock, not `last_applied_edge_time_ms`, and
+above all not `synced_at_monotonic`.
 
 ## Acceptance criteria
 
@@ -71,6 +76,8 @@ would move the clock backwards and make expired commands look valid again.
 - [ ] Killing power produces the LWT within the keepalive window.
 - [ ] Applying an `edge.time` makes `clock_synced` true.
 - [ ] An `edge.time` older than the last applied one is **ignored**.
+- [ ] An `edge.time` **equal** to the last applied one is ignored and does not
+      refresh `synced_at_monotonic`.
 - [ ] `clock_synced` becomes false once the last sync exceeds `TIME_SYNC_MAX_AGE_SECONDS`.
 - [ ] Withholding `edge.time` leaves `clock_synced` false, reported as such, with
       telemetry unaffected.
@@ -87,8 +94,8 @@ cd firmware/esp32-node && cargo test net::mqtt
 - LWT ordering.
 - Subscription set.
 - Host tests with a fake transport.
-- `edge.time` monotonicity: stale, duplicate and out-of-order messages never move
-  the clock.
+- `edge.time` strict monotonicity: stale, duplicate and out-of-order messages
+  never move the clock, and a duplicate never extends the validity window.
 - `clock_synced` age expiry on the monotonic clock.
 
 ## Documentation impact

@@ -440,6 +440,15 @@ The firmware should contain a generic Modbus sensor abstraction.
 
 # 9. MQTT Topic Design
 
+> **Superseded in detail.** [docs/protocol/mqtt-v1.md](protocol/mqtt-v1.md) is the
+> normative contract. The sketch below records the original intent — versioned,
+> device-scoped, predictable topics — and that intent survived unchanged. The
+> specific topic list did not: the four telemetry subtopics were replaced by one
+> batched `telemetry` topic carrying typed `MeasurementKind` samples
+> ([ADR-017](adr/017-extensible-measurement-model.md)), and `policy`, `events`,
+> `actuator`, and `time` were added. Read this section for the reasoning, not for
+> the topic names.
+
 Use versioned, predictable topics.
 
 Base:

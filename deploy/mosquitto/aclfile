@@ -19,8 +19,8 @@ topic readwrite rhizo/v1/#
 # the broker rejects it, with no cooperation required from the device.
 #
 # This is also why ADR-002 puts `device_id` before the message kind in the
-# topic tree: `rhizo/v1/devices/{id}/telemetry/soil` can be confined with one
-# rule, while `rhizo/v1/telemetry/soil/{id}` could not.
+# topic tree: `rhizo/v1/devices/{id}/telemetry` can be confined with one
+# rule, while `rhizo/v1/telemetry/{id}` could not.
 #
 # Nothing else is granted. A device has no reason to see the fleet, and a
 # compromised or simply buggy one must not be able to impersonate its

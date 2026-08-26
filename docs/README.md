@@ -18,7 +18,8 @@ architecture. **M0 is complete. M1 has not started.**
 3. The PRD for your milestone — what to build and why
 4. Your issue file — the step-by-step scope and acceptance criteria
 
-Then start at **[M0-001](issues/M0/001-create-repository-skeleton.md)**.
+Then start at **[M1-001](issues/M1/001-add-mqtt-contract-crate-skeleton.md)** —
+M0 is complete.
 
 ---
 

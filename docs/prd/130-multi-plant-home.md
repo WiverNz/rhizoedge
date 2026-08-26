@@ -188,11 +188,11 @@ CREATE TABLE notification_log (
 );
 
 CREATE TABLE measurements_hourly (
-    device_id TEXT NOT NULL, measurement_point TEXT NOT NULL,
+    device_id TEXT NOT NULL, point TEXT NOT NULL,
     hour_start INTEGER NOT NULL,
     moisture_vwc_avg REAL, moisture_vwc_min REAL, moisture_vwc_max REAL,
     soil_temperature_c_avg REAL, ec_us_cm_avg REAL, sample_count INTEGER NOT NULL,
-    PRIMARY KEY (device_id, measurement_point, hour_start)
+    PRIMARY KEY (device_id, point, hour_start)
 );
 ```
 

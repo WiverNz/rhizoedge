@@ -93,10 +93,14 @@ Three rules make it safe:
 
 - **Never retained.** A retained timestamp would set a reconnecting device's
   clock backwards to the publication instant, making expired commands look valid.
-- **Monotonically non-decreasing.** An `edge.time` older than the last applied one
-  is ignored, so a delayed or replayed message cannot roll the clock back. A
-  device clock slightly *ahead* of the Edge expires commands sooner, which is the
-  safe direction.
+- **Strictly increasing.** An `edge.time` whose `edge_time_ms` is less than **or
+  equal to** the last applied one is ignored: the clock is not set and
+  `synced_at_monotonic` is not refreshed. `<` stops a delayed message rolling the
+  clock back — a device clock slightly *ahead* of the Edge expires commands
+  sooner, the safe direction. `==` stops a QoS 1 duplicate, replayed
+  indefinitely, holding `clock_synced` true without the device ever learning
+  anything new about the Edge's clock. Only a strictly newer Edge timestamp
+  extends the validity window.
 - **Age-bounded.** `clock_synced` is false once the last applied synchronisation
   is older than `TIME_SYNC_MAX_AGE_SECONDS` (1800 s), measured on the monotonic
   clock.

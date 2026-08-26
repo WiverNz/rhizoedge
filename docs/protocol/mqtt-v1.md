@@ -781,19 +781,36 @@ it, and that is the Edge's trigger:
 
 ```text
 on receipt of edge.time:
-  if edge_time_ms < last_applied_edge_time_ms   → IGNORE (do not apply)
-  else:
+  if edge_time_ms <= last_applied_edge_time_ms
+      → stale or duplicate
+      → IGNORE: do not set the wall clock,
+                do not update last_applied_edge_time_ms,
+                and MUST NOT update synced_at_monotonic
+  else:                                       -- strictly newer
       set wall clock from edge_time_ms
       last_applied_edge_time_ms := edge_time_ms
       synced_at_monotonic       := monotonic_now
 ```
 
-The **monotonically non-decreasing** rule is what makes a delayed or duplicated
-message harmless. MQTT gives no ordering guarantee across a reconnect, so an
-older `edge.time` can arrive after a newer one; applying it would move the device
-clock backwards and make expired commands look valid. Refusing to go backwards
-fails in the safe direction: a device clock slightly *ahead* of the Edge expires
-commands sooner, which is conservative.
+The rule is **strictly increasing**, not merely non-decreasing, and the
+difference matters. MQTT QoS 1 permits redelivery, so the same `edge_time_ms`
+can arrive any number of times. If an equal value refreshed
+`synced_at_monotonic`, a single captured or redelivered message replayed
+indefinitely would hold `clock_synced` true forever while the device learned
+nothing new about the Edge's clock — the validity window would measure *message
+arrival*, not *synchronisation freshness*. **Only a strictly newer Edge timestamp
+may extend the validity window.**
+
+Refusing to go backwards fails in the safe direction for the other half of the
+rule: an older `edge.time` arriving after a newer one — MQTT gives no ordering
+guarantee across a reconnect — would move the device clock backwards and make
+expired commands look valid again. A device clock slightly *ahead* of the Edge
+expires commands sooner, which is conservative.
+
+Because the Edge samples its wall clock at publish time and publishes at most
+every `TIME_SYNC_INTERVAL_SECONDS`, two genuinely distinct synchronisations
+practically never carry an equal millisecond value, so the strict rule costs
+nothing in normal operation.
 
 The device treats `edge_time_ms` as the time at **receipt**. The resulting error
 is one-way broker latency — milliseconds on a LAN, three orders of magnitude
@@ -992,7 +1009,9 @@ An implementation is conformant when:
 - [ ] audit-tier events are never evicted to make room for telemetry
 - [ ] `time` is published **non-retained**, QoS 1
 - [ ] the Edge sends `edge.time` on every `device.status` and at least every 300 s
-- [ ] an `edge.time` older than the last applied one is ignored, not applied
+- [ ] an `edge.time` older than **or equal to** the last applied one is ignored
+- [ ] an ignored `edge.time` does **not** refresh `synced_at_monotonic`, so a
+      replayed message cannot keep `clock_synced` alive
 - [ ] `clock_synced` reflects synchronisation **age**, not SNTP success
 - [ ] water commands are refused with `clock_unsynced` until sync is established
 - [ ] telemetry continues while unsynchronised

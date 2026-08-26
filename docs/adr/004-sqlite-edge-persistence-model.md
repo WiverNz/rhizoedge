@@ -5,7 +5,9 @@
 Accepted — 2026-08-25. Implemented in M3.
 
 **Revised 2026-08-26.** The `measurements` table changed from wide typed columns
-to a **narrow typed-kind** table ([ADR-017](017-extensible-measurement-model.md)),
+to a **narrow typed-kind** table ([ADR-017](017-extensible-measurement-model.md));
+`plants.device_id` was **removed** and `plants.profile_id` made nullable, because
+a plant now reaches hardware through bindings and a profile is only a template;
 and tables were added for plant bindings, per-measurement policies, offline
 policies, device capabilities, and reported history gaps
 ([ADR-016](016-plant-binding-and-policy-model.md),
@@ -79,10 +81,11 @@ CREATE TABLE plant_profiles (
     updated_at   INTEGER NOT NULL
 );
 
+-- No device_id: a plant reaches its hardware through sensor_bindings and an
+-- optional actuator_binding (ADR-016), so devices and plants are many-to-many.
 CREATE TABLE plants (
     plant_id              TEXT PRIMARY KEY,
-    device_id             TEXT NOT NULL REFERENCES devices(device_id),
-    profile_id            TEXT NOT NULL REFERENCES plant_profiles(profile_id),
+    profile_id            TEXT REFERENCES plant_profiles(profile_id),  -- template only, nullable
     name                  TEXT NOT NULL,
     species               TEXT,
     pot_volume_ml         REAL,

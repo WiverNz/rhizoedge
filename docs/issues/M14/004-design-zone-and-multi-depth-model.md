@@ -36,7 +36,7 @@ duration bound. It will need a hardware-level bound independent of firmware —
 the field equivalent of SAFETY-007.
 
 Root-zone aggregation is a domain function, not a schema change, since
-`measurement_point` already exists.
+`point` already exists.
 
 ## Acceptance criteria
 

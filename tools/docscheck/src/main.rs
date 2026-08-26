@@ -96,6 +96,7 @@ fn main() {
 
     check_required_files(&root, &mut r);
     check_roadmap(&root, &issues, &mut r);
+    check_starting_point(&root, &issues, &mut r);
     check_references(&root, &docs, &issues, &adrs, &prds, &safety, &scen, &mut r);
     check_links(&root, &docs, &mut r);
     check_dependency_graph(&root, &issues, &mut r);
@@ -403,6 +404,65 @@ fn check_roadmap(root: &Path, issues: &BTreeMap<usize, BTreeSet<String>>, r: &mu
         txt.contains(&format!("{total} issues")),
         format!("ROADMAP.md does not state the real total issue count ({total})"),
     );
+}
+
+/// The ROADMAP names one issue as the implementation starting point. It goes
+/// stale silently: a milestone is completed, its status column is updated, and
+/// the pointer at the bottom of the file keeps naming an issue that was
+/// finished weeks ago. This is a structural check, not a reading of the prose —
+/// it extracts the issue id from the fenced block and compares its milestone
+/// against the status column in the milestone table.
+fn check_starting_point(root: &Path, issues: &BTreeMap<usize, BTreeSet<String>>, r: &mut Report) {
+    let path = root.join("ROADMAP.md");
+    if !path.is_file() {
+        return; // already reported
+    }
+    let txt = read(&path);
+
+    let Some(heading) = txt.find("Implementation starting point") else {
+        r.fail("ROADMAP.md has no \"Implementation starting point\" section");
+        return;
+    };
+    let tail = &txt[heading..];
+
+    // First fenced block after the heading holds the issue id.
+    let Some(open) = tail.find("```") else {
+        r.fail("ROADMAP.md implementation starting point states no issue");
+        return;
+    };
+    let after_open = &tail[open + 3..];
+    let Some(close) = after_open.find("```") else {
+        r.fail("ROADMAP.md implementation starting point has an unterminated code block");
+        return;
+    };
+    let block = &after_open[..close];
+
+    let Some((ms, num)) = block.split_whitespace().find_map(parse_issue_id) else {
+        r.fail("ROADMAP.md implementation starting point names no issue id");
+        return;
+    };
+
+    r.check(
+        issues.get(&ms).is_some_and(|nums| nums.contains(&num)),
+        format!("ROADMAP.md implementation starting point names M{ms}-{num}, which does not exist"),
+    );
+
+    // The milestone table row is "| M<n> | … | <status> |".
+    let row_marker = format!("| M{ms} |");
+    if let Some(line) = txt.lines().find(|l| l.starts_with(&row_marker)) {
+        let status = line
+            .rsplit('|')
+            .find(|c| !c.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .trim_matches('*');
+        r.check(
+            status != "DONE",
+            format!(
+                "ROADMAP.md implementation starting point names M{ms}-{num}, but milestone M{ms} is marked DONE"
+            ),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

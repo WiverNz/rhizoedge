@@ -94,7 +94,7 @@ SCEN-nnn  name
 ### SCEN-016 device ACL isolation
 - **Level** integration · **Milestone** M2 · **Proves** ADR-012
 - **Actions** authenticate as `plant-node-01`, attempt to publish to
-  `rhizo/v1/devices/plant-node-02/telemetry/soil`
+  `rhizo/v1/devices/plant-node-02/telemetry`
 - **Assertions** the publish is denied by the broker; no row is created for
   `plant-node-02`
 
@@ -367,13 +367,27 @@ SCEN-nnn  name
   named lockout reason, not a generic error; a single fresh `edge.time` restores
   acceptance
 
-### SCEN-076 stale or duplicate edge.time is ignored
+### SCEN-076 stale edge.time is ignored
 - **Level** unit + integration · **Milestone** M6 · **Proves** SAFETY-002
-- **Actions** apply `edge.time` at T; then deliver `edge.time` values at T−3600 s,
-  at T (duplicate), and out of order
-- **Assertions** the wall clock **never moves backwards**; only a value
-  `>= last_applied_edge_time_ms` is applied; a command whose `expires_at` has
-  passed cannot be made valid again by a replayed time message
+- **Actions** apply `edge.time` at T; then deliver `edge.time` values at T−3600 s
+  and out of order
+- **Assertions** the wall clock **never moves backwards**; only a value strictly
+  greater than `last_applied_edge_time_ms` is applied; a command whose
+  `expires_at` has passed cannot be made valid again by a replayed time message
+
+### SCEN-079 replayed edge.time cannot hold a device synchronised
+- **Level** unit + integration · **Milestone** M6 · **Proves** SAFETY-002
+- **Actions** apply one valid `edge.time` at T; redeliver **exactly that message**
+  repeatedly — more often than `TIME_SYNC_INTERVAL_SECONDS` — while advancing the
+  monotonic clock past `TIME_SYNC_MAX_AGE_SECONDS`; then issue a water command
+- **Assertions** `clock_synced == false` at the end, despite continuous traffic on
+  the `time` topic; **no duplicate ever refreshed `synced_at_monotonic`**; the
+  command is refused with `clock_unsynced`; a single strictly newer `edge.time`
+  then restores acceptance immediately
+
+  This is the QoS 1 case: the broker may redeliver the same message any number of
+  times, so a non-decreasing rule would make the validity window measure message
+  arrival instead of synchronisation freshness.
 
 ### SCEN-077 reconnect refuses until a fresh sync
 - **Level** e2e · **Milestone** M8 · **Proves** SAFETY-002, SAFETY-015
@@ -597,7 +611,7 @@ them must be runnable against the simulator with no hardware.
 | Invariant | Scenarios |
 |---|---|
 | SAFETY-001 | SCEN-010, SCEN-011 |
-| SAFETY-002 | SCEN-025, SCEN-030, SCEN-031, SCEN-073, SCEN-074, SCEN-075, SCEN-076, SCEN-077, SCEN-078 |
+| SAFETY-002 | SCEN-025, SCEN-030, SCEN-031, SCEN-073, SCEN-074, SCEN-075, SCEN-076, SCEN-077, SCEN-078, SCEN-079 |
 | SAFETY-003 | SCEN-040, SCEN-041 |
 | SAFETY-004 | SCEN-042, SCEN-043, SCEN-081 |
 | SAFETY-005 | SCEN-022, SCEN-023, SCEN-024, SCEN-070 |

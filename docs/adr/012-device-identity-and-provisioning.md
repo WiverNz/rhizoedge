@@ -5,6 +5,12 @@
 Accepted — 2026-08-25. Grammar in M1; broker ACLs in M0; device-side flow in M9;
 multi-device onboarding in M13.
 
+**Revised 2026-08-26.** The device ↔ plant section is rewritten for the binding
+model ([ADR-016](016-plant-binding-and-policy-model.md)): a plant is no longer a
+child of one device. Identity, credentials, ACLs, the grammar, and the
+provisioning flow are **unchanged** — they were always device-scoped, which is
+exactly why the binding change did not disturb them.
+
 ## Context
 
 `device_id` appears in every topic, every payload, every database row, and every
@@ -96,16 +102,22 @@ not automated.
      b. a serial provisioning command writing directly to NVS (preferred)
 3. Device boots, reads NVS, derives or reads device_id, connects.
 4. Device publishes retained status → the edge sees an unknown device.
-5. Edge auto-registers it in `devices` with status 'unknown' and NO plant
-   attached.
-6. Operator names it and attaches a plant through the UI/API.
+5. Edge auto-registers it in `devices` with status 'unknown', recording the
+   capabilities it declared, and creates NO plant and NO binding.
+6. Operator names it, then explicitly binds specific declared capabilities to
+   specific plants through the UI/API.
 ```
 
 **Step 5 is the important one: auto-registration creates a device row, never a
-plant.** A device with no plant produces telemetry and nothing else — it cannot
-be watered because there is no plant, no profile, and no `auto_watering_enabled`
-to be true. A new device that appeared on the network cannot cause actuation.
-That is SAFETY-012 applied to onboarding.
+plant and never a binding.** Declaring a capability is a device saying what
+hardware it has; it is not a request to be attached to anything. A newly
+appeared device produces telemetry and nothing else — nothing can be watered
+through it because no plant references it, and `auto_watering_enabled` defaults
+to false besides. **No binding is ever created implicitly.** A new device on the
+network cannot cause actuation. That is SAFETY-012 applied to onboarding, and it
+is unchanged by the binding model — if anything the binding model strengthens it,
+because attachment is now an explicit, per-capability act rather than a single
+`device_id` column being filled in.
 
 Option (b) is preferred over (a) because build-time credentials mean the binary
 contains secrets and every device needs its own build. A serial provisioning
@@ -123,14 +135,41 @@ is stable.
 
 ### Device ↔ plant relationship
 
-V1: one device, one plant, but the schema models it as
-`plants.device_id → devices.device_id`, a many-to-one, so one device can serve
-several plants later without migration. `measurements.measurement_point`
-similarly defaults to `'default'` so multi-probe and multi-depth deployments do
-not need a schema change ([ADR-004](004-sqlite-edge-persistence-model.md)).
+**Many-to-many, through explicit bindings.** There is no `device_id` on a plant.
 
-Neither capability is *implemented* in V1 — only the shape is reserved, which
-costs one column and one default.
+```text
+Device
+  exposes SensorCapability[]      declared in device.status
+  exposes ActuatorCapability[]    declared in device.status
+
+Plant
+  has SensorBinding[]             (device_id, sensor_id, point, kind, role)
+  has ActuatorBinding             0..1 — optional; absence is normal
+```
+
+Consequences of that shape:
+
+- **One device may serve several plants.** A room temperature and light sensor is
+  bound as `advisory` by every plant in the room; each plant applies its own
+  thresholds to the same physical reading, because thresholds belong to the plant,
+  not to the sensor.
+- **One plant may consume measurements from several devices.** A soil probe on the
+  node in its pot, ambient conditions from a shared node, and a pump on a third
+  are one plant's bindings, not three plants.
+- **The actuator is optional.** A plant with no `ActuatorBinding` is a fully
+  supported monitoring plant, not a degraded one (SAFETY-018).
+- **A binding must reference a capability the device actually declared.** The edge
+  never assumes an undeclared capability exists.
+
+`measurements.point` defaults to `'default'`, so multi-probe and multi-depth
+deployments need no schema change
+([ADR-004](004-sqlite-edge-persistence-model.md),
+[ADR-017](017-extensible-measurement-model.md)).
+
+**None of this touches identity.** `device_id` remains the unit of authentication,
+of ACL scoping, and of topic ownership. A binding is edge-side configuration and
+has no representation in the broker, in any credential, or in any topic — which is
+why introducing it required no change to anything above this section.
 
 ### What identity is not, in V1
 

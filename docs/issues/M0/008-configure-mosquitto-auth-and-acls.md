@@ -56,7 +56,7 @@ The `rhizo-edge` account needs `topic readwrite rhizo/v1/#`.
 ```bash
 docker compose -f deploy/docker-compose.yml up -d mosquitto
 mosquitto_sub -h localhost -t 'rhizo/v1/#' -v            # must FAIL (anonymous)
-mosquitto_pub -h localhost -u plant-node-01 -P "$P1" -t 'rhizo/v1/devices/plant-node-02/telemetry/soil' -m '{}'  # must FAIL
+mosquitto_pub -h localhost -u plant-node-01 -P "$P1" -t 'rhizo/v1/devices/plant-node-02/telemetry' -m '{}'  # must FAIL
 ```
 
 ## Tests required

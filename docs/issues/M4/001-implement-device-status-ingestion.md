@@ -61,7 +61,8 @@ cargo test --test integration retained_status
 - Out-of-order resolution.
 - SCEN-073 time sync on connect enables commands.
 - SCEN-074 no time sync refuses commands while monitoring continues.
-- SCEN-076 stale or duplicate `edge.time` is ignored.
+- SCEN-076 stale `edge.time` is ignored.
+- SCEN-079 a replayed `edge.time` cannot hold a device synchronised.
 
 ## Documentation impact
 

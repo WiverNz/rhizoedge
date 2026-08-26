@@ -125,10 +125,11 @@ needs a trustworthy wall clock, which is why:
 > [time-model.md](time-model.md).
 
 **Failure scenarios covered.** Long device offline period; broker holding QoS 1
-messages; clock skew; device booting with an unset RTC; **a stale or replayed
-`edge.time` attempting to move the device clock backwards**; synchronisation
-ageing out while connected; commands arriving in the window after reconnect but
-before re-synchronisation.
+messages; clock skew; device booting with an unset RTC; **a stale `edge.time`
+attempting to move the device clock backwards**; **a duplicated `edge.time`
+replayed to keep the synchronisation window alive without a newer Edge
+timestamp**; synchronisation ageing out while connected; commands arriving in the
+window after reconnect but before re-synchronisation.
 
 **Planned tests.**
 - `safety_002_expired_command_rejected` (unit, contract crate).
@@ -136,6 +137,10 @@ before re-synchronisation.
 - `safety_002_unsynced_clock_rejects_command` (unit, M9 shared logic).
 - `safety_002_stale_time_sync_never_applied` (unit): an `edge.time` older than
   the last applied one is ignored, so the clock never moves backwards.
+- `safety_002_duplicate_time_sync_does_not_extend_validity` (unit): the same
+  `edge_time_ms` replayed many times never refreshes `synced_at_monotonic`, so
+  `clock_synced` still becomes false once `TIME_SYNC_MAX_AGE_SECONDS` elapses.
+  Acceptance is **strictly** increasing, not non-decreasing.
 - `safety_002_sync_age_expiry_rejects_command` (unit): synchronisation older than
   `TIME_SYNC_MAX_AGE_SECONDS` makes `clock_synced` false and commands refused.
 - `safety_002_command_refused_until_resync_after_reconnect` (integration, M8).

@@ -80,7 +80,7 @@ OfflinePolicy
 │
 ├── control_measurement
 │   ├── kind              e.g. soil_moisture
-│   ├── measurement_point
+│   ├── point
 │   ├── trigger_below     start a cycle below this
 │   ├── resume_above      hysteresis: cycle ends at/above this
 │   ├── confirm_duration  continuous time below trigger before acting

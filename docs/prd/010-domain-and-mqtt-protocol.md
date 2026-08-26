@@ -246,6 +246,6 @@ expectation) for the caller to log usefully.
 ## Future work
 
 - Binary encoding (CBOR/postcard) behind a feature flag for LoRaWAN (M14).
-- Multi-depth measurement points beyond the reserved `measurement_point` field (M14).
+- Multi-depth measurement points beyond the reserved `point` field (M14).
 - Protocol v2 process is specified in
   [versioning-policy.md](../protocol/versioning-policy.md) but not exercised.

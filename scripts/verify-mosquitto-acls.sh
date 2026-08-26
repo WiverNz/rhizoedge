@@ -140,7 +140,7 @@ expect_denied "anonymous subscribe is refused" \
 expect_denied "a wrong password is refused" \
     "not authoris|not authorized|Connection Refused|refused" \
     mq mosquitto_pub -h "$host" -p "$port" -u "$D1" -P "definitely-not-the-password" \
-        -t "rhizo/v1/devices/$D1/telemetry/soil" -m '{}' -q 1
+        -t "rhizo/v1/devices/$D1/telemetry" -m '{}' -q 1
 
 expect_ok "the edge account connects" \
     mq mosquitto_sub -h "$host" -p "$port" -u "$EDGE_USER" -P "$EDGE_PASS" \
@@ -164,19 +164,19 @@ expect_publish_allowed() {
 }
 
 expect_publish_allowed "$D1 publishes to its OWN telemetry topic" \
-    "rhizo/v1/devices/$D1/telemetry/soil"
+    "rhizo/v1/devices/$D1/telemetry"
 
 expect_ok "$D1 subscribes to its OWN command topic" \
     mq mosquitto_sub -h "$host" -p "$port" -u "$D1" -P "$P1" \
         -t "rhizo/v1/devices/$D1/commands/water" -C 1 -W 2 -E
 
 expect_publish_denied "$D1 is DENIED publishing into ${D2}'s subtree" \
-    "rhizo/v1/devices/$D2/telemetry/soil"
+    "rhizo/v1/devices/$D2/telemetry"
 
 expect_denied "$D1 is DENIED subscribing to ${D2}'s subtree" \
     "not authoris|not authorized|denied|Timed out|Error" \
     mq mosquitto_sub -h "$host" -p "$port" -u "$D1" -P "$P1" \
-        -t "rhizo/v1/devices/$D2/telemetry/soil" -C 1 -W 3
+        -t "rhizo/v1/devices/$D2/telemetry" -C 1 -W 3
 
 expect_denied "$D1 is DENIED the fleet-wide wildcard" \
     "not authoris|not authorized|denied|Timed out|Error" \

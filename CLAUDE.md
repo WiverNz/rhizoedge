@@ -99,7 +99,7 @@ docs/
 ├── adr/               ADR-001…014 — why each decision was made
 ├── prd/               PRD 000…140 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
-├── testing/           strategy, 71 scenarios, simulator, HIL, local dev
+├── testing/           strategy, 72 scenarios, simulator, HIL, local dev
 └── issues/M0…M14/     204 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)

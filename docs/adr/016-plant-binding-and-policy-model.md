@@ -57,7 +57,7 @@ temperature sensor is "fine" for one plant and "critical" for another.
 ```text
 Device
 ├── capabilities
-│   ├── sensors[]    { sensor_id, kinds[], measurement_point }
+│   ├── sensors[]    { sensor_id, kinds[], point }
 │   └── actuators[]  { actuator_id, kind, limits }
 └── (declared by the device, never assumed — see §Capability discovery)
 
@@ -67,7 +67,7 @@ Plant
 ├── auto_watering_enabled           connected-mode opt-in, default false
 │
 ├── SensorBinding[]
-│   ├── device_id, sensor_id, measurement_point
+│   ├── device_id, sensor_id, point
 │   ├── kind                        which measurement this binding supplies
 │   └── role                        Control | Required | Advisory
 │
