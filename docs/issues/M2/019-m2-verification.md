@@ -1,6 +1,6 @@
-# Issue M2-015 — M2 verification and exit criteria
+# Issue M2-019 — M2 verification and exit criteria
 
-**Milestone:** M2 · **PRD:** [PRD 020](../../prd/020-device-simulator.md) · **Depends on:** M2-001, M2-002, M2-003, M2-004, M2-005, M2-006, M2-008, M2-007, M2-009, M2-010, M2-011, M2-012, M2-013, M2-014
+**Milestone:** M2 · **PRD:** [PRD 020](../../prd/020-device-simulator.md) · **Depends on:** M2-001, M2-002, M2-003, M2-004, M2-005, M2-006, M2-007, M2-008, M2-009, M2-010, M2-011, M2-012, M2-013, M2-014, M2-015, M2-016, M2-017, M2-018
 
 ## Context
 
@@ -31,14 +31,18 @@ Verify every PRD 020 acceptance criterion, especially the permissiveness parity 
 - M2-004
 - M2-005
 - M2-006
-- M2-008
 - M2-007
+- M2-008
 - M2-009
 - M2-010
 - M2-011
 - M2-012
 - M2-013
 - M2-014
+- M2-015
+- M2-016
+- M2-017
+- M2-018
 
 ## Implementation notes
 

@@ -1,6 +1,6 @@
-# Issue M8-015 — M8 verification and exit criteria
+# Issue M8-017 — M8 verification and exit criteria
 
-**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-001, M8-002, M8-003, M8-004, M8-005, M8-006, M8-007, M8-008, M8-009, M8-010, M8-011, M8-012, M8-013, M8-014
+**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-001, M8-002, M8-003, M8-004, M8-005, M8-006, M8-007, M8-008, M8-009, M8-010, M8-011, M8-012, M8-013, M8-014, M8-015, M8-016
 
 ## Context
 
@@ -39,6 +39,8 @@ Verify every PRD 080 acceptance criterion.
 - M8-012
 - M8-013
 - M8-014
+- M8-015
+- M8-016
 
 ## Implementation notes
 

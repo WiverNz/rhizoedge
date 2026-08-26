@@ -1,6 +1,6 @@
-# Issue M9-015 — M9 verification and exit criteria
+# Issue M9-019 — M9 verification and exit criteria
 
-**Milestone:** M9 · **PRD:** [PRD 090](../../prd/090-esp32-rust-firmware.md) · **Depends on:** M9-001, M9-002, M9-003, M9-004, M9-005, M9-014, M9-007, M9-008, M9-009, M9-010, M9-011, M9-012, M9-013, M9-006
+**Milestone:** M9 · **PRD:** [PRD 090](../../prd/090-esp32-rust-firmware.md) · **Depends on:** M9-001, M9-002, M9-003, M9-004, M9-005, M9-006, M9-007, M9-008, M9-009, M9-010, M9-011, M9-012, M9-013, M9-014, M9-015, M9-016, M9-017, M9-018
 
 ## Context
 
@@ -28,7 +28,7 @@ Verify every PRD 090 acceptance criterion.
 - M9-003
 - M9-004
 - M9-005
-- M9-014
+- M9-006
 - M9-007
 - M9-008
 - M9-009
@@ -36,7 +36,11 @@ Verify every PRD 090 acceptance criterion.
 - M9-011
 - M9-012
 - M9-013
-- M9-006
+- M9-014
+- M9-015
+- M9-016
+- M9-017
+- M9-018
 
 ## Implementation notes
 
@@ -58,7 +62,7 @@ Everything else in M9 can be verified on the host.
 - [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
 - [ ] **With a board:** an oversized command is clamped or rejected.
 - [ ] **With a board:** HIL-1 passes on a multimeter.
-- [ ] **With a board:** blocking SNTP refuses commands while telemetry continues.
+- [ ] **With a board:** blocking the `time` topic (or disconnecting the edge) refuses commands with `clock_unsynced` while telemetry continues.
 - [ ] Documentation updated; report recorded.
 
 ## Verification

@@ -2,6 +2,22 @@
 
 **Milestone:** M4 · **Status:** PLANNED · **Depends on:** M3
 
+> **Revised 2026-08-26.** The registry now records **declared capabilities**
+> ([ADR-016](../adr/016-plant-binding-and-policy-model.md)) and exposes
+> **connectivity mode** — connected, isolated, or reconciling
+> ([connectivity-modes.md](../architecture/connectivity-modes.md)). Issues M4-011
+> and M4-012 were added.
+>
+> Capabilities matter because the edge must never assume what a device can do:
+> a binding naming an undeclared sensor or actuator is rejected. Connectivity
+> mode matters because "offline and monitoring only" and "offline and watering
+> itself" look identical if the UI can only say *offline*.
+>
+> **Additional acceptance criteria:** a device with no actuators is represented
+> correctly rather than as an error; a capability lost across a reboot raises an
+> event; `reconciling` is a distinct, queryable state, because it is the window
+> in which the edge must not issue a dose.
+
 ## Summary
 
 Track device lifecycle — online/offline via retained status and Last Will,
@@ -77,6 +93,9 @@ operator changes config → edge bumps config_version → publishes retained
 | F-040-09 | Stale device detection runs on a timer, not only on message arrival — a device that stops publishing produces no event to react to |
 | F-040-10 | `desired_config_version` vs `applied_config_version` compared; drift exposed and evented after 2 intervals |
 | F-040-11 | `clock_synced: false` recorded and surfaced as a device-level condition |
+| F-040-17 | On receiving **any** `device.status`, the edge publishes `edge.time` to that device — live, `retain=false`, QoS 1 |
+| F-040-18 | While a device is online, the edge republishes `edge.time` at least every `TIME_SYNC_INTERVAL_SECONDS` (300 s) |
+| F-040-19 | The edge never assumes a reconnecting device is synchronised; it reads `clock_synced` from the device's status |
 | F-040-12 | Device display name is patchable; `device_id` is immutable |
 | F-040-13 | REST endpoints per [http-api-boundaries.md](../protocol/http-api-boundaries.md) §2.3 |
 | F-040-14 | `/health/live` and `/health/ready` per [ADR-010](../adr/010-observability-strategy.md), with a per-check JSON body |

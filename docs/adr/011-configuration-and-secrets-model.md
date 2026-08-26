@@ -4,6 +4,12 @@
 
 Accepted — 2026-08-25. Baseline in M0, layers completed through M6.
 
+**Revised 2026-08-26.** Layer L4 splits: a `PlantProfile` is now a *template*,
+and the authoritative per-plant configuration is the binding/policy model of
+[ADR-016](016-plant-binding-and-policy-model.md). A new layer **L3b** carries the
+**offline policy** ([ADR-015](015-device-offline-autonomy.md)) — edge-authored,
+device-applied, and the only configuration a device may *act* on alone.
+
 ## Context
 
 Configuration is where safety guarantees are most easily lost. A system that
@@ -19,12 +25,34 @@ records *why* those choices were made and what was rejected.
 ### Five layers, lower wins
 
 ```text
-L5 plant instance      operator, UI/API
-L4 plant profile       operator, UI/API
-L3 device runtime      edge-owned, retained MQTT, versioned
-L2 edge instance       deployer, TOML + env
-L1 firmware hard limits  compile-time, unchangeable at runtime
+L5  plant instance        operator, UI/API
+L4  plant bindings +      operator, UI/API
+    measurement policies  (PlantProfile is now only a template — ADR-016)
+L3b OFFLINE POLICY        edge-owned, device-applied, versioned, opt-in
+                          the only config a device may ACT on alone (ADR-015)
+L3  device runtime        edge-owned, retained MQTT, versioned
+L2  edge instance         deployer, TOML + env
+L1  firmware hard limits  compile-time, unchangeable at runtime
 ```
+
+**L3b is the layer that changed the shape of this model.** Every other layer
+*tunes* something; L3b *authorises* a device to act without supervision. Its
+rules are correspondingly stricter:
+
+- validated by the Edge before publication, and re-validated by the device
+  against its own declared capabilities and compile-time hard limits;
+- staged and activated atomically, so a bad or interrupted policy never replaces
+  the last known good one (SAFETY-019);
+- `enabled` defaults to `false` — autonomy is opted into per plant by a human;
+- a policy requesting more than `FIRMWARE_MAX_ML_PER_RUN` is **rejected**, not
+  clamped, exactly like an over-ambitious profile value.
+
+**L4 is now bindings and policies, not one profile.** A plant's configuration is
+its `SensorBinding[]`, optional `ActuatorBinding`, `MeasurementPolicy[]`,
+`AlertPolicy`, and `AutomationPolicy`. `PlantProfile` survives as a named
+template that seeds those values at creation and does **not** retroactively
+rewrite existing plants — silently changing the irrigation rules of twelve plants
+is not a feature. See [ADR-016](016-plant-binding-and-policy-model.md).
 
 The single rule that carries the safety weight: **a lower layer always wins, and
 L1 is unreachable from the network.** L4 may ask for 120 ml; if L1 caps a run at

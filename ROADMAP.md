@@ -4,7 +4,21 @@ The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
 **Planning status:** complete. **Implementation status:** M0 complete; M1 next.
-**Host toolchain:** Rust 1.98.0 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md)).
+**Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
+pin may move forward deliberately
+([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
+
+> **Architecture pass, 2026-08-26 — after M0, before M1.** Requirements expanded
+> in ways that had to land before M1 froze the MQTT and domain contracts:
+> **true device offline autonomy** ([ADR-015](docs/adr/015-device-offline-autonomy.md)),
+> a **per-plant binding and policy model**
+> ([ADR-016](docs/adr/016-plant-binding-and-policy-model.md)), and an
+> **extensible typed measurement model**
+> ([ADR-017](docs/adr/017-extensible-measurement-model.md)). MQTT v1 was revised
+> in place because nothing had ever spoken it
+> ([versioning-policy.md](docs/protocol/versioning-policy.md) §0). Eight
+> invariants were appended as SAFETY-013…020; the original twelve are unchanged
+> and were never renumbered. **M0 was not reopened.**
 
 - Source of truth for *what* each milestone builds: [docs/prd/](docs/prd/)
 - Source of truth for *why*: [docs/adr/](docs/adr/)
@@ -18,22 +32,22 @@ be trusted with a real plant.
 | ID | Name | Objective | Depends on | Issues | Status |
 |---|---|---|---|---|---|
 | M0 | Foundation and Engineering Baseline | A clean Rust repository whose tooling, lint, test, container, and observability baseline every later milestone inherits | — | 13 | **DONE** |
-| M1 | Domain Model and MQTT Protocol | The shared wire contract and pure domain types that let simulator, edge, and firmware be written independently | M0 | 14 | **READY** |
-| M2 | Device Simulator | A host device indistinguishable from firmware at the protocol level, with fault injection and virtual time | M1 | 15 | **READY** |
-| M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 16 | **READY** |
-| M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 11 | **READY** |
-| M5 | Plant Model and Recommendations | Plants, profiles, trends, manual-watering detection, and an explainable recommendation engine — **issuing no commands** | M4 | 13 | **READY** |
-| M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, and every non-hardware SAFETY invariant | M5, M2 | 19 | **READY** |
+| M1 | Domain Model and MQTT Protocol | The shared wire contract, typed measurement kinds, capability and offline-policy payloads, and the pure domain and policy crates | M0 | 19 | **READY** |
+| M2 | Device Simulator | A host device indistinguishable from firmware at the protocol level, including **offline autonomy**, event buffering, fault injection, and virtual time | M1 | 19 | **READY** |
+| M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **READY** |
+| M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **READY** |
+| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 17 | **READY** |
+| M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 22 | **READY** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
-| M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 15 | **READY** |
-| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump | M8 | 15 | PLANNED |
+| M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 17 | **READY** |
+| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 19 | PLANNED |
 | M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 11 | PLANNED |
 | M11 | Real Pump and Safety Hardware | Real actuation with calibration and physically verified lockouts | M10 | 14 | PLANNED |
-| M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 13 | PLANNED |
-| M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, and a supportable deployment | M12 | 13 | PLANNED |
-| M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field — **documentation only** | M13 | 7 | PLANNED |
+| M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 17 | PLANNED |
+| M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, a supportable deployment, **release binary CI, the MSRV matrix, and the optional Grafana profile** | M12 | 16 | PLANNED |
+| M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field, **plus optional Helm packaging and the future actuator model** — **documentation only** | M13 | 9 | PLANNED |
 
-**Total: 204 issues.**
+**Total: 239 issues.**
 
 ### Status semantics
 
@@ -45,7 +59,10 @@ be trusted with a real plant.
 | `IN PROGRESS` | Implementation started. |
 | `DONE` | Every issue closed **and** the milestone's exit criteria demonstrably met. |
 
-M0–M8 are `READY`: they are pure software, need no hardware, and every
+**M0 is `DONE`** — implemented, verified, and committed. It was not reopened by
+the 2026-08-26 architecture pass; the new requirements land in M1 and later.
+
+M1–M8 are `READY`: they are pure software, need no hardware, and every
 prerequisite is a preceding milestone. M9–M11 are `PLANNED` because they depend
 on physical hardware and on ADR-007's toolchain being executed on a real machine
 (M9-001). M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
@@ -283,14 +300,15 @@ and pump, so the simulator's fidelity claim is tested.
 firmware CI job · own workspace with the contract crate by **path** · NVS and
 MAC-derived identity · hardware traits with `Clock::now_ms() -> Option` · the
 simulator/firmware conformance test · **pump off as the first statement in
-`main`** · Wi-Fi and SNTP · MQTT with LWT · telemetry · command handling through
+`main`** · Wi-Fi · MQTT with LWT · time sync from `edge.time` · telemetry ·
+command handling through
 the shared validator with an NVS dedup ring · config handling · interrupted-dose
 reporting · serial provisioning.
 
 **Exit criteria.** Builds for the ESP target with no board. Conformance test
 shows identical behaviour to the simulator. **With a board:** HIL-1 passes on a
 multimeter across 20 resets; a duplicate `command_id` survives a power cycle;
-blocking SNTP refuses commands while telemetry continues.
+withholding `edge.time` refuses commands while telemetry continues.
 
 **Invariants enforced.** SAFETY-011 (firmware); SAFETY-002 and SAFETY-007 on
 real silicon; SAFETY-001 gains its device-side enforcement point.
@@ -482,7 +500,15 @@ Full registry: [docs/architecture/safety-invariants.md](docs/architecture/safety
 | SAFETY-009 | Cloud outage cannot bypass safety | Edge (structural) | M7 | M8 |
 | SAFETY-010 | Edge restart cannot replay a completed command | Edge | M6 | M8 |
 | SAFETY-011 | Device restart converges to pump-off | Device | M9 | M11 |
-| SAFETY-012 | Uncertainty defaults to no watering | Edge domain | M6 | M8 |
+| SAFETY-012 | Uncertainty defaults to no watering | Edge domain + device | M6 | M8 |
+| SAFETY-013 | Autonomous action needs a validated persisted policy | Device | M6 (sim), M9 (fw) | M8 |
+| SAFETY-014 | Offline doses obey the same caps and hard limits | Device + Edge | M6 | M8, M11 |
+| SAFETY-015 | Clock uncertainty never grants budget or shortens cooldown | Device | M6 (sim), M9 (fw) | M8 |
+| SAFETY-016 | Offline actions reconcile exactly once | Edge + Device | M6 (edge), M9 (device) | M8 |
+| SAFETY-017 | Missing/stale required measurement blocks autonomous action | Device | M6 | M8 |
+| SAFETY-018 | A plant with no actuator has no actuation path | Edge | M5 | M8, M12 |
+| SAFETY-019 | Policy activation is atomic | Device | M9 | M8 |
+| SAFETY-020 | Lost buffered history is reported as an explicit gap | Device + Edge | M9 | M8 |
 
 Every invariant names at least one automated test in the registry. M6 and M7 are
 not complete until those tests exist and pass.
@@ -592,10 +618,27 @@ never marked `DONE` on the basis of closed issues alone.
 
 ## 6. Toolchain
 
+```text
+MSRV                 1.98.0    the minimum host Rust the project supports
+current tested pin   1.98.0    what rust-toolchain.toml selects today
+future pin           may move to any newer stable, deliberately
+```
+
+- **MSRV is 1.98.0.** The host workspace and the UI must keep compiling on it.
+- **The pin may be raised** to a newer stable as a standalone change. Raising the
+  pin does not by itself raise the MSRV.
+- **No change may silently raise the MSRV.** Using a feature stabilised after
+  1.98.0 requires an explicit decision and an update to ADR-001, README, and this
+  section.
+- **Nothing is downgraded below 1.98.0**, including to match an embedded
+  constraint.
+- M13-014 adds a CI matrix verifying **both** the MSRV and current stable, so an
+  accidental bump fails the build rather than reaching a user.
+
 | Component | Toolchain |
 |---|---|
-| Host workspace (`crates/*`) | **Rust 1.98.0**, pinned in `rust-toolchain.toml` |
-| UI workspace (`ui/rhizo-ui`) | **Rust 1.98.0** plus the `wasm32-unknown-unknown` target |
+| Host workspace (`crates/*`) | MSRV **1.98.0**; currently pinned to 1.98.0 in `rust-toolchain.toml` |
+| UI workspace (`ui/rhizo-ui`) | same version plus the `wasm32-unknown-unknown` target |
 | Firmware (`firmware/esp32-node`) | 1.98.0 **where the Espressif ecosystem supports it**; otherwise a separately pinned ESP-compatible toolchain, documented as an embedded exception in [ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md) and verified by M9-001 |
 
 The firmware workspace is excluded from the root workspace precisely so it can
@@ -617,6 +660,15 @@ Recorded so their absence is a decision rather than an oversight:
 - **Cloud-pushed configuration.** Deferred in [ADR-003](docs/adr/003-edge-first-ownership-model.md); it needs an authentication story V1 lacks.
 - **A browser-hosted frontend.** The API stays CORS-capable so one remains
   possible; building it is out of V1 scope.
+- **Grafana as a required component.** It is an optional M13 deployment profile
+  ([ADR-010](docs/adr/010-observability-strategy.md)); nothing depends on it, and
+  it is not how a normal user learns whether a plant is safe.
+- **Kubernetes for the plant-side edge.** Helm packaging for server-side
+  components is planned in M14-007; the edge controller is explicitly excluded,
+  because the component whose purpose is working when things fail should not gain
+  a scheduler's failure modes.
+- **A generic automation framework.** Future actuator kinds are reserved in the
+  protocol with no implementation and no automation semantics.
 - **Kubernetes, Kafka, microservices, multi-region.** V1 must remain buildable
   by one developer.
 - **Go, Node.js, TypeScript.** Hard constraint: this is a Rust-only project.

@@ -4,6 +4,10 @@
 
 Accepted — 2026-08-25. Applied from M3; cloud parameters in M7.
 
+**Extended 2026-08-26** with the device-side bounded event buffer and its tiered
+overflow policy ([ADR-015](015-device-offline-autonomy.md) §6) — the same
+value-tier reasoning as the edge outbox, applied under far tighter storage.
+
 ## Context
 
 The system retries in five different places: MQTT connection, MQTT publish,
@@ -148,6 +152,29 @@ genuinely impossible to violate, `expect()` is permitted with a message stating
 *why* it cannot fail — and that message is the documentation. A clippy lint
 (`unwrap_used`, `expect_used`) is enabled at `deny` for the library crates and
 allowed in tests.
+
+### Device-side event buffer while isolated
+
+An ESP32 cannot retain unbounded history, and a design that pretends otherwise
+fails silently in the field. The buffer is a bounded NVS ring with **tiered
+retention**, mirroring the edge outbox's `value_tier`:
+
+| Tier | Kinds | Overflow behaviour |
+|---|---|---|
+| **audit** | autonomous dose, refusal + reason, lockout set/cleared, policy activation, pump fault, leak | evict oldest audit event **and record a gap marker** |
+| **telemetry** | measurement samples | evict oldest silently |
+
+Audit events are never evicted to make room for telemetry. The record of what
+the machine did to a living plant outranks a missing point on a chart — the same
+judgement as `value_tier` at the edge, made under tighter constraints.
+
+**A gap is data.** Eviction records the lost `device_seq` range and count, which
+is replayed on reconnect, stored in `history_gaps`, and shown in the plant's
+history. It is never silently absorbed (SAFETY-020).
+
+Replayed events are retained until the edge acknowledges them, so an edge crash
+mid-reconciliation loses nothing — the device simply replays again. Replay is
+idempotent on the device-generated `event_id` (SAFETY-016).
 
 ### Device-side retry
 

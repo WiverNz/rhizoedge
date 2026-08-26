@@ -17,6 +17,7 @@ Compute staleness correctly and detect silent devices.
 - `sample_age_seconds` derived at read time from `last_seen_at`
 - The threshold formula with its 15-minute floor
 - A periodic timer emitting stale events and updating gauges
+- The same timer republishes `edge.time` to every online device at least every `TIME_SYNC_INTERVAL_SECONDS` (F-040-18)
 - Staleness **derived, never stored**
 
 ## Non-goals
@@ -46,6 +47,7 @@ depends on downstream.
 - [ ] A device configured with a 10-second interval uses the 15-minute floor.
 - [ ] A device that stops publishing while connected is detected **by the timer**.
 - [ ] No `stale` column exists in the schema.
+- [ ] Every online device receives an `edge.time` at least every 300 s.
 - [ ] A device with a badly wrong clock still reports correct staleness.
 
 ## Verification
@@ -60,6 +62,8 @@ cargo test --test integration stale_without_inbound_message
 - Threshold arithmetic including the floor.
 - Timer detection with no inbound message.
 - Wrong device clock does not affect the result.
+- SCEN-075 aged-out time sync refuses commands.
+- SCEN-078 periodic refresh keeps a long-connected device synced.
 
 ## Documentation impact
 

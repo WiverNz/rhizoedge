@@ -4,6 +4,15 @@
 
 Accepted — 2026-08-25. Implemented in M3.
 
+**Revised 2026-08-26.** The `measurements` table changed from wide typed columns
+to a **narrow typed-kind** table ([ADR-017](017-extensible-measurement-model.md)),
+and tables were added for plant bindings, per-measurement policies, offline
+policies, device capabilities, and reported history gaps
+([ADR-016](016-plant-binding-and-policy-model.md),
+[ADR-015](015-device-offline-autonomy.md)). Everything this ADR says about WAL,
+the single writer, timestamp representation, and the deduplicate-and-persist
+transaction is unchanged.
+
 ## Context
 
 The edge must survive crashes without re-watering (SAFETY-010), must deduplicate
@@ -93,22 +102,29 @@ CREATE TABLE processed_messages (
 );
 CREATE INDEX idx_processed_received ON processed_messages(received_at);
 
+-- Narrow typed-kind table (ADR-017). One row per sample, not per message.
 CREATE TABLE measurements (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id          TEXT NOT NULL REFERENCES devices(device_id),
-    measurement_point  TEXT NOT NULL DEFAULT 'default',   -- multi-depth ready (PRD 140)
-    received_at        INTEGER NOT NULL,   -- edge clock: AUTHORITATIVE
-    device_time_ms     INTEGER,            -- device clock: advisory only
-    boot_id            TEXT,
-    sequence           INTEGER,
-    moisture_vwc       REAL,
-    soil_temperature_c REAL,
-    ec_us_cm           INTEGER,
-    pot_weight_g       REAL,
-    tank_level_percent REAL,
-    leak_detected      INTEGER
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id       TEXT NOT NULL REFERENCES devices(device_id),
+    sensor_id       TEXT,
+    point           TEXT NOT NULL DEFAULT 'default',
+    kind            TEXT NOT NULL,          -- MeasurementKind, snake_case
+    value_num       REAL,                   -- Scalar kinds
+    value_bool      INTEGER,                -- Boolean kinds (leak_state)
+    unit            TEXT NOT NULL,          -- canonical unit for the kind
+    quality         TEXT NOT NULL,          -- ok|uncalibrated|suspect|fault
+    calibration_ref TEXT,
+    received_at     INTEGER NOT NULL,       -- edge clock: AUTHORITATIVE
+    device_time_ms  INTEGER,                -- device clock: advisory only
+    boot_id         TEXT,
+    sequence        INTEGER,
+    batch_id        TEXT NOT NULL,          -- groups one sampling cycle
+    origin          TEXT NOT NULL DEFAULT 'live'   -- live|offline_replay
 );
-CREATE INDEX idx_meas_device_time ON measurements(device_id, received_at DESC);
+-- The safety-critical lookup: latest control sample for a plant binding.
+CREATE INDEX idx_meas_lookup ON measurements(device_id, point, kind, received_at DESC);
+CREATE INDEX idx_meas_time   ON measurements(received_at);
+CREATE INDEX idx_meas_batch  ON measurements(batch_id);
 
 CREATE TABLE device_events (
     event_id    TEXT PRIMARY KEY,
@@ -119,6 +135,18 @@ CREATE TABLE device_events (
     occurred_at INTEGER NOT NULL
 );
 CREATE INDEX idx_devevents_device_time ON device_events(device_id, occurred_at DESC);
+
+-- Reported gaps in device-buffered history (SAFETY-020). A gap is data.
+CREATE TABLE history_gaps (
+    gap_id      TEXT PRIMARY KEY,
+    device_id   TEXT NOT NULL,
+    boot_id     TEXT NOT NULL,
+    from_seq    INTEGER NOT NULL,
+    to_seq      INTEGER NOT NULL,
+    lost_count  INTEGER NOT NULL,
+    tier        TEXT NOT NULL,             -- audit|telemetry
+    reported_at INTEGER NOT NULL
+);
 
 CREATE TABLE quarantined_messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +187,65 @@ CREATE TABLE watering_events (
     reason_json       TEXT
 );
 CREATE INDEX idx_watering_plant_time ON watering_events(plant_id, completed_at DESC);
+
+-- Capability, binding, and policy model (ADR-016) ----------------------------
+CREATE TABLE device_capabilities (
+    device_id     TEXT NOT NULL REFERENCES devices(device_id),
+    capability_id TEXT NOT NULL,          -- sensor_id or actuator_id
+    class         TEXT NOT NULL,          -- sensor|actuator
+    kinds_json    TEXT NOT NULL,          -- measurement kinds, or actuator kind
+    point         TEXT,
+    limits_json   TEXT,
+    declared_at   INTEGER NOT NULL,
+    PRIMARY KEY (device_id, capability_id)
+);
+
+CREATE TABLE sensor_bindings (
+    binding_id TEXT PRIMARY KEY,
+    plant_id   TEXT NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+    device_id  TEXT NOT NULL,
+    sensor_id  TEXT NOT NULL,
+    point      TEXT NOT NULL DEFAULT 'default',
+    kind       TEXT NOT NULL,
+    role       TEXT NOT NULL,             -- control|required|advisory
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_binding_plant ON sensor_bindings(plant_id, role);
+CREATE UNIQUE INDEX uq_binding_control ON sensor_bindings(plant_id)
+    WHERE role = 'control';                -- at most one control binding
+
+CREATE TABLE actuator_bindings (           -- 0..1 per plant; absence is normal
+    plant_id    TEXT PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE,
+    device_id   TEXT NOT NULL,
+    actuator_id TEXT NOT NULL,
+    kind        TEXT NOT NULL,             -- irrigation_pump today
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE measurement_policies (
+    plant_id            TEXT NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+    kind                TEXT NOT NULL,
+    target_min          REAL, target_max    REAL,
+    warning_low         REAL, warning_high  REAL,
+    critical_low        REAL, critical_high REAL,
+    stale_after_ms      INTEGER NOT NULL,
+    hysteresis          REAL,
+    confirm_duration_ms INTEGER,
+    updated_at          INTEGER NOT NULL,
+    PRIMARY KEY (plant_id, kind)
+);
+
+-- Offline policy: edge-authored desired state, device-applied (ADR-015)
+CREATE TABLE offline_policies (
+    plant_id        TEXT PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE,
+    policy_version  INTEGER NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 0,   -- opt-in, SAFETY-012
+    policy_json     TEXT NOT NULL,                -- validated before write
+    published_at    INTEGER,
+    applied_version INTEGER,                      -- echoed by the device
+    applied_at      INTEGER,
+    updated_at      INTEGER NOT NULL
+);
 
 CREATE TABLE irrigation_state (
     plant_id               TEXT PRIMARY KEY REFERENCES plants(plant_id),
@@ -214,6 +301,24 @@ tx.commit().await?;                // all or nothing
 
 The dedup marker and the effects share a transaction. There is no window in
 which one is durable without the other.
+
+### Why a narrow measurement table rather than wide columns
+
+The wide table cost a migration per sensor kind and could not express `quality`,
+`unit`, or `calibration_ref` per reading. The narrow table costs **six rows per
+sampling cycle instead of one** — roughly 1 700 rows/device/day at a 300 s
+interval, about 630 k/device/year, tens of megabytes with indexes. SQLite is
+entirely comfortable there, and M13 downsampling bounds it further.
+
+`batch_id` preserves the one thing a wide row gave for free: which readings came
+from the same instant. Charts and the manual-watering detector both need it.
+
+`origin` distinguishes live telemetry from replayed offline history, so a
+reconciled autonomous dose stays visibly attributable
+([ADR-015](015-device-offline-autonomy.md) §8).
+
+The safety-critical query stays a single index seek on `idx_meas_lookup`, which
+was the property that had to survive the change.
 
 ### `commands.command_id` is a natural primary key
 

@@ -1,76 +1,217 @@
 # Rhizo Edge
 
-An **offline-first Rust platform for soil monitoring and fail-safe automated
+An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: planning complete, implementation not started.**
-> This repository currently contains the engineering plan — architecture,
-> decision records, requirements, protocol specification, and 204 implementation
-> issues. No production code has been written yet.
-> Start at [ROADMAP.md](ROADMAP.md); the first issue to execute is
-> [M0-001](docs/issues/M0/001-create-repository-skeleton.md).
+> **Status: M0 complete. M1 not started.**
+> **Unless explicitly marked as implemented, the sections below describe the
+> planned target architecture.**
+>
+> The engineering baseline — workspace, toolchain, lint policy, Mosquitto with
+> per-device ACLs, CI — is implemented and green. Everything above it is
+> specified and not yet built: architecture, 17 decision records, 15 requirement
+> documents, a normative protocol, and 239 implementation issues.
+> Start at [ROADMAP.md](ROADMAP.md); the next issue is
+> [M1-001](docs/issues/M1/001-add-mqtt-contract-crate-skeleton.md).
 
 ---
 
 ## What it is
 
-Rhizo Edge measures soil conditions, decides whether a plant needs water, and
-delivers a bounded dose through a pump — while guaranteeing that a loss of
-Internet, cloud, broker, or power never results in unsafe watering.
+Rhizo Edge measures the conditions a plant actually lives in, decides whether it
+needs water, and delivers a bounded dose through a pump. It is designed so that
+loss of Internet, cloud, broker, Wi-Fi, or power does not turn a connectivity
+failure into unsafe watering.
 
 The first target is indoor houseplants. The architecture is deliberately shaped
 so greenhouse and field deployments are an extension of the same system rather
 than a rewrite.
 
-## Two principles
+## Three principles
 
-**Edge-first.** The Edge Controller owns all irrigation decisions and all local
-state. The cloud is an append-only history sink that is optional by default
-(`cloud.enabled = false`) and can vanish for a week without affecting a single
-watering decision. This is enforced structurally, not by discipline: the domain
-crate cannot depend on the cloud client, and the type carrying every watering
-input has no cloud-derived field.
+**Edge-first.** While connected, the Edge Controller owns high-level irrigation
+decisions and local authoritative state. When a device becomes isolated, it may
+execute only a previously validated, persisted offline policy with a
+deliberately restricted rule set. The cloud is an append-only history sink,
+optional by default (`cloud.enabled = false`), and can vanish for a week without
+affecting a single watering decision — enforced structurally, not by discipline:
+the domain crate cannot depend on the cloud client, and the type carrying every
+watering input has no cloud-derived field.
 
 **Safety-first.** When any input is missing, stale, invalid, or contradictory,
 the answer is *do not water*, plus a visible lockout — never *water anyway*.
-Twelve numbered invariants ([SAFETY-001…012](docs/architecture/safety-invariants.md))
-state this precisely, each with named automated tests and the milestone where it
-becomes enforced. `cargo test safety_` is the project's definition of "are the
-invariants still enforced?".
+Twenty numbered invariants
+([SAFETY-001…020](docs/architecture/safety-invariants.md)) state this precisely,
+each with named automated tests and the milestone where it becomes enforced.
+From M6 onward, `cargo test safety_` is the executable safety-invariant gate.
 
-Defence in depth: the edge decides *whether* and *how much*; the device decides
-whether to **obey**. Limits compiled into firmware cannot be raised by any
-message, API call, or configuration — so even a completely wrong Edge Controller
-cannot flood the room.
+**Offline-capable at every layer.** A device that loses Wi-Fi is not a device
+that stops caring for its plant. See the next section — this is the part most
+comparable projects get wrong.
+
+Defence in depth throughout. While connected, the edge decides *whether* and
+*how much*; the device independently decides whether it is **safe to obey**.
+When isolated, the device may evaluate only its provisioned offline policy,
+while the same firmware hard limits remain authoritative. Those limits are
+compiled in and cannot be raised by any message, API call, or configuration — so
+even a completely wrong Edge Controller cannot flood the room.
+
+## Working offline — three different outages
+
+"Offline" is not one condition, and each degrades something different:
+
+| | What broke | What still works |
+|---|---|---|
+| **Cloud offline** | the cloud endpoint | everything local; history queues and syncs later |
+| **Site offline** | the whole internet | everything local — devices take their clock from the Edge over the MQTT connection they already have, so watering continues with no internet at all |
+| **Device isolated** | that device's link to the edge | **the device keeps monitoring and, if provisioned, keeps watering on its own** |
+
+The third case is the one that matters when you are away for two weeks and the
+router reboots. A plant-side device that has been explicitly given a validated
+**offline policy** continues to sample its sensors, evaluate the policy, and
+deliver bounded doses — then reports everything that happened once the link
+returns.
+
+Crucially, it does **not** improvise:
+
+- It acts only from a policy the Edge authored, validated, versioned, and that
+  the device persisted and activated atomically. No policy, an invalid policy, or
+  a missing required sensor all mean **no watering**.
+- It runs a deliberately restricted rule set — threshold, confirmation duration,
+  hysteresis, cooldown, a fixed dose, bounded dose count, rolling volume cap —
+  never the Edge's full recommendation engine.
+- Every safety veto still applies: leak, empty or unknown tank, faulted pump,
+  firmware hard limits.
+- Offline doses count against the **same** daily budget as commanded doses, and
+  replay to the edge exactly once, so nothing is watered twice across the seam.
+
+Details: [connectivity modes](docs/architecture/connectivity-modes.md) ·
+[offline autonomy](docs/architecture/offline-autonomy.md) ·
+[ADR-015](docs/adr/015-device-offline-autonomy.md)
+
+## Configuration flows down, versioned
+
+Devices are not configured by reflashing them. The Edge Controller owns their
+settings and publishes them as **retained, versioned MQTT messages**, so a device
+that boots three days later still receives current desired state:
+
+| Channel | Carries | Example |
+|---|---|---|
+| `config` | device runtime parameters | telemetry interval, pump calibration (`ml_per_second`), tank minimum, which sensors are enabled |
+| `policy` | per-plant offline automation rules | thresholds, dose size, cooldown, required sensors, enable/disable |
+
+Both are validated before publication, re-validated by the device, applied
+atomically, and acknowledged — the device echoes the version it is actually
+running, so configuration drift is visible rather than silent. A policy that
+fails validation never replaces the working one.
+
+Adjusting a plant's watering threshold, changing how often a node reports, or
+recalibrating a pump is an API call, not a firmware build.
+
+**What configuration can never do** is raise a firmware hard limit. Maximum run
+duration, maximum millilitres per dose, and maximum daily volume are compile-time
+constants with no representation in any message. Changing them requires
+reflashing the device, deliberately.
+
+Details: [configuration model](docs/architecture/configuration-model.md) ·
+[ADR-011](docs/adr/011-configuration-and-secrets-model.md)
+
+## Sensors: an open, typed set
+
+Plants care about more than soil moisture, so the measurement model is
+extensible without becoming untyped:
+
+```text
+soil_moisture        soil_temperature      soil_ec        soil_ph
+ambient_temperature  ambient_humidity      illuminance
+pot_weight           tank_level            leak_state
+nitrate_concentration
+```
+
+Each kind has exactly one canonical unit and a physical plausibility range,
+declared once as compile-time data the firmware itself can check against.
+
+Adding a measurement kind — PAR/PPFD, CO₂, whatever a future probe measures —
+does not require a new MQTT topic or a database-schema redesign. Devices that
+actually support a new physical sensor may still require a firmware update for
+the corresponding driver and capability declaration.
+
+Three consequences worth knowing:
+
+- **A device declares what it has.** The edge never assumes a node is a pump
+  controller; a plant can be bound to a soil probe on one device and a shared
+  room temperature and light sensor on another.
+- **Thresholds belong to the plant, not the sensor.** The same room sensor is
+  "fine" for a succulent and "critical" for a fern, so warning and critical bands
+  are configured per plant, per measurement.
+- **A warning is not a command.** A critical temperature or a light level below
+  target raises a visible alert; it never causes watering. Alerts work on plants
+  that have no pump at all.
+
+**EC is EC.** There is deliberately no measurement kind for nitrogen, phosphorus,
+or potassium: cheap "NPK" probes derive those from conductivity by an undisclosed
+formula, and presenting them as nutrient measurements would be a false claim
+about a real plant. A genuinely calibrated ion sensor can report a real value,
+with its calibration reference attached.
+
+Details: [ADR-017](docs/adr/017-extensible-measurement-model.md) ·
+[ADR-016](docs/adr/016-plant-binding-and-policy-model.md)
+
+## The pump is optional
+
+Most plants in a real home will never have one. A plant with no actuator is a
+**first-class, fully supported** configuration — telemetry, history, trends,
+thresholds, warnings, critical alerts, recommendations, and UI visibility — that
+simply has no actuation path. It is not a plant with a missing part.
+
+Supported shapes, all equally normal:
+
+```text
+monitoring only
+monitoring + recommendation
+monitoring + manual remote watering
+monitoring + connected automatic watering
+monitoring + offline autonomous watering
+```
 
 ## Architecture
 
 ```text
- ESP32 Plant Node (Rust)        Device Simulator (Rust)
-   sensors · pump                 same MQTT protocol
-   HARD SAFETY LIMITS             HARD SAFETY LIMITS
-        └──────────── MQTT (QoS 1) ────────────┘
-                        │
-                   Mosquitto
-                        │
-              ┌─────────▼──────────────────────┐
-              │ Edge Controller (Rust)         │
-              │  ingest → validate → dedup     │
-              │  plant state · recommendations │
-              │  irrigation state machine      │
-              │  SAFETY GATE                   │
-              │  local REST API · metrics      │
-              └───┬──────────────────┬─────────┘
-                  │                  │ HTTP (optional, outbound only)
-             ┌────▼─────┐      ┌─────▼──────────────┐
-             │ SQLite   │      │ Cloud API (Rust)   │
-             │ source   │      │ append-only        │
-             │ of truth │      │ → PostgreSQL       │
-             └──────────┘      └────────────────────┘
-                  ▲
-                  │ HTTP
-        Rhizo UI (Tauri 2 + Leptos desktop app)
+  ESP32 Plant Node (Rust)              Device Simulator (Rust)
+  ┌──────────────────────────┐         ┌──────────────────────────┐
+  │ sensors: soil · ambient  │         │ same MQTT protocol       │
+  │   light · tank · leak …  │         │ same offline evaluator   │
+  │ pump (optional)          │         │ virtual time · faults    │
+  │ offline policy + budget  │         │ offline policy + budget  │
+  │ HARD SAFETY LIMITS       │         │ HARD SAFETY LIMITS       │
+  └────────────┬─────────────┘         └────────────┬─────────────┘
+               └──────────── MQTT (QoS 1) ──────────┘
+                    │  ▲ telemetry · events · results
+                    │  │ ▼ config · policy · commands
+               Mosquitto
+                    │
+      ┌─────────────▼──────────────────────────┐
+      │ Edge Controller (Rust)                 │
+      │  ingest → validate → dedup             │
+      │  device registry · capabilities        │
+      │  plant bindings · thresholds · alerts  │
+      │  recommendations                       │
+      │  irrigation state machine              │
+      │  SAFETY GATE                           │
+      │  offline policy authoring              │
+      │  reconciliation of offline history     │
+      │  local REST API · metrics · time sync  │
+      └───┬──────────────────────┬─────────────┘
+          │                      │ HTTP (optional, outbound only)
+     ┌────▼─────┐          ┌─────▼──────────────┐
+     │ SQLite   │          │ Cloud API (Rust)   │
+     │ source   │          │ append-only        │
+     │ of truth │          │ → PostgreSQL       │
+     └──────────┘          └────────────────────┘
+          ▲
+          │ HTTP
+  Rhizo UI (Tauri 2 + Leptos desktop app)
 ```
 
 Details: [system overview](docs/architecture/system-overview.md) ·
@@ -81,21 +222,23 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 
 | Component | Role |
 |---|---|
-| `rhizo-mqtt-contract` | `no_std` wire contract shared with the firmware — the **only** shared crate |
+| `rhizo-mqtt-contract` | `no_std` wire contract, measurement kinds, hard limits, the shared command validator |
+| `rhizo-policy` | `no_std` offline evaluator — the one implementation of the offline rules, shared by firmware, simulator, and edge |
 | `rhizo-domain` | Pure decision logic: plant state, irrigation machine, safety gate. No I/O, no clock access |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
-| `edge-controller` | The control plane — the only component that decides |
-| `device-simulator` | Reference device; same protocol, virtual time, fault injection |
+| `edge-controller` | The control plane — the only component that decides while connected |
+| `device-simulator` | Reference device; same protocol, same evaluator, virtual time, fault injection |
 | `cloud-api` | Idempotent event ingestion into PostgreSQL |
-| `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary |
+| `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
 
 ## Development strategy: simulator before hardware
 
 The Device Simulator implements the *same* MQTT protocol as the firmware and
-calls the *same* command validator, so it can never be more permissive than real
-hardware. That makes roughly the entire control plane buildable and testable
-before any electronics exist.
+calls the *same* command validator and the *same* offline evaluator, so it can
+never be more permissive than real hardware. That makes roughly the entire
+control plane — **including offline autonomy** — buildable and testable before
+any electronics exist.
 
 **Milestones M0–M8 require no hardware at all.** M8 delivers the complete
 software system, verified end to end by one command:
@@ -115,12 +258,12 @@ Controller architecture.
 Node.js, and no TypeScript anywhere in this project, and the UI's Tauri workflow
 is Cargo-based specifically to keep it that way.
 
-**Rust 1.98.0** is the pinned host toolchain (`rust-toolchain.toml`), covering
-`crates/*` and the UI. The firmware workspace is separate and may pin an
-ESP-compatible toolchain if the Espressif ecosystem requires it; that exception
-is isolated and documented in
-[ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md). The host
-workspace is never downgraded to match an embedded constraint.
+**MSRV is Rust 1.98.0**, and `rust-toolchain.toml` currently pins exactly that.
+The pin may be raised to a newer stable as a deliberate change, but no change may
+silently raise the MSRV, and nothing is downgraded below it. The firmware
+workspace is separate and may pin an ESP-compatible toolchain if the Espressif
+ecosystem requires it; that exception is isolated and documented in
+[ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md).
 
 | Layer | Choice |
 |---|---|
@@ -129,7 +272,7 @@ workspace is never downgraded to match an embedded constraint.
 | Edge storage | SQLite via `sqlx`, WAL |
 | Cloud storage | PostgreSQL via `sqlx` |
 | HTTP | Axum |
-| Observability | `tracing` + Prometheus text format |
+| Observability | `tracing` + Prometheus text format; Grafana optional |
 | ESP32 | ESP32-C3, `esp-idf-svc` (std) |
 | UI | Tauri 2 + Leptos (CSR) + Trunk |
 
@@ -149,7 +292,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
-cargo run --manifest-path tools/docscheck/Cargo.toml
+cargo run -p rhizo-docscheck
 ```
 
 A milestone is complete only when its acceptance tests are green and its exit
@@ -162,7 +305,9 @@ Start here: **[docs/README.md](docs/README.md)** — the documentation index.
 | | |
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | Milestones, exit criteria, conventions |
-| [Safety invariants](docs/architecture/safety-invariants.md) | SAFETY-001…012 |
+| [Safety invariants](docs/architecture/safety-invariants.md) | SAFETY-001…020 |
+| [Connectivity modes](docs/architecture/connectivity-modes.md) | Cloud offline vs site offline vs device isolated |
+| [Offline autonomy](docs/architecture/offline-autonomy.md) | The offline policy model and reconciliation |
 | [MQTT protocol v1](docs/protocol/mqtt-v1.md) | Normative wire specification |
 | [Dependency graph](docs/architecture/dependency-graph.md) | What to implement next |
 | [Failure model](docs/architecture/failure-model.md) | Every failure and its expected behaviour |
@@ -178,11 +323,17 @@ Stated plainly, because they are decisions rather than oversights:
   This is the first thing to change for any non-trusted network.
 - **No TLS on MQTT**, no per-device certificates, no signed firmware.
 - **No remote access.** The UI is a desktop app on the LAN.
-- **No machine learning**, and **no N/P/K inference from EC** — cheap NPK probes
-  derive their output from EC by an undisclosed formula, and presenting that as
-  a nutrient measurement would be a false claim.
+- **No machine learning**, and **no N/P/K inference from EC**.
 - **Cloud pushes no configuration.** Deliberate; it needs an authentication
   story V1 does not have.
+- **Offline autonomy is opt-in, per plant, and deliberately limited.** A device
+  runs a restricted rule set, not the Edge's engine, so the two can in principle
+  reach different conclusions about the same plant. Bounded by sharing the
+  offline rules in one crate; not eliminated.
+- **Device history is bounded.** An isolated device buffers what it can and
+  reports an explicit gap for what it could not keep — audit events (doses,
+  refusals, faults) outrank telemetry samples and are never dropped to make room
+  for them.
 
 ## Licence
 

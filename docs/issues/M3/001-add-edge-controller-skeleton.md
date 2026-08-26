@@ -1,6 +1,6 @@
 # Issue M3-001 — Create the edge-controller binary and task supervisor
 
-**Milestone:** M3 · **PRD:** [PRD 030](../../prd/030-edge-ingestion-and-storage.md) · **Depends on:** M0-013, M1-014
+**Milestone:** M3 · **PRD:** [PRD 030](../../prd/030-edge-ingestion-and-storage.md) · **Depends on:** M0-013, M1-019
 
 ## Context
 
@@ -29,7 +29,7 @@ Create the binary, its Tokio task structure, and the supervising runtime.
 ## Dependencies
 
 - M0-013
-- M1-014
+- M1-019
 
 ## Implementation notes
 

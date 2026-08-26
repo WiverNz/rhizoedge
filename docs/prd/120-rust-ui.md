@@ -2,6 +2,28 @@
 
 **Milestone:** M12 · **Status:** PLANNED · **Depends on:** M6 (functionally), M11 (for the full picture)
 
+> **Revised 2026-08-26.** The UI must now let an operator understand and edit
+> **per-plant configuration** and see **offline autonomy** honestly. Issues
+> M12-013…M12-016 were added.
+>
+> New surfaces: sensor bindings and their roles; per-measurement target, warning,
+> and critical bands; stale limits; offline automation enable/disable with its
+> bounds; policy version and applied version with drift; connectivity mode;
+> last-known sensor state; and reconciled offline events including gaps.
+>
+> Two presentation rules are safety-relevant rather than cosmetic:
+>
+> - **Charts render gaps as gaps.** Interpolating across four missing hours tells
+>   the operator the plant was fine when the truth is that nobody knows.
+> - **A monitoring-only plant shows no watering UI at all** — not disabled
+>   controls, which suggest water is possible (SAFETY-018).
+>
+> Unchanged: the UI sends every change through the Edge API, has no MQTT
+> dependency, duplicates no safety evaluation, and offers no override control.
+> **Grafana does not replace this UI** — it is an optional engineering dashboard
+> ([ADR-010](../adr/010-observability-strategy.md)), and a chart cannot express a
+> safety refusal or what will clear it.
+
 ## Summary
 
 A native desktop application — Tauri 2 shell, Leptos CSR frontend, no Node.js —

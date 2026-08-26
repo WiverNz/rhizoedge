@@ -1,6 +1,6 @@
 # Issue M7-014 — Emit outbox events from every state change
 
-**Milestone:** M7 · **PRD:** [PRD 070](../../prd/070-cloud-sync-and-storage.md) · **Depends on:** M7-008, M6-019
+**Milestone:** M7 · **PRD:** [PRD 070](../../prd/070-cloud-sync-and-storage.md) · **Depends on:** M7-008, M6-022
 
 ## Context
 
@@ -27,7 +27,7 @@ Emit the full event catalogue from the edge.
 ## Dependencies
 
 - M7-008
-- M6-019
+- M6-022
 
 ## Implementation notes
 

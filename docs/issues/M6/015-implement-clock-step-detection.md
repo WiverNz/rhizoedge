@@ -4,9 +4,11 @@
 
 ## Context
 
-ADR-013 section 7: a forward NTP step drops older watering events out of the
-rolling window early, potentially permitting an extra dose. The asymmetry is
-deliberate — backwards is safe, forwards locks out.
+[ADR-013](../../adr/013-clock-and-time-semantics.md) §"Edge clock steps": a
+forward step on the **edge host** — which is genuinely NTP-synced, unlike the
+devices — drops older watering events out of the rolling window early,
+potentially permitting an extra dose. The asymmetry is deliberate: backwards is
+safe, forwards locks out.
 
 ## Goal
 
@@ -23,6 +25,7 @@ Detect wall-clock steps and respond conservatively.
 ## Non-goals
 
 - Device clock skew, which is a separate condition (M4).
+- Device time synchronisation, which does not use NTP at all (M4-001, M4-004).
 
 ## Dependencies
 

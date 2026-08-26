@@ -4,6 +4,14 @@
 
 Accepted — 2026-08-25. Implemented in M6.
 
+**Amended 2026-08-26 by [ADR-015](015-device-offline-autonomy.md).** The
+"device has no irrigation intelligence" claim below is corrected: a device
+provisioned with a validated offline policy runs a deliberately restricted
+evaluator when it cannot reach the Edge. Everything this ADR says about the
+**connected** state machine, the safety gate, and their ownership is unchanged.
+The split is tabulated in
+[offline-autonomy.md](../architecture/offline-autonomy.md) §2.
+
 ## Context
 
 The project plan is explicit that automatic watering must never be:
@@ -24,7 +32,9 @@ survives a restart, and how a decision becomes explainable.
 
 ## Decision
 
-### The Edge owns decisions. The device owns the veto.
+### The Edge owns decisions. The device owns the veto — and, when isolated, a bounded fallback.
+
+
 
 ```text
 Edge Controller                          Device
@@ -35,9 +45,16 @@ daily totals, cooldowns                  knows its own hard limits
 decides WHETHER and HOW MUCH        →    decides whether to OBEY
 ```
 
-Neither side can cause watering alone. The edge cannot actuate; the device will
-not act without a command. This is defence in depth, and it is why SAFETY-007
-can be trusted even if the edge is completely wrong.
+In connected mode neither side can cause watering alone: the edge cannot
+actuate, and the device will not act without a command. This is defence in depth,
+and it is why SAFETY-007 can be trusted even if the edge is completely wrong.
+
+**When isolated**, the device may act — but only from a policy the Edge authored
+and validated, and only through the same hard-limit veto. It never authors a
+rule, never computes a dose, and never relaxes a check. The restricted subset it
+may evaluate, and the much longer list of what it may not, are in
+[offline-autonomy.md](../architecture/offline-autonomy.md) §2. The connected
+state machine described in the rest of this ADR stays entirely on the Edge.
 
 ### The state machine is a pure function
 

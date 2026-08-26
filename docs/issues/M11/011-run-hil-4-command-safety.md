@@ -20,7 +20,7 @@ Verify every command safety rule against real water.
 - Negative and zero volumes -> rejected
 - Commands past `FIRMWARE_MAX_DAILY_ML` -> rejected
 - Power cycle then repeat a previous `command_id` -> still deduplicated
-- SNTP blocked -> `clock_unsynced` refusal
+- Edge time sync withheld -> `clock_unsynced` refusal
 
 ## Non-goals
 
@@ -46,7 +46,7 @@ test until resolved — treat it as a milestone-blocking finding, not a note.
 - [ ] Negative and zero volumes are rejected.
 - [ ] The device daily cap is enforced.
 - [ ] Dedup survives a power cycle.
-- [ ] Blocked SNTP refuses every command.
+- [ ] Withholding `edge.time` refuses every command.
 - [ ] **Every behaviour matches the simulator exactly.**
 
 ## Verification

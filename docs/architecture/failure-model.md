@@ -117,10 +117,15 @@ Retry and backoff parameters: [ADR-014](../adr/014-failure-and-retry-policy.md).
 
 - **Detection:** device-side; edge sees LWT or silence.
 - **Expected state:** device keeps sampling locally, retries Wi-Fi with backoff,
-  keeps the pump off. It does **not** water on its own — the device has no
-  irrigation logic (component-model §10).
-- **Recovery:** reconnect, republish retained status, resume telemetry.
-- **Safety:** an isolated device is a monitoring device only.
+  and buffers events. If — and only if — it holds a validated, enabled offline
+  policy, it evaluates that policy on monotonic time and may deliver bounded
+  doses ([ADR-015](../adr/015-device-offline-autonomy.md)). With no policy, an
+  invalid one, or `enabled: false`, it keeps the pump off and is a data logger.
+- **Recovery:** reconnect, republish retained status, resume telemetry, replay
+  buffered events. Time-sync refresh resumes when the Edge sees the status;
+  **Edge commands stay refused until a fresh `edge.time` is applied**.
+- **Safety:** ✅ SAFETY-013 (no policy ⇒ no actuation), SAFETY-014 (same caps),
+  SAFETY-015 (monotonic time only), SAFETY-016 (reconciliation).
 
 ### 2.3 Sensor disconnected or returning garbage
 
@@ -135,10 +140,10 @@ Retry and backoff parameters: [ADR-014](../adr/014-failure-and-retry-policy.md).
 
 ### 2.4 Device clock never syncs
 
-- **Detection:** `clock_synced: false` in status.
+- **Detection:** `clock_synced: false` in status — no `edge.time` applied, or the last one is older than `TIME_SYNC_MAX_AGE_SECONDS`.
 - **Expected state:** telemetry continues; **every water command is refused**
   with `clock_unsynced`.
-- **Recovery:** fix SNTP reachability.
+- **Recovery:** restore MQTT connectivity; the edge pushes `edge.time` as soon as it sees the device's status.
 - **Safety:** ✅ SAFETY-002, SAFETY-012. See [time-model.md](time-model.md) §4.
 - **Observability:** `device_event(kind='clock_unsynced')`, lockout reason.
 

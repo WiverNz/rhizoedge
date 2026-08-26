@@ -2,6 +2,23 @@
 
 **Milestone:** M13 · **Status:** PLANNED · **Depends on:** M12
 
+> **Revised 2026-08-26.** Three operational deliverables were added:
+> **release binary CI** (M13-013), the **MSRV + current-stable CI matrix**
+> (M13-014), and the **optional Prometheus + Grafana profile** (M13-015).
+>
+> - **Release artefacts** so using Rhizo Edge does not require installing Rust
+>   and building a workspace: a tag produces checksummed archives for the
+>   components that exist by then, for targets that are actually tested. Nothing
+>   in M1–M8 depends on this.
+> - **MSRV matrix** so an accidental bump past 1.98.0 fails CI rather than
+>   reaching a user on an older toolchain
+>   ([ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md)).
+> - **Observability profile**, strictly opt-in. `docker compose up` without
+>   `--profile observability` behaves exactly as before, and the M8 acceptance
+>   suite never references it. Operational metrics go to Prometheus; **plant
+>   history does not** — it stays in SQLite/PostgreSQL and is read through a SQL
+>   datasource ([ADR-010](../adr/010-observability-strategy.md)).
+
 ## Summary
 
 Scale from one plant to a household: several ESP32 nodes, per-device

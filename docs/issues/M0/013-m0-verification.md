@@ -1,6 +1,6 @@
 # Issue M0-013 — M0 verification and exit criteria
 
-**Milestone:** M0 · **PRD:** [PRD 000](../../prd/000-platform-foundation.md) · **Depends on:** M0-001, M0-002, M0-003, M0-004, M0-005, M0-006, M0-007, M0-008, M0-009, M0-010, M0-012, M0-011
+**Milestone:** M0 · **PRD:** [PRD 000](../../prd/000-platform-foundation.md) · **Depends on:** M0-001, M0-002, M0-003, M0-004, M0-005, M0-006, M0-007, M0-008, M0-009, M0-010, M0-011, M0-012
 
 ## Context
 
@@ -35,8 +35,8 @@ Verify every PRD 000 acceptance criterion and record the evidence.
 - M0-008
 - M0-009
 - M0-010
-- M0-012
 - M0-011
+- M0-012
 
 ## Implementation notes
 

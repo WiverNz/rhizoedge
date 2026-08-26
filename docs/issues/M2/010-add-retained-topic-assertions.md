@@ -8,6 +8,11 @@ ADR-002 calls a retained command topic the single most damaging mistake
 available in this protocol: the broker would redeliver it on every reconnect
 indefinitely, causing repeated watering. It is easy to introduce while debugging.
 
+The `time` topic is the same trap in a subtler form. A retained `edge.time` would
+set every reconnecting device's clock back to the publication instant, which makes
+long-expired commands look valid and silently defeats SAFETY-002
+([mqtt-v1.md](../../protocol/mqtt-v1.md) §5.12).
+
 ## Goal
 
 Make the mistake impossible to commit unnoticed.
@@ -15,8 +20,9 @@ Make the mistake impossible to commit unnoticed.
 ## Scope
 
 - An integration test running a full command cycle, then subscribing fresh
-- Assert retained messages exist on `status` and `config` only
-- Assert **no** retained message on any `commands/*` or `telemetry/*` topic
+- Assert retained messages exist on `status`, `config` and `policy` only
+- Assert **no** retained message on any `commands/*`, `telemetry/*`, `events` or
+  `time` topic
 
 ## Non-goals
 
@@ -30,17 +36,22 @@ Make the mistake impossible to commit unnoticed.
 
 Subscribe with a fresh client after the cycle completes and collect
 everything delivered before the first live message. Anything arriving on a
-command or telemetry topic in that window is retained state and fails the test.
+command, telemetry, event or time topic in that window is retained state and
+fails the test.
 
 This is SCEN-015.
 
 ## Acceptance criteria
 
 - [ ] The test runs a command cycle and then subscribes fresh.
-- [ ] Retained `status` and `config` are received.
+- [ ] Retained `status`, `config` and `policy` are received.
 - [ ] Nothing is received on `commands/*`.
 - [ ] Nothing is received on `telemetry/*`.
+- [ ] Nothing is received on `events`.
+- [ ] Nothing is received on `time`, after at least one `edge.time` has been
+      published in the cycle — so the assertion cannot pass vacuously.
 - [ ] Deliberately setting retain on a command publish fails the test.
+- [ ] Deliberately setting retain on an `edge.time` publish fails the test.
 
 ## Verification
 
@@ -52,6 +63,7 @@ cargo test --test integration retained_topics
 
 - SCEN-015.
 - Negative check: set retain on a command, confirm the test fails, revert.
+- Negative check: set retain on `edge.time`, confirm the test fails, revert.
 
 ## Documentation impact
 

@@ -2,10 +2,30 @@
 
 **Milestone:** M9 · **Status:** PLANNED · **Depends on:** M8
 
+> **Revised 2026-08-26.** The firmware now also implements **offline autonomy**
+> ([ADR-015](../adr/015-device-offline-autonomy.md)): an NVS policy store with
+> atomic activation, the shared evaluator, a bounded tiered event buffer, and a
+> monotonic budget that survives reboots conservatively. Issues M9-015…M9-018
+> were added.
+>
+> This is a genuine increase in firmware complexity, in the hardest place to
+> debug, and it is accepted deliberately: the alternative is a plant that dies
+> because the router rebooted while its owner was away.
+>
+> The constraints that keep it auditable: the evaluator is the **shared**
+> `rhizo-policy` function with one call site; actuation still routes through
+> `validate_water_command`; and `src/app/` remains free of `esp_idf_*` imports so
+> SAFETY-013…020 are host-testable with no board.
+>
+> **Additional acceptance criteria:** interruption at every step of a policy
+> update leaves exactly one valid policy active; a reboot never replenishes the
+> budget or shortens a cooldown; audit events are durable across power loss while
+> telemetry may be lost; `event_id` is stable across replay.
+
 ## Summary
 
 Replace the simulator's protocol endpoint with real Rust firmware on an
-ESP32-C3 — Wi-Fi, MQTT, SNTP, NVS, identity, commands, and safety — using fake
+ESP32-C3 — Wi-Fi, MQTT, Edge time sync, NVS, identity, commands, and safety — using fake
 sensor and pump adapters so no analogue hardware is required yet.
 
 ## Problem
@@ -18,7 +38,7 @@ sensors and a real pump deferred to M10 and M11.
 ## Goals
 
 1. A firmware workspace that builds for `riscv32imc-esp-espidf`.
-2. Wi-Fi, MQTT with LWT, SNTP, and NVS working on a real board.
+2. Wi-Fi, MQTT with LWT, `edge.time` synchronisation, and NVS working on a real board.
 3. Device identity and serial provisioning.
 4. Command handling using the **shared** validator.
 5. Boot-safe pump state and interrupted-dose reporting.
@@ -76,7 +96,7 @@ edge publishes command.water
 | F-090-10 | Wi-Fi with reconnect, full-jitter backoff base 2 s cap 300 s, unlimited |
 | F-090-11 | MQTT with `clean_session = true` and LWT configured **before** connect |
 | F-090-12 | Retained `status: online` on connect; heartbeat every `5 × telemetry_interval` |
-| F-090-13 | SNTP sync; `clock_synced` reported truthfully |
+| F-090-13 | Wall clock synchronised from the Edge via `edge.time` over MQTT (no SNTP client); an `edge.time` older than the last applied one is ignored; `clock_synced` reflects synchronisation **age** and is reported truthfully |
 | F-090-14 | Subscribes to own `config` and `commands/+` only |
 | F-090-15 | Telemetry buffered across a disconnect to at most 16 samples, then dropped |
 | F-090-16 | Command results retried up to 60 s, then persisted to NVS and republished after reboot |
@@ -176,13 +196,14 @@ between them.
 
 ```text
 Boot ──► PumpOff ──► NvsLoad ──► [unfinished dose? → report interrupted]
-      ──► WifiConnect ──► SntpSync ──► MqttConnect ──► Subscribed
+      ──► WifiConnect ──► MqttConnect ──► Subscribed ──► TimeSynced
       ──► Running
 
 Running:
    telemetry timer  → sample sensors → publish
    command received → validate → (actuate | reject) → publish result
    config received  → validate → apply → persist → status
+   edge.time        → if >= last applied → set clock, stamp monotonic, status
 
 Pump: Idle ──► Running(command_id, deadline) ──► Idle
                     │
@@ -193,12 +214,18 @@ Pump: Idle ──► Running(command_id, deadline) ──► Idle
 `PumpOff` precedes `NvsLoad`, which precedes everything network-related. The
 ordering is the requirement.
 
+`TimeSynced` gates **commands only**, not `Running`. The device samples and
+publishes telemetry with no synchronised clock at all — the edge stamps
+`received_at` itself — so an unsynchronised node is a degraded actuator, never a
+degraded sensor.
+
 ## Failure modes
 
 | Failure | Behaviour |
 |---|---|
 | Wi-Fi unavailable | keep sampling, retry with backoff, pump stays off; no autonomous watering |
-| SNTP never syncs | telemetry continues; **every** water command refused with `clock_unsynced` |
+| `edge.time` never received | telemetry continues; **every** water command refused with `clock_unsynced`; status republished at a bounded rate so the edge retries |
+| `edge.time` stops arriving | `clock_synced` ages out after `TIME_SYNC_MAX_AGE_SECONDS`; commands refused from that point; monitoring unaffected |
 | MQTT broker down | reconnect; telemetry ring caps at 16 samples |
 | NVS corrupt | start with defaults, log, publish a `nvs_reset` event — a corrupt store must not block boot but must not be trusted |
 | NVS write fails before actuation | **abort the dose**; report `failed`. Never actuate without a durable record. |
@@ -275,8 +302,8 @@ With a board attached: HIL-1 and HIL-2 from
 - [ ] **With a board:** an oversized command is clamped or rejected.
 - [ ] **With a board:** HIL-1 passes — the pump line never asserts across 20
       resets, a watchdog reset, and 10 mid-boot power cuts.
-- [ ] **With a board:** blocking SNTP causes every water command to be refused
-      while telemetry continues.
+- [ ] **With a board:** withholding `edge.time` causes every water command to be
+      refused while telemetry continues.
 
 The board-dependent criteria are marked so the milestone can be substantially
 completed and reviewed before hardware arrives.

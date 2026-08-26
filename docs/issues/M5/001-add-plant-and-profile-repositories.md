@@ -1,6 +1,6 @@
 # Issue M5-001 — Add plant and profile repositories
 
-**Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M4-011
+**Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M4-013
 
 ## Context
 
@@ -26,7 +26,7 @@ Provide CRUD access to plants and profiles with their integrity rules.
 
 ## Dependencies
 
-- M4-011
+- M4-013
 
 ## Implementation notes
 

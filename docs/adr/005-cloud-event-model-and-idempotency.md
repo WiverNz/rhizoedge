@@ -4,6 +4,12 @@
 
 Accepted — 2026-08-25. Implemented in M7.
 
+**Extended 2026-08-26.** The event catalogue gains offline-autonomy kinds, and
+the cloud `measurements` projection follows the narrow typed-kind shape
+([ADR-017](017-extensible-measurement-model.md)). The idempotency mechanism —
+`(edge_id, event_id)` with `ON CONFLICT DO NOTHING` — is unchanged, and is
+exactly what makes forwarding replayed offline history safe.
+
 ## Context
 
 The edge ships history to the cloud over an unreliable link. Retries are
@@ -27,22 +33,31 @@ applying the same fact twice is applying it once.
 {
   "event_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a20",
   "edge_id": "home-01",
-  "kind": "measurement.soil",
+  "kind": "measurement.sample",
   "occurred_at": "2026-08-25T11:30:00Z",
   "device_id": "plant-node-01",
   "plant_id": "monstera-01",
-  "payload": { "moisture_vwc": 31.7, "temperature_c": 21.4, "ec_us_cm": 840 }
+  "payload": {
+    "point": "default", "kind": "soil_moisture",
+    "value": 31.7, "unit": "vwc_percent", "quality": "ok",
+    "batch_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a20"
+  }
 }
 ```
 
 Event kinds in V1:
 
 ```text
-measurement.soil        measurement.weight      measurement.tank
+measurement.sample                              typed kind (ADR-017)
 device.status           device.event            device.config_applied
+device.capabilities     device.policy_applied
+device.isolated         device.reconciled       history.gap
 plant.created           plant.updated           plant.state_changed
+plant.binding_changed   plant.policy_changed
 watering.started        watering.completed      watering.detected
+watering.offline_autonomous                     delivered while isolated
 command.issued          command.settled         lockout.set   lockout.cleared
+threshold.warning       threshold.critical      fertilisation.applied
 ```
 
 ### Idempotency key: `(edge_id, event_id)`
@@ -142,18 +157,24 @@ CREATE TABLE plants (
     PRIMARY KEY (edge_id, plant_id)
 );
 
+-- Narrow typed-kind projection, mirroring the edge (ADR-017).
 CREATE TABLE measurements (
-    edge_id TEXT NOT NULL, device_id TEXT NOT NULL,
-    measurement_point TEXT NOT NULL DEFAULT 'default',
+    edge_id     TEXT NOT NULL, device_id TEXT NOT NULL,
+    point       TEXT NOT NULL DEFAULT 'default',
+    kind        TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
-    moisture_vwc REAL, soil_temperature_c REAL, ec_us_cm INTEGER,
-    pot_weight_g REAL, tank_level_percent REAL,
-    PRIMARY KEY (edge_id, device_id, measurement_point, occurred_at)
+    value_num   REAL, value_bool BOOLEAN,
+    unit        TEXT NOT NULL, quality TEXT NOT NULL,
+    sensor_id   TEXT, calibration_ref TEXT,
+    batch_id    UUID, origin TEXT NOT NULL DEFAULT 'live',
+    PRIMARY KEY (edge_id, device_id, point, kind, occurred_at)
 );
+CREATE INDEX idx_cloud_meas_batch ON measurements (edge_id, batch_id);
 
 CREATE TABLE watering_events (
     edge_id TEXT NOT NULL, watering_event_id UUID NOT NULL,
     plant_id TEXT NOT NULL, mode TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'edge_command',  -- or offline_autonomous
     started_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ,
     requested_ml REAL, delivered_ml REAL, status TEXT NOT NULL,
     PRIMARY KEY (edge_id, watering_event_id)
@@ -175,6 +196,10 @@ same transaction. This means:
 - A projection bug can be fixed and the tables rebuilt from `synced_events`
   without asking the edge to resend anything.
 - `measurements` uses a natural composite PK so a re-projection is an upsert.
+- Replayed offline history is just more events. A `watering.offline_autonomous`
+  event forwarded after a device reconnects deduplicates on `(edge_id,
+  event_id)` exactly like everything else, so a device that reconnects twice
+  mid-replay creates no duplicate cloud rows (SAFETY-016).
 
 The cost is storing measurement data twice (JSONB in the ledger, columns in the
 projection). At V1 volumes this is megabytes, and the ability to rebuild is

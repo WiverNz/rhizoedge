@@ -19,11 +19,20 @@ than a rewrite.
 
 Two corollaries drive nearly every design decision in this repository:
 
-1. **The Edge Controller owns all irrigation decisions.** Neither the cloud nor
-   the UI may command hardware directly.
+1. **The Edge Controller owns irrigation decisions whenever it is reachable.**
+   Neither the cloud nor the UI may command hardware directly.
 2. **The device is the final safety boundary.** Even a correct-looking command
    from a trusted Edge Controller is re-validated on the ESP32 against limits
    compiled into firmware.
+3. **An isolated device is not a useless device.** A plant-side node explicitly
+   provisioned with a validated offline policy keeps that plant alive when it
+   cannot reach the Edge — from that policy only, never by improvising
+   ([ADR-015](../adr/015-device-offline-autonomy.md)).
+
+"Offline" therefore means three distinct things in this system, and they degrade
+different capabilities: **cloud offline**, **site offline**, and **device
+isolated**. See [connectivity-modes.md](connectivity-modes.md); the bare word is
+avoided in new documentation.
 
 ## 3. Component map
 
@@ -87,6 +96,8 @@ Two corollaries drive nearly every design decision in this repository:
 
 | Concern | Authoritative component | Notes |
 |---|---|---|
+| Irrigation decision while isolated | Device, from a persisted validated policy | bounded subset only; ADR-015 |
+| Device capabilities | Device declares; edge never assumes | ADR-016 |
 | Raw measurement truth | Device | Edge may reject, never invent |
 | Measurement history | Edge SQLite | Cloud is a replica |
 | Plant / irrigation state | Edge | Persisted; survives restart |
@@ -168,5 +179,7 @@ hard constraint, not a preference.
 - [safety-invariants.md](safety-invariants.md) — the SAFETY-nnn registry
 - [failure-model.md](failure-model.md) — enumerated failures and expected behavior
 - [dependency-graph.md](dependency-graph.md) — milestone and issue ordering
+- [connectivity-modes.md](connectivity-modes.md) — cloud offline vs site offline vs device isolated
+- [offline-autonomy.md](offline-autonomy.md) — the offline policy model and reconciliation
 - [time-model.md](time-model.md) — clock semantics (safety-relevant)
 - [configuration-model.md](configuration-model.md) — configuration ownership layers

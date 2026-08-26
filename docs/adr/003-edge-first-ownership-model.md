@@ -4,6 +4,13 @@
 
 Accepted — 2026-08-25. Structural; enforced from M3 onward.
 
+**Amended 2026-08-26 by [ADR-015](015-device-offline-autonomy.md).** This ADR
+originally said the Edge is the only component capable of making irrigation
+decisions. That is now true only while the device can reach the Edge. A device
+explicitly provisioned with a validated offline policy may act alone when
+isolated — see §Device isolation below. The edge/cloud relationship described
+here is unchanged.
+
 ## Context
 
 The project's governing requirement is that a plant stays safely monitored and
@@ -69,6 +76,31 @@ The cloud data model is partitioned by `edge_id` from day one, even though V1
 has exactly one edge. Retrofitting a tenant key into a schema after it has
 history is far more expensive than carrying an extra column now. See
 [ADR-005](005-cloud-event-model-and-idempotency.md).
+
+### Device isolation (added by ADR-015)
+
+This ADR's original framing had one axis — cloud reachable or not. There are
+three, defined in
+[connectivity-modes.md](../architecture/connectivity-modes.md):
+
+| Mode | Meaning | Who decides irrigation |
+|---|---|---|
+| A — cloud offline | cloud unreachable, LAN fine | **Edge**, unchanged |
+| B — site offline | no internet, LAN fine | **Edge**, unchanged — devices take wall time from the Edge over MQTT, so no internet is needed for clocks |
+| C — device isolated | device cannot reach the Edge | **Device**, from a persisted validated policy, or not at all |
+
+The ownership statement below therefore becomes:
+
+```text
+Edge   = source of truth, and the primary controller whenever reachable
+Device = final hardware safety boundary, ALWAYS
+       + restricted fallback controller when isolated AND explicitly provisioned
+Cloud  = append-only replica; never a controller in any mode
+```
+
+The cloud's role is untouched by this amendment. It remains incapable of
+originating a command in every mode, which is what SAFETY-008 and SAFETY-009
+protect.
 
 ### What "offline" is allowed to degrade
 

@@ -2,6 +2,28 @@
 
 **Milestone:** M14 · **Status:** PLANNED (architecture only) · **Depends on:** M13
 
+> **Revised 2026-08-26.** Two planning items were added: **optional Helm
+> packaging** for server-side components (M14-007) and the **future actuator
+> capability model** (M14-008).
+>
+> Helm is a packaging option for `cloud-api` and the optional observability
+> stack. **The plant-side edge controller is explicitly out of scope**: the
+> component whose entire purpose is working when things fail should not acquire a
+> scheduler's failure modes. Home deployment remains Compose or systemd, and
+> Kubernetes is never required for an indoor plant.
+>
+> The actuator item verifies that the reserved kinds are genuinely representable
+> and specifies what each would need — with particular attention to the
+> **valve-stuck-open** failure, which is worse than a stuck pump because a valve
+> on a pressurised supply has no natural duration bound and needs a hardware-level
+> fail-closed bound independent of firmware.
+>
+> Device offline autonomy ([ADR-015](../adr/015-device-offline-autonomy.md))
+> partially addresses this PRD's "assumes an always-connected device" finding for
+> the **home** case. The **radio** case is unchanged and still requires a v2
+> protocol: a sleeping LoRaWAN node cannot evaluate an absolute TTL, and that
+> remains genuinely unresolved.
+
 ## Summary
 
 Establish the architecture and the honest constraint list for greenhouse and
@@ -75,7 +97,7 @@ version is an extension rather than a rewrite.
 | Telemetry every 300 s | duty-cycle limits allow a few messages per hour | **high** |
 | Command TTL of 120 s | a sleeping device may not wake for an hour | **high** |
 | Mains power | battery devices must sleep and cannot hold a TCP session | **high** |
-| SNTP-synced clocks | a sleeping device syncs rarely; SAFETY-002 depends on this | **high** |
+| Edge time sync | a sleeping device receives `edge.time` rarely, and SAFETY-002 depends on a fresh synchronisation | **high** |
 | One pump per device | zones use shared pumps and per-zone valves | medium |
 | A plant is the unit of irrigation | a field irrigates zones, not individuals | medium |
 | Soil moisture is one number | a root-zone profile is a curve over depth | medium |

@@ -2,6 +2,25 @@
 
 **Milestone:** M6 · **Status:** PLANNED · **Depends on:** M5
 
+> **Revised 2026-08-26.** M6 now also delivers the **offline evaluator**
+> (`rhizo_policy::evaluate_offline`) and **reconciliation** of events buffered
+> while a device was isolated ([ADR-015](../adr/015-device-offline-autonomy.md)).
+> Issues M6-019…M6-021 were added. Everything about the connected state machine,
+> the safety gate, and the command lifecycle is unchanged.
+>
+> The reconnection seam is the new safety-critical surface. Two rules carry it:
+> replay applies exactly once on `event_id`, and **the edge issues no dose to a
+> plant whose reconciliation is incomplete** — a device that autonomously watered
+> ninety seconds ago has that dose in its buffer, not yet in the budget
+> (SAFETY-016).
+>
+> There is **one budget per plant**, not one per control path: autonomous doses
+> land in the same rolling window as commanded ones (SAFETY-014).
+>
+> **Additional acceptance criteria:** `cargo test safety_` covers SAFETY-013…020;
+> `PROPTEST_CASES=10000 cargo test safety_014` passes; an MQTT spy confirms no
+> command is published while a plant is reconciling.
+
 ## Summary
 
 The milestone where the system gains the ability to move water. Implements the

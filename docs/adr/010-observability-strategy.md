@@ -4,6 +4,9 @@
 
 Accepted — 2026-08-25. Baseline in M0, extended per milestone.
 
+**Extended 2026-08-26** with the operational-metrics / plant-history data-class
+split and the optional Grafana profile (§Two data classes, §Grafana).
+
 ## Context
 
 [failure-model.md](../architecture/failure-model.md) asserts that a failure is
@@ -184,12 +187,63 @@ A process that is up but not evaluating safety is worse than a down process,
 because supervision and alerting see "healthy" while nothing is watching the
 plant. Failing loudly is the safe behaviour (failure-model §3.6).
 
+### Two data classes — and why Grafana must not blur them
+
+There are two kinds of time series in this system, and conflating them is the
+mistake that makes Prometheus fall over:
+
+| | Operational metrics | Plant history |
+|---|---|---|
+| Examples | `mqtt_messages_received_total`, `plants_locked_out`, tick duration | soil moisture, EC, weight, watering events, threshold crossings |
+| Question answered | "is the software healthy?" | "is the plant healthy?" |
+| Store | Prometheus | SQLite (edge) / PostgreSQL (cloud) |
+| Cardinality | low, bounded, no `plant_id` on hot paths | one series per plant per measurement kind |
+| Retention | days–weeks | years; downsampled, never aggregated away for the ledger |
+| Required for operation | no | **yes** — this is the control loop's input |
+
+**Raw plant telemetry does not go into Prometheus.** It is tempting, because
+Grafana reads Prometheus and that would make dashboards free. It is wrong: it
+would put per-plant, per-kind, per-point series into a store designed for
+low-cardinality operational data, with retention semantics that are wrong for a
+ledger, and it would make a monitoring system a dependency of irrigation.
+
+Plant history is queried from the databases that already hold it.
+
+### Grafana — optional, additive, never required
+
+Grafana is an **optional deployment profile**, planned in M13
+([PRD 130](../prd/130-multi-plant-home.md)), not a component of the product.
+
+```text
+operational metrics  →  Prometheus  →  Grafana
+plant history        →  SQLite / PostgreSQL  →  Tauri UI (primary)
+                                             →  Grafana via SQL datasource (optional)
+```
+
+Hard boundaries:
+
+- **Nothing depends on it.** Monitoring, recommendations, watering, offline
+  autonomy, and alerts all function with Grafana absent, uninstalled, and
+  unheard of. It is not in the M8 acceptance environment.
+- **It is not how a normal user learns whether a plant is safe.** That is the
+  Tauri UI's job ([ADR-009](009-ui-architecture-and-rust-web-stack.md)). Grafana
+  is an engineering and operations surface: fleet dashboards, long-range
+  history, correlation while debugging.
+- **It is read-only.** No control path, no configuration, no actuation.
+
+Rejected: making Grafana the operator UI. It cannot express a safety refusal, it
+has no notion of a lockout that needs an explicit human reset, and a dashboard
+that shows a chart is not a substitute for an interface that says *why watering
+is blocked and what will clear it*.
+
 ### What is deliberately not done in V1
 
 - **No distributed tracing / OpenTelemetry exporter.** There are two hops and
   one operator; `tracing` fields provide the correlation. The subscriber is
   structured so an OTel layer can be added later without touching call sites.
 - **No log shipping.** `journalctl` and `docker logs` are sufficient.
+- **No Grafana in V1's required path.** Planned as an optional M13 profile
+  (see above); nothing before it may depend on it.
 - **No alerting rules.** The metrics are shaped so Prometheus alerting rules can
   be written; writing them is a deployment concern (M13).
 - **No per-message metric labels** beyond `kind` — see cardinality above.

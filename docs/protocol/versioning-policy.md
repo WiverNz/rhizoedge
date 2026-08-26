@@ -10,6 +10,32 @@ hardware task, in a pot, with a ladder.
 
 ---
 
+## 0. Pre-implementation changes are not version bumps
+
+A version exists to protect **deployed** consumers. Until a contract has been
+implemented and deployed, there is nothing to protect, and bumping it would leave
+a version number nobody ever spoke.
+
+**Rule.** While a protocol version is unimplemented — no simulator, no firmware,
+no edge speaking it, nothing in the field — it may be changed freely. The change
+is recorded in the affected documents with a dated note explaining what moved and
+why, so a later reader does not conclude the rules were bent.
+
+Once the first implementation lands, §1 applies in full and every subsequent
+change follows the additive/breaking distinction.
+
+**This clause was used exactly once.** On 2026-08-26, before M1 began, v1 was
+revised: the four `telemetry/*` topics became one batched `telemetry` topic plus
+an `actuator` topic ([ADR-017](../adr/017-extensible-measurement-model.md)), and
+retained `policy` plus device→edge `events` topics were added
+([ADR-015](../adr/015-device-offline-autonomy.md)). No v2 was created because
+nothing had ever spoken v1.
+
+Invoking this clause after M1 completes would be a mistake, and the reviewer's
+question is simply: *has anything ever spoken this version?*
+
+---
+
 ## 1. MQTT protocol versioning
 
 ### Version placement
@@ -26,6 +52,12 @@ The version appears in **both** the topic (`rhizo/v1/...`) and the payload
 
 These MAY be done at any time without a version bump:
 
+- **Adding a `MeasurementKind` variant.** This is the designed extension point
+  ([ADR-017](../adr/017-extensible-measurement-model.md)): receivers decode
+  unrecognised kinds to `Unknown`, store them, and treat them as advisory. A new
+  kind therefore reaches an older edge as data rather than as an error.
+- **Adding a reserved actuator kind.** Same mechanism, same conservative
+  handling.
 - Adding a new **optional** field to any `data` object.
 - Adding a new **message kind** on a new topic (existing subscribers using
   `rhizo/v1/devices/+/#` will receive it and must ignore unknown kinds).

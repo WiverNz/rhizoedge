@@ -6,11 +6,14 @@
 
 Protocol sections 5.5 and 5.7 define the status heartbeat and the retained
 config flow, including the rule that a config with a version at or below the
-applied one is ignored — protection against retained-message replay.
+applied one is ignored — protection against retained-message replay. Section 5.12
+defines `edge.time`, the live (never retained) message the simulator's clock is
+set from.
 
 ## Goal
 
-Publish status correctly and apply retained configuration.
+Publish status correctly, apply retained configuration, and maintain the
+device wall clock from `edge.time`.
 
 ## Scope
 
@@ -20,6 +23,10 @@ Publish status correctly and apply retained configuration.
 - `config_version <= applied` ignored
 - Unrecognised config fields ignored
 - Applied config persisted (M2-007 provides the store)
+- `edge.time` applied only when `edge_time_ms >= last_applied_edge_time_ms`
+- `clock_synced` derived from monotonic age against `TIME_SYNC_MAX_AGE_SECONDS`
+- Status republished at most every 60 s while `clock_synced` is false, so the
+  edge has a trigger to resend `edge.time`
 
 ## Non-goals
 
@@ -40,6 +47,10 @@ a rollback republishes an old retained config and the device silently regresses.
 ## Acceptance criteria
 
 - [ ] Status is published on connect and on the heartbeat schedule.
+- [ ] An `edge.time` sets the clock and makes `clock_synced` true.
+- [ ] An `edge.time` **older** than the last applied one is ignored — the clock never moves backwards.
+- [ ] `clock_synced` becomes false once the last sync is older than `TIME_SYNC_MAX_AGE_SECONDS`.
+- [ ] While unsynchronised, status is republished at a bounded rate.
 - [ ] `applied_config_version` echoes an applied config.
 - [ ] A valid config is applied and reflected in behaviour (e.g. telemetry interval changes).
 - [ ] An invalid config is rejected and the previous one retained.
@@ -57,6 +68,8 @@ cargo test -p device-simulator config::
 
 - Config validation.
 - Version monotonicity.
+- `edge.time` monotonicity: a stale or duplicated message never moves the clock.
+- `clock_synced` ages out on the monotonic clock.
 - Smuggled-limit no-op.
 - Integration: retained config delivered to a late-connecting simulator.
 
@@ -69,4 +82,5 @@ cargo test -p device-simulator config::
 ```text
 crates/device-simulator/src/config.rs
 crates/device-simulator/src/status.rs
+crates/device-simulator/src/time_sync.rs
 ```

@@ -283,7 +283,7 @@ logging a per-message event at the wrong level
 | Plant never waters despite dry soil | `auto_watering_enabled` is `false` | it defaults to false by design ([ADR-011](../adr/011-configuration-and-secrets-model.md)) |
 | Watering cycle never completes in a test | real time, not virtual | set `--time-scale` |
 | `pending_cloud_events` grows forever | `cloud.enabled=true` with no cloud running | set it to `false`, or start the cloud |
-| Device rejects every command | `clock_synced: false` | check SNTP reachability; in the simulator, clear the `clock-unsync` fault |
+| Device rejects every command | `clock_synced: false` | confirm the edge is publishing `edge.time` on the device's `time` topic; in the simulator, clear the `clock-unsync` fault |
 
 ---
 

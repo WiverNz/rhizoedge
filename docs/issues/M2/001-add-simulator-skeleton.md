@@ -1,6 +1,6 @@
 # Issue M2-001 — Create the device-simulator binary skeleton
 
-**Milestone:** M2 · **PRD:** [PRD 020](../../prd/020-device-simulator.md) · **Depends on:** M1-014, M0-006
+**Milestone:** M2 · **PRD:** [PRD 020](../../prd/020-device-simulator.md) · **Depends on:** M1-019, M0-006
 
 ## Context
 
@@ -25,7 +25,7 @@ Create the binary with its CLI, configuration, and logging.
 
 ## Dependencies
 
-- M1-014
+- M1-019
 - M0-006
 
 ## Implementation notes

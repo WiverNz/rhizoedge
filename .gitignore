@@ -32,3 +32,6 @@ Thumbs.db
 
 # Rust build output from planning tooling
 /tools/docscheck/target/
+
+# Machine-specific Claude Code notes — never shared
+CLAUDE.local.md

@@ -2,6 +2,29 @@
 
 **Milestone:** M5 · **Status:** PLANNED · **Depends on:** M4
 
+> **Revised 2026-08-26.** `PlantProfile` is demoted to a **template**; the
+> authoritative per-plant configuration is now bindings plus per-measurement
+> policies ([ADR-016](../adr/016-plant-binding-and-policy-model.md)). The
+> milestone also authors and validates offline policies. Issues M5-013…M5-016
+> were added; M5-001…M5-004 expanded.
+>
+> Three consequences worth stating plainly:
+>
+> - **Thresholds belong to the plant, not the sensor.** The same room sensor is
+>   "fine" for one plant and "critical" for another, and the old model could not
+>   express that.
+> - **The actuator is optional.** A plant with no `ActuatorBinding` is a normal
+>   monitoring plant — the common case in a real home — and gets telemetry,
+>   history, thresholds, warnings, and critical alerts with no actuation path
+>   (SAFETY-018).
+> - **Warnings are not control conditions.** A critical temperature raises an
+>   alert and never waters anything.
+>
+> **Additional acceptance criteria:** two plants hold different thresholds for
+> one shared sensor; editing a profile does **not** rewrite existing plants;
+> `POST /water` on an actuator-less plant returns **422**, distinguishable from a
+> 409 safety refusal; no threshold crossing of any kind triggers actuation.
+
 ## Summary
 
 Introduce plants, reusable plant profiles, moisture trends, manual-watering

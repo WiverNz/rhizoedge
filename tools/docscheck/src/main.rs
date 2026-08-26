@@ -19,6 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MILESTONES: usize = 15; // M0..M14
+const SAFETY_INVARIANTS: usize = 20; // SAFETY-001..020
+const REQUIRED_ADRS: usize = 17; // ADR-001..017
 
 /// Files that are historical inputs rather than maintained artefacts. Their
 /// illustrative examples (e.g. "M1-003 -> M1-004 -> M2-002") are not real
@@ -38,6 +40,8 @@ const REQUIRED_ARCHITECTURE: &[&str] = &[
     "dependency-graph.md",
     "time-model.md",
     "configuration-model.md",
+    "connectivity-modes.md",
+    "offline-autonomy.md",
 ];
 
 const REQUIRED_PROTOCOL: &[&str] = &[
@@ -273,8 +277,8 @@ fn check_adrs(root: &Path, r: &mut Report) -> BTreeSet<String> {
         }
         ids.insert(id);
     }
-    // ADR-001..014 are named in the planning prompt as the minimum set.
-    for n in 1..=14 {
+    // ADR-001..017: the planning-prompt minimum plus those added since.
+    for n in 1..=REQUIRED_ADRS {
         let id = format!("{n:03}");
         r.check(ids.contains(&id), format!("required ADR-{id} is missing"));
     }
@@ -325,7 +329,7 @@ fn check_safety_registry(root: &Path, r: &mut Report) -> BTreeSet<String> {
     }
     let txt = read(&path);
     let ids = collect_ids(&path, "SAFETY-");
-    for n in 1..=12 {
+    for n in 1..=SAFETY_INVARIANTS {
         let id = format!("{n:03}");
         r.check(
             ids.contains(&id),

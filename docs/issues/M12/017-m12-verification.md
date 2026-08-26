@@ -1,6 +1,6 @@
-# Issue M12-013 — M12 verification and exit criteria
+# Issue M12-017 — M12 verification and exit criteria
 
-**Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-001, M12-002, M12-003, M12-004, M12-005, M12-006, M12-007, M12-008, M12-009, M12-010, M12-011, M12-012
+**Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-001, M12-002, M12-003, M12-004, M12-005, M12-006, M12-007, M12-008, M12-009, M12-010, M12-011, M12-012, M12-013, M12-014, M12-015, M12-016
 
 ## Context
 
@@ -36,6 +36,10 @@ Verify every PRD 120 acceptance criterion.
 - M12-010
 - M12-011
 - M12-012
+- M12-013
+- M12-014
+- M12-015
+- M12-016
 
 ## Implementation notes
 

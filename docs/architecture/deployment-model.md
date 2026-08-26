@@ -145,14 +145,22 @@ session persistence, so they still work.
 
 ## 4. Storage sizing and retention
 
-One device at a 300-second telemetry interval produces roughly 288 measurements
-per day. With soil + tank + weight rows and indexes, budget ~150 bytes/row:
+One device at a 300-second telemetry interval produces 288 sampling cycles per
+day. Since [ADR-017](../adr/017-extensible-measurement-model.md) the
+`measurements` table is narrow — **one row per sample, not per cycle** — so a
+device publishing six measurement kinds writes about 1 700 rows per day. Budget
+~150 bytes/row with indexes:
 
 | Devices | Rows/year | SQLite size/year |
 |---|---|---|
-| 1 | ~315 k | ~50 MB |
-| 5 | ~1.6 M | ~250 MB |
-| 20 | ~6.3 M | ~1 GB |
+| 1 | ~630 k | ~100 MB |
+| 5 | ~3.2 M | ~500 MB |
+| 20 | ~12.6 M | ~2 GB |
+
+The roughly sixfold increase over the previous wide-column design is the accepted
+cost of an extensible measurement set. The 90-day raw retention below caps the
+working set well under these annual figures, and M13 hourly downsampling bounds
+it further.
 
 Retention defaults (edge):
 
@@ -183,6 +191,38 @@ broker.
 
 ---
 
+## 5b. Optional observability profile (M13)
+
+An opt-in Compose profile adds Prometheus and Grafana:
+
+```bash
+docker compose --profile observability up -d
+```
+
+Without the flag nothing changes, and the M8 acceptance suite never references
+it. Operational metrics are scraped from `/metrics`; **plant history is not
+exported to Prometheus** and is read from SQLite or PostgreSQL through a SQL
+datasource. Grafana is an engineering dashboard, read-only, and never the way a
+normal user learns whether a plant is safe
+([ADR-010](../adr/010-observability-strategy.md)).
+
+## 5c. Site time source
+
+Devices take their wall clock from the edge **over the MQTT connection they
+already have** — there is no NTP daemon to install, supervise, or firewall, and
+no time-server field to configure
+([ADR-013](../adr/013-clock-and-time-semantics.md),
+[mqtt-v1.md](../protocol/mqtt-v1.md) §5.12).
+
+The edge host itself should keep its own clock disciplined by the usual means
+(systemd-timesyncd, chrony, or whatever the OS provides). That is ordinary host
+administration, not a Rhizo Edge component.
+
+Without this arrangement, losing the internet would leave every device with an
+unsynchronised clock and SAFETY-002 would refuse every water command site-wide —
+an internet outage would become an irrigation outage
+([connectivity-modes.md](connectivity-modes.md) §3).
+
 ## 6. Future topologies (M13–M14, planning only)
 
 ### Greenhouse
@@ -196,6 +236,18 @@ flow meter per zone                       ambient sensors
 The change is quantitative (more devices, zones as a first-class entity), not
 architectural. The data model already avoids assuming one measurement point per
 plant ([ADR-004](../adr/004-sqlite-edge-persistence-model.md) §6).
+
+### Server-side Kubernetes (optional, M14 planning only)
+
+Helm packaging is a **possible later option for server-side components only**:
+`cloud-api`, and optionally Prometheus and Grafana. PostgreSQL only when it is
+not operator-managed or external.
+
+**The plant-side edge controller is explicitly excluded.** It sits metres from a
+pump and must work when the network is down; putting it behind a scheduler adds
+failure modes to the one component whose purpose is surviving failure. Home
+deployment stays Compose or systemd, and **Kubernetes is never required for an
+indoor plant deployment** (M14-007).
 
 ### Field
 

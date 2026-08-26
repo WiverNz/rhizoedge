@@ -1421,7 +1421,7 @@ firmware/esp32-node/
 └── src/
     ├── main.rs           # pump-off FIRST, then init
     ├── board.rs          # pin assignments in one place
-    ├── net/              # wifi.rs, mqtt.rs, sntp.rs
+    ├── net/              # wifi.rs, mqtt.rs, time_sync.rs
     ├── sensors/          # trait defs + fake/ + real/
     ├── pump/             # trait def + fake/ + real/
     ├── safety/           # hard limits, dedup ring, TTL check

@@ -9,8 +9,10 @@ workspace's 1.98.0 pin — see "Rust version: the embedded toolchain exception".
 
 ## Context
 
-The firmware must do Wi-Fi, MQTT, SNTP, NVS persistence, GPIO for a pump, ADC or
-UART/RS485 for sensors, and a hardware watchdog. It must be written in Rust
+The firmware must do Wi-Fi, MQTT, NVS persistence, GPIO for a pump, ADC or
+UART/RS485 for sensors, and a hardware watchdog. (Wall time arrives from the Edge
+over MQTT — [ADR-013](013-clock-and-time-semantics.md) — so no SNTP client is
+required, though ESP-IDF provides one.) It must be written in Rust
 (hard project constraint) and must not block M0–M8.
 
 Two axes to decide: **which chip** and **which Rust stack**.
@@ -71,9 +73,11 @@ Reasons for `std` over `no_std`:
 3. **`std` means the shared contract crate can be used directly**, and much
    firmware logic can be unit-tested on the host with `cargo test` (see
    [ADR-008](008-shared-code-simulator-and-firmware.md)).
-4. **NVS and SNTP are first-class**, and both are load-bearing: NVS for command
-   dedup across reboot (SAFETY-001, SAFETY-011), SNTP for TTL evaluation
-   (SAFETY-002).
+4. **NVS is first-class and load-bearing**: command dedup across reboot
+   (SAFETY-001, SAFETY-011), the persisted offline policy and budget
+   (SAFETY-013, SAFETY-015). ESP-IDF also provides SNTP, which this design does
+   not use — wall time comes from the Edge over MQTT — but its availability is
+   worth noting should a future requirement need a second time source.
 
 The cost is a C toolchain in the build and a larger binary. Both are acceptable
 for a mains-powered indoor device. A battery-powered field node with a
@@ -190,7 +194,7 @@ firmware/esp32-node/
 └── src/
     ├── main.rs           # pump-off FIRST, then init
     ├── board.rs          # pin assignments in one place
-    ├── net/              # wifi.rs, mqtt.rs, sntp.rs
+    ├── net/              # wifi.rs, mqtt.rs, time_sync.rs
     ├── sensors/          # trait defs + fake/ + real/
     ├── pump/             # trait def + fake/ + real/
     ├── safety/           # hard limits, dedup ring, TTL check

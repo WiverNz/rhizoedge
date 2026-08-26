@@ -135,7 +135,8 @@ SCEN-nnn  name
 
 ### SCEN-025 clock unsynced
 - **Level** e2e · **Milestone** M8 · **Proves** SAFETY-002, SAFETY-012
-- **Actions** `--fault clock-unsync`, then trigger a watering condition
+- **Actions** `--fault clock-unsync` (no `edge.time` ever applied), then trigger
+  a watering condition
 - **Assertions** telemetry continues normally; the water command is refused with
   `reason: "clock_unsynced"`; no actuation; the lockout names the specific
   remedy rather than a generic error
@@ -340,6 +341,59 @@ SCEN-nnn  name
 
 ---
 
+### SCEN-073 time sync on connect enables commands
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-002
+- **Setup** device boots with an unset wall clock
+- **Actions** connect; let the edge observe the retained status; then issue a
+  water command
+- **Assertions** the edge publishes `edge.time` on the `time` topic with
+  `retain = false`; the device applies it and reports `clock_synced: true`; the
+  subsequent command is **accepted**; no command was accepted before the sync
+
+### SCEN-074 no time sync refuses commands
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-002, SAFETY-012
+- **Actions** suppress the edge's `edge.time` publication entirely; connect the
+  device; issue a water command
+- **Assertions** refused with `reason: "clock_unsynced"`; **telemetry and
+  monitoring continue normally**; the device republishes status at a bounded
+  rate while unsynchronised so the edge has a retry trigger
+
+### SCEN-075 aged-out time sync refuses commands
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-002, SAFETY-012
+- **Actions** sync the device, then stop `edge.time` refresh and advance the
+  monotonic clock past `TIME_SYNC_MAX_AGE_SECONDS`
+- **Assertions** `clock_synced` flips to false at the boundary and not before;
+  a water command is refused with `clock_unsynced`; the edge surfaces this as a
+  named lockout reason, not a generic error; a single fresh `edge.time` restores
+  acceptance
+
+### SCEN-076 stale or duplicate edge.time is ignored
+- **Level** unit + integration · **Milestone** M6 · **Proves** SAFETY-002
+- **Actions** apply `edge.time` at T; then deliver `edge.time` values at T−3600 s,
+  at T (duplicate), and out of order
+- **Assertions** the wall clock **never moves backwards**; only a value
+  `>= last_applied_edge_time_ms` is applied; a command whose `expires_at` has
+  passed cannot be made valid again by a replayed time message
+
+### SCEN-077 reconnect refuses until a fresh sync
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-002, SAFETY-015
+- **Actions** isolate a device until its sync ages out; restore the link; issue a
+  command in the same instant the connection comes back
+- **Assertions** the command is refused with `clock_unsynced` if it arrives
+  before the sync is applied; the very next command, after `edge.time`, is
+  accepted; offline autonomy was unaffected throughout because it uses monotonic
+  time
+
+### SCEN-078 periodic refresh keeps a long-connected device synced
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-002
+- **Actions** hold a device connected for 24 h virtual with no reconnects
+- **Assertions** the edge publishes `edge.time` every
+  `TIME_SYNC_INTERVAL_SECONDS`; `clock_synced` never becomes false; no `time`
+  message is ever published with `retain = true`; device/edge skew stays within
+  `MAX_CLOCK_SKEW` for the whole run
+
+---
+
 ## I. Multi-device and scale (M13)
 
 ### SCEN-080 cross-plant isolation
@@ -378,12 +432,172 @@ SCEN-nnn  name
 
 ---
 
+## J. Device isolation and offline autonomy (M6 sim, M8 e2e, M9 firmware)
+
+Mode C in [connectivity-modes.md](../architecture/connectivity-modes.md): the
+device cannot reach Wi-Fi, the broker, or the edge. These scenarios are the
+reason [ADR-015](../adr/015-device-offline-autonomy.md) exists, and every one of
+them must be runnable against the simulator with no hardware.
+
+### SCEN-090 Wi-Fi loss while monitoring, no automation
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-013
+- **Setup** device with sensors, **no offline policy provisioned**
+- **Actions** drop Wi-Fi; let soil dry well past `trigger_below`; hold 6 h virtual
+- **Assertions** the device keeps sampling and buffering; **it never actuates**;
+  the edge marks it offline and locks its plants on stale data; on reconnect the
+  buffered telemetry replays and history shows the dry period with no watering
+
+### SCEN-091 Wi-Fi loss before soil becomes dry, automation enabled
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-013, SAFETY-014
+- **Setup** valid policy `enabled: true`, soil comfortably above `trigger_below`
+- **Actions** drop Wi-Fi; let soil dry through the threshold; hold for
+  `confirm_duration` plus a full cycle
+- **Assertions** confirmation elapses on the **monotonic** clock; one bounded
+  dose of exactly `dose_ml` is delivered; absorption wait is honoured; the cycle
+  ends when moisture passes `resume_above`; total delivered ≤
+  `max_volume_per_window_ml`
+
+### SCEN-092 Wi-Fi loss during an edge-commanded dose
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-001, SAFETY-016
+- **Actions** issue a command; drop the link after the device accepts but before
+  the result is published
+- **Assertions** the device completes the dose and buffers the result; the edge
+  sees an `issued` command with no result and does **not** re-issue; on reconnect
+  the buffered result settles the original `command_id`; exactly one
+  `watering_event` exists
+
+### SCEN-093 No offline policy — refuse
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-013
+- **Actions** isolate a device that has never received a policy; drive soil dry
+- **Assertions** decision is `Refuse(NoValidPolicy)` on every evaluation; no
+  actuation; the refusal is buffered as an audit event and visible after
+  reconnection
+
+### SCEN-094 Corrupt offline policy — refuse and keep nothing
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-013, SAFETY-019
+- **Actions** corrupt the persisted policy blob (bit flip, truncation, bad CRC),
+  restart the device, drive soil dry
+- **Assertions** the corrupt policy is rejected at load; **no actuation**; a
+  `policy_invalid` audit event is buffered; the device does not fall back to any
+  default threshold
+
+### SCEN-095 Policy update interrupted by power loss
+- **Level** integration · **Milestone** M9 · **Proves** SAFETY-019
+- **Actions** publish policy v8 to a device running v7; cut power at each step of
+  validate → stage → verify → activate → acknowledge, one run per step
+- **Assertions** after every interruption **exactly one valid policy is active** —
+  v7 before activation, v8 after; never a mixture of fields from both; the device
+  reports the version it actually holds
+
+### SCEN-096 Offline autonomous watering respects the rolling budget
+- **Level** property + e2e · **Milestone** M6 · **Proves** SAFETY-014
+- **Actions** isolate; drive repeated dry cycles across 72 h virtual, more than
+  the budget allows
+- **Assertions** the device stops at `max_volume_per_window_ml` and refuses with
+  `BudgetExhausted`; the budget replenishes only as the rolling window actually
+  advances; after reconnection the edge's row-derived budget matches the device's
+  reported spend
+
+### SCEN-097 Device restart while isolated
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-014, SAFETY-015
+- **Actions** isolate; deliver one autonomous dose; power-cycle the device
+  repeatedly during the cooldown
+- **Assertions** the cooldown resumes from its **persisted remaining duration**
+  and is never shortened; `budget_used_ml` is not reset; no dose is delivered
+  before the cooldown genuinely elapses; the buffered dose event survives
+
+### SCEN-098 Isolated device with no usable wall clock
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-015, SAFETY-002
+- **Setup** device has never applied an `edge.time`
+- **Actions** isolate; drive a full dry cycle; then reconnect and send a command
+- **Assertions** **autonomous watering proceeds** on monotonic time (durations do
+  not need a calendar); the buffered events carry `device_time_ms: null` and a
+  valid `monotonic_ms`; the **edge command is still refused** with
+  `clock_unsynced` until an `edge.time` is applied
+
+### SCEN-099 Required measurement unavailable while isolated
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-017
+- **Actions** isolate a plant whose policy requires tank level and leak state;
+  disconnect the tank sensor; drive soil dry
+- **Assertions** refusal with `RequiredMeasurementUnavailable`; **no actuation**;
+  restoring the sensor allows the cycle to proceed; a plant whose policy does not
+  require pot weight is unaffected by a broken scale
+
+### SCEN-100 Offline watering followed by reconnection
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-016
+- **Actions** isolate; deliver two autonomous doses; restore the link
+- **Assertions** the device replays events in `device_seq` order and sets
+  `"complete": true`; the edge creates `watering_event` rows with
+  `origin = offline_autonomous`; the rolling budget absorbs them; the plant
+  leaves `Uncertain` **only after** replay completes; **the edge issues no dose
+  during reconciliation**
+
+### SCEN-101 Duplicate offline event replay
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-016
+- **Actions** replay the same buffered batch three times, out of order, with a
+  disconnect mid-batch
+- **Assertions** one `watering_event` per distinct `event_id`; the budget counts
+  each dose once; `event_id` values are byte-identical across replays
+
+### SCEN-102 Edge restart during reconciliation
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-016, SAFETY-010
+- **Actions** kill the edge midway through a replay; restart it
+- **Assertions** the device replays again because it never saw an
+  acknowledgement; no duplicate rows; the plant stays `Uncertain` across the
+  restart and is released only when replay completes; no dose is issued in
+  between
+
+### SCEN-103 Stale policy version after reconnection
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-019
+- **Actions** while the device is isolated, edit the policy twice on the edge
+  (v8, v9); reconnect; then have the broker redeliver the retained v8
+- **Assertions** the device applies v9; the redelivered v8 is **ignored** because
+  its version is lower; `applied_policy_versions` reports 9; the edge shows no
+  drift
+
+### SCEN-104 Event buffer overflow reports a gap
+- **Level** integration · **Milestone** M9 · **Proves** SAFETY-020
+- **Actions** isolate for long enough to overflow the ring, generating both
+  telemetry and audit events
+- **Assertions** **audit events survive**; telemetry is evicted first; a
+  `history.gap` event carries the lost `device_seq` range and count; the edge
+  stores it in `history_gaps` and the plant's history shows the gap explicitly
+
+### SCEN-105 Advisory measurement missing does not block
+- **Level** integration · **Milestone** M6 · **Proves** SAFETY-017
+- **Actions** isolate a plant with an advisory ambient-temperature binding;
+  remove that sensor; drive soil dry
+- **Assertions** the autonomous cycle proceeds normally; the missing advisory
+  measurement raises an event but **does not** gate actuation — the converse of
+  SCEN-099, and equally important
+
+### SCEN-106 Monitoring-only plant has no actuation path
+- **Level** integration · **Milestone** M5 · **Proves** SAFETY-018
+- **Setup** plant with sensor bindings and **no `ActuatorBinding`**
+- **Actions** attempt `POST /plants/{id}/water`; attempt to enable connected
+  automation; attempt to publish an offline policy for it
+- **Assertions** the API returns **422 `no_actuator_bound`** — distinguishable
+  from a 409 safety refusal; both automation attempts are rejected at validation;
+  the plant still receives telemetry, history, thresholds, warnings, and critical
+  alerts
+
+### SCEN-107 Long isolation with the edge host down
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-008, SAFETY-013, SAFETY-014
+- **Actions** stop the edge container entirely (not just the broker) for 48 h
+  virtual, with two plants: one provisioned for offline autonomy, one not
+- **Assertions** the provisioned plant is watered autonomously within its budget;
+  the unprovisioned plant is not watered at all; both devices buffer history;
+  when the edge returns, both reconcile without duplicates and the operator can
+  see exactly what happened while nobody was watching
+
+---
+
 ## Coverage matrix
 
 | Invariant | Scenarios |
 |---|---|
 | SAFETY-001 | SCEN-010, SCEN-011 |
-| SAFETY-002 | SCEN-025, SCEN-030, SCEN-031 |
+| SAFETY-002 | SCEN-025, SCEN-030, SCEN-031, SCEN-073, SCEN-074, SCEN-075, SCEN-076, SCEN-077, SCEN-078 |
 | SAFETY-003 | SCEN-040, SCEN-041 |
 | SAFETY-004 | SCEN-042, SCEN-043, SCEN-081 |
 | SAFETY-005 | SCEN-022, SCEN-023, SCEN-024, SCEN-070 |
@@ -393,9 +607,20 @@ SCEN-nnn  name
 | SAFETY-009 | SCEN-061 |
 | SAFETY-010 | SCEN-051, SCEN-052 |
 | SAFETY-011 | SCEN-026 |
-| SAFETY-012 | SCEN-014, SCEN-023, SCEN-025, SCEN-041, SCEN-043 |
+| SAFETY-012 | SCEN-014, SCEN-023, SCEN-025, SCEN-041, SCEN-043, SCEN-074, SCEN-075 |
+| SAFETY-013 | SCEN-090, SCEN-093, SCEN-094, SCEN-107 |
+| SAFETY-014 | SCEN-091, SCEN-096, SCEN-097, SCEN-107 |
+| SAFETY-015 | SCEN-097, SCEN-098, SCEN-077 |
+| SAFETY-016 | SCEN-092, SCEN-100, SCEN-101, SCEN-102 |
+| SAFETY-017 | SCEN-099, SCEN-105 |
+| SAFETY-018 | SCEN-106 |
+| SAFETY-019 | SCEN-094, SCEN-095, SCEN-103 |
+| SAFETY-020 | SCEN-104 |
 
-Every invariant has at least two scenarios except SAFETY-009 and SAFETY-011,
-which have one each by nature — SAFETY-009 is a differential test that
+SAFETY-018 and SAFETY-020 have one scenario each, because each states a single
+crisp property with no interesting variations; the rest carry two or more.
+
+Every invariant has at least two scenarios except SAFETY-009, SAFETY-011,
+SAFETY-018, and SAFETY-020, which have one each by nature — SAFETY-009 is a differential test that
 subsumes every other scenario, and SAFETY-011 is a single device behaviour
 verified again physically in M11.

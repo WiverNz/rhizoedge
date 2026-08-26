@@ -13,7 +13,7 @@ Decision record: [ADR-013](../adr/013-clock-and-time-semantics.md).
 | Clock | Source | Trustworthy? | Used for |
 |---|---|---|---|
 | **Edge clock** | host system time, NTP-synced | Yes — authoritative | staleness, daily cap, command issue/expiry, all storage |
-| **Device wall clock** | SNTP over Wi-Fi, may be unset | Only when `clock_synced == true` | evaluating command TTL on-device; advisory telemetry timestamp |
+| **Device wall clock** | **synchronised from the Edge over MQTT**, may be unset or aged out | Only when `clock_synced == true` | evaluating command TTL on-device; advisory telemetry timestamp |
 | **Device monotonic** | uptime since boot | Yes, but relative | ordering within a boot session, pump run duration |
 
 **Rule: the edge stamps `received_at` on every message from its own clock, and
@@ -74,6 +74,39 @@ daily cap computation nonsense.
 
 ---
 
+## 3b. Where the device's wall clock comes from
+
+Not from NTP. The Edge publishes `edge.time` on the live, **never retained**
+`time` topic — triggered by the device's own retained status and repeated every
+`TIME_SYNC_INTERVAL_SECONDS` while it is online
+([mqtt-v1.md](../protocol/mqtt-v1.md) §5.12,
+[ADR-013](../adr/013-clock-and-time-semantics.md)).
+
+```text
+device connects → publishes retained device.status
+Edge sees it    → publishes edge.time (retain=false, QoS 1)
+device applies  → records the monotonic instant → clock_synced = true
+Edge repeats every 300 s while the device is online
+```
+
+Three rules make it safe:
+
+- **Never retained.** A retained timestamp would set a reconnecting device's
+  clock backwards to the publication instant, making expired commands look valid.
+- **Monotonically non-decreasing.** An `edge.time` older than the last applied one
+  is ignored, so a delayed or replayed message cannot roll the clock back. A
+  device clock slightly *ahead* of the Edge expires commands sooner, which is the
+  safe direction.
+- **Age-bounded.** `clock_synced` is false once the last applied synchronisation
+  is older than `TIME_SYNC_MAX_AGE_SECONDS` (1800 s), measured on the monotonic
+  clock.
+
+No round-trip estimation or NTP-style discipline: the error budget here is three
+orders of magnitude wider than the mechanism's worst case, and a clock algorithm
+in firmware would be complexity with no benefit.
+
+---
+
 ## 4. Command TTL
 
 ```text
@@ -81,6 +114,7 @@ edge issues:   issued_at = edge_now
                expires_at = issued_at + profile.command_ttl (default 120 s)
 
 device checks: if !clock_synced         → reject(clock_unsynced)   ◄ SAFETY-012
+               (clock_synced == last edge.time applied < 1800 s ago)
                if device_now > expires_at → reject(expired)        ◄ SAFETY-002
                else                     → accept
 ```
@@ -94,19 +128,22 @@ gives no delivery timestamp. Since the device cannot tell, it must decline.
 
 Consequences, accepted deliberately:
 
-- The device must complete SNTP sync before it will water. This is a few seconds
-  after Wi-Fi association and is reported in the status message as
-  `clock_synced: true`.
-- A device that loses SNTP for a long period stops accepting water commands, and
-  the edge surfaces this as a lockout reason. Monitoring continues normally —
-  telemetry does not require a synced clock.
+- The device must be synchronised to the Edge before it will water. That normally
+  happens within a second of connecting — the Edge sends `edge.time` as soon as it
+  sees the device's retained status — and is reported as `clock_synced: true`.
+- A device whose synchronisation ages out past `TIME_SYNC_MAX_AGE_SECONDS` stops
+  accepting water commands, and the edge surfaces this as a lockout reason.
+  Monitoring continues normally — telemetry does not require a synced clock,
+  because the edge stamps arrival itself.
 - The default TTL of 120 s is short enough that a queued command is almost
   always stale by the time a reconnecting device sees it, which is the intent.
 
 ### Clock skew tolerance
 
-Devices and edge are both NTP/SNTP-synced on the same LAN, so skew is
-milliseconds in practice. The device tolerates `expires_at` up to
+Devices take their wall clock directly from the edge over MQTT, so skew is
+one-way broker latency — milliseconds on a LAN — plus oscillator drift since the
+last refresh, about 180 ms over the full 1800 s max age even at a poor ±100 ppm.
+Both are three orders of magnitude inside the allowance. The device tolerates `expires_at` up to
 `MAX_CLOCK_SKEW = 5 s` in the past before rejecting, to absorb jitter. Skew
 larger than 30 s between `device_time_ms` and `received_at` raises a
 `clock_skew` device event.

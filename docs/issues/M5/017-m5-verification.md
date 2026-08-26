@@ -1,6 +1,6 @@
-# Issue M5-013 — M5 verification and exit criteria
+# Issue M5-017 — M5 verification and exit criteria
 
-**Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M5-001, M5-002, M5-004, M5-003, M5-005, M5-006, M5-007, M5-008, M5-009, M5-010, M5-011, M5-012
+**Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M5-001, M5-002, M5-003, M5-004, M5-005, M5-006, M5-007, M5-008, M5-009, M5-010, M5-011, M5-012, M5-013, M5-014, M5-015, M5-016
 
 ## Context
 
@@ -24,8 +24,8 @@ Verify every PRD 050 acceptance criterion.
 
 - M5-001
 - M5-002
-- M5-004
 - M5-003
+- M5-004
 - M5-005
 - M5-006
 - M5-007
@@ -34,6 +34,10 @@ Verify every PRD 050 acceptance criterion.
 - M5-010
 - M5-011
 - M5-012
+- M5-013
+- M5-014
+- M5-015
+- M5-016
 
 ## Implementation notes
 

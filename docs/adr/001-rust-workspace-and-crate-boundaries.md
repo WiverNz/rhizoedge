@@ -42,8 +42,9 @@ CI job.
 
 | Crate | Kind | Depends on | Purpose |
 |---|---|---|---|
-| `rhizo-mqtt-contract` | lib, `no_std`+`alloc` | — | wire format, topic grammar, shared validators |
-| `rhizo-domain` | lib, std, pure | mqtt-contract | plant/irrigation logic, safety gate |
+| `rhizo-mqtt-contract` | lib, `no_std`+`alloc` | — | wire format, topic grammar, measurement kinds, shared validators |
+| `rhizo-policy` | lib, `no_std`+`alloc`, pure | mqtt-contract | offline policy types and `evaluate_offline` ([ADR-015](015-device-offline-autonomy.md)) |
+| `rhizo-domain` | lib, std, pure | mqtt-contract, policy | plant/irrigation logic, safety gate |
 | `rhizo-storage` | lib | domain, mqtt-contract | SQLite schema, repos, transactions |
 | `rhizo-telemetry` | lib | — | tracing + metrics wiring |
 | `rhizo-cloud-client` | lib | domain | HTTP client for the cloud |
@@ -52,14 +53,20 @@ CI job.
 | `device-simulator` | bin | mqtt-contract, telemetry, testkit | the reference device |
 | `cloud-api` | bin | mqtt-contract, telemetry | ingest + read APIs |
 
-### The four boundary rules
+### The five boundary rules
 
 1. `rhizo-mqtt-contract` depends on **nothing** in this workspace and performs
    no I/O. It is the crate the firmware imports.
-2. `rhizo-domain` performs **no I/O and never reads a clock directly**. Every
-   decision function is pure: `fn(inputs) -> decision`.
-3. `rhizo-storage` holds transactions but **no decisions**.
-4. Binaries depend on libraries. Libraries never depend on binaries. Integration
+2. `rhizo-policy` is `no_std`, pure, and depends only on `mqtt-contract`. It is
+   the **second** crate the firmware imports, and the only place the offline
+   decision rules exist. It never reads a clock: elapsed time arrives as a
+   parameter (`MonotonicMillis`).
+3. `rhizo-domain` performs **no I/O and never reads a clock directly**. Every
+   decision function is pure: `fn(inputs) -> decision`. It links `rhizo-policy`
+   so the Edge can validate a policy before publishing it and predict what an
+   isolated device will do.
+4. `rhizo-storage` holds transactions but **no decisions**.
+5. Binaries depend on libraries. Libraries never depend on binaries. Integration
    tests are the only thing allowed to depend on `edge-controller`.
 
 ### Shared dependency versions
@@ -68,15 +75,35 @@ The root workspace uses `[workspace.dependencies]` and every member writes
 `tokio = { workspace = true }`. This prevents the common failure where two
 crates disagree on a `chrono` or `uuid` version and types stop unifying.
 
-### Pinned toolchain
+### Rust version policy: MSRV 1.98.0, pin may move forward
 
-`rust-toolchain.toml` at the root pins **Rust 1.98.0** with
-`components = ["rustfmt", "clippy"]`. The UI workspace uses the same version
-plus the `wasm32-unknown-unknown` target. The firmware workspace pins its own
-([ADR-007](007-esp32-rust-framework-and-toolchain.md)) — the host workspace is
-never downgraded to match an embedded constraint. Pinning is required so that `-D warnings` in CI is
-reproducible — a new clippy lint in a later toolchain must not turn a green
-main branch red without a deliberate bump.
+Two distinct things, previously conflated:
+
+```text
+MSRV                  1.98.0   the minimum host Rust the project supports
+current tested pin    1.98.0   what rust-toolchain.toml selects today
+future pin            may move to any newer stable, deliberately
+```
+
+- **MSRV is 1.98.0.** The host workspace and the UI must keep compiling on it.
+- **`rust-toolchain.toml` currently pins exactly `1.98.0`**, and that file is the
+  truth about what CI and developers run today. An exact pin — never `stable` —
+  is required so that `-D warnings` is reproducible: a new clippy lint in a later
+  release must not turn a green main branch red with no code change.
+- **The pin may be raised to a newer stable** as a deliberate, standalone change.
+  Raising the pin does not by itself raise the MSRV.
+- **No change may silently raise the MSRV.** Using a feature stabilised after
+  1.98.0 is an architectural decision requiring an explicit note in the change
+  and an update to this ADR, `README.md`, and `ROADMAP.md` §6.
+- **Nothing is ever downgraded below 1.98.0**, including to match an embedded
+  toolchain constraint ([ADR-007](007-esp32-rust-framework-and-toolchain.md)).
+
+The UI workspace uses the same version plus the `wasm32-unknown-unknown` target.
+The firmware workspace pins its own toolchain independently.
+
+When it becomes useful, CI verifies **both** the MSRV and current stable, so an
+accidental MSRV bump fails the build rather than being discovered by a user on
+an older toolchain. That job is planned in M13, not required earlier.
 
 ## Alternatives considered
 
@@ -139,7 +166,9 @@ Negative, accepted:
 
 ## Follow-up
 
-- M0-002 creates the workspace skeleton and `[workspace.dependencies]`.
+- M0-002 created the workspace skeleton and `[workspace.dependencies]` (done).
+- M1-015 adds the `rhizo-policy` crate.
+- M13-014 adds the MSRV + current-stable CI matrix.
 - M0-003 pins the toolchain.
 - M1-011 adds the `no_std` verification job.
 - M1-013 adds `clippy.toml` with the disallowed-methods guard.

@@ -2,6 +2,25 @@
 
 **Milestone:** M1 · **Status:** PLANNED · **Depends on:** M0
 
+> **Revised 2026-08-26, before implementation.** Scope grew to cover the typed
+> `MeasurementKind` model and batched telemetry
+> ([ADR-017](../adr/017-extensible-measurement-model.md)), device capability
+> declaration ([ADR-016](../adr/016-plant-binding-and-policy-model.md)), the
+> offline policy and event payloads, and the new `rhizo-policy` crate
+> ([ADR-015](../adr/015-device-offline-autonomy.md)). Issues M1-014…M1-018 were
+> added and M1-006/007/008/010 expanded. This is the milestone that freezes the
+> contract, which is why the changes landed before it started.
+>
+> **Additional goals:** one canonical unit per measurement kind, enforced by a
+> `const fn` the firmware can use; capabilities declared rather than assumed; an
+> offline policy that is validated, versioned, and activated atomically; buffered
+> events whose `event_id` is stable across replay.
+>
+> **Additional acceptance criteria:** an unrecognised measurement kind decodes,
+> stores, and is treated as advisory rather than rejected; a policy omitting
+> `enabled` defaults to `false`; `rhizo-policy` builds `no_std`; no `chrono` type
+> appears in any offline payload.
+
 ## Summary
 
 Define the shared wire contract (`rhizo-mqtt-contract`) and the pure domain
@@ -62,6 +81,7 @@ guard a command  → validate_water_command(&cmd, &guard_state) → Verdict
 | F-010-05 | `Envelope<T>` with all envelope fields per protocol §4 |
 | F-010-06 | Payload types for all ten message kinds |
 | F-010-07 | Range constants and per-field validation returning which field failed |
+| F-010-13 | `EdgeTime` payload (`edge_time_ms`) plus `TIME_SYNC_INTERVAL_SECONDS` and `TIME_SYNC_MAX_AGE_SECONDS` constants |
 | F-010-08 | Inbound types use `#[serde(default)]`; unknown fields ignored |
 | F-010-09 | Safety-relevant enums decode unknown values to a conservative variant |
 | F-010-10 | Hard-limit constants (`FIRMWARE_MAX_*`) defined here |

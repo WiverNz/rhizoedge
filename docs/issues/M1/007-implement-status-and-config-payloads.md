@@ -16,7 +16,9 @@ Implement the status, LWT, and config payload types with their validation.
 
 - `DeviceStatus` with sensors map, limits, uptime, heap, RSSI, `applied_config_version`
 - The LWT payload shape
-- `DeviceConfig` with `config_version` and range validation
+- `DeviceConfig` with `config_version` and range validation — **no time-server field**; the device's clock comes from the Edge over MQTT
+- `EdgeTime` payload: a single `edge_time_ms` integer, published on the live `time` topic ([mqtt-v1.md](../../protocol/mqtt-v1.md) §5.12)
+- `TIME_SYNC_INTERVAL_SECONDS = 300` and `TIME_SYNC_MAX_AGE_SECONDS = 1800` as compile-time constants, **not configurable**
 - Config validation rejecting out-of-range values
 - Unknown config fields ignored
 
@@ -44,7 +46,9 @@ corresponding config field.
 
 ## Acceptance criteria
 
-- [ ] Status, LWT, and config payloads round-trip.
+- [ ] Status, LWT, config, and `edge.time` payloads round-trip.
+- [ ] `EdgeTime` carries exactly one field; there is no round-trip or offset field to misuse.
+- [ ] The config type has **no** time-server field, and one in the JSON is ignored.
 - [ ] Config values outside their ranges are rejected.
 - [ ] A config containing `max_ml_per_run` decodes successfully and the field is **absent** from the resulting type.
 - [ ] `status` accepts only `online` and `offline`.

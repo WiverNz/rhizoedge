@@ -1,6 +1,6 @@
 # Issue M10-001 — Define the real sensor adapter structure
 
-**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M9-015
+**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M9-019
 
 ## Context
 
@@ -24,7 +24,7 @@ Establish the adapter selection mechanism.
 
 ## Dependencies
 
-- M9-015
+- M9-019
 
 ## Implementation notes
 

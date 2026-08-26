@@ -78,7 +78,7 @@ on the driver gate is wrong — fix the hardware before continuing.
 **Proves** the M9/M10 telemetry path end to end.
 
 - [ ] Device connects to Wi-Fi and appears online in the edge API.
-- [ ] SNTP syncs; status reports `clock_synced: true`. Record how long this takes.
+- [ ] Edge time sync applies; status reports `clock_synced: true`. Record how long this takes after connect.
 - [ ] Soil readings appear and are physically plausible: probe in dry air reads
       low, in a glass of water reads high, in damp soil reads between.
 - [ ] Retained status survives an edge restart.
@@ -86,8 +86,8 @@ on the driver gate is wrong — fix the hardware before continuing.
 - [ ] Retained config is received and `applied_config_version` echoes it.
 - [ ] Disconnect Wi-Fi for 10 minutes. The device reconnects with backoff and
       does **not** flush a large telemetry backlog.
-- [ ] Block SNTP at the router. Confirm `clock_synced: false` is reported and
-      telemetry continues.
+- [ ] Withhold `edge.time` (stop the edge, or block the `time` topic). Confirm
+      `clock_synced: false` is reported after the max age and telemetry continues.
 
 ---
 
@@ -127,7 +127,7 @@ bypassing the edge entirely — this stage tests the device's independent veto.
       `over_daily_max` once the cap is reached.
 - [ ] Power-cycle the device, then repeat a previously executed `command_id` →
       still deduplicated (the NVS ring survived).
-- [ ] Block SNTP, reboot, then send a valid command → rejected with
+- [ ] Withhold `edge.time`, reboot, then send a valid command → rejected with
       `clock_unsynced`.
 
 **Pass criterion:** every one of these behaves identically to the simulator. Any

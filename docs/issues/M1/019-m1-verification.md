@@ -1,6 +1,6 @@
-# Issue M1-014 — M1 verification and exit criteria
+# Issue M1-019 — M1 verification and exit criteria
 
-**Milestone:** M1 · **PRD:** [PRD 010](../../prd/010-domain-and-mqtt-protocol.md) · **Depends on:** M1-001, M1-002, M1-003, M1-004, M1-005, M1-006, M1-007, M1-008, M1-009, M1-010, M1-011, M1-012, M1-013
+**Milestone:** M1 · **PRD:** [PRD 010](../../prd/010-domain-and-mqtt-protocol.md) · **Depends on:** M1-001, M1-002, M1-003, M1-004, M1-005, M1-006, M1-007, M1-008, M1-009, M1-010, M1-011, M1-012, M1-013, M1-014, M1-015, M1-016, M1-017, M1-018
 
 ## Context
 
@@ -37,6 +37,11 @@ Verify every PRD 010 acceptance criterion.
 - M1-011
 - M1-012
 - M1-013
+- M1-014
+- M1-015
+- M1-016
+- M1-017
+- M1-018
 
 ## Implementation notes
 

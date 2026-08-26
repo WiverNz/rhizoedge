@@ -1,6 +1,6 @@
-# Issue M3-016 — M3 verification and exit criteria
+# Issue M3-018 — M3 verification and exit criteria
 
-**Milestone:** M3 · **PRD:** [PRD 030](../../prd/030-edge-ingestion-and-storage.md) · **Depends on:** M3-001, M3-002, M3-003, M3-004, M3-005, M3-006, M3-007, M3-008, M3-009, M3-010, M3-011, M3-012, M3-013, M3-014, M3-015
+**Milestone:** M3 · **PRD:** [PRD 030](../../prd/030-edge-ingestion-and-storage.md) · **Depends on:** M3-001, M3-002, M3-003, M3-004, M3-005, M3-006, M3-007, M3-008, M3-009, M3-010, M3-011, M3-012, M3-013, M3-014, M3-015, M3-016, M3-017
 
 ## Context
 
@@ -38,6 +38,8 @@ Verify every PRD 030 acceptance criterion.
 - M3-013
 - M3-014
 - M3-015
+- M3-016
+- M3-017
 
 ## Implementation notes
 

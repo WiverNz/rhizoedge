@@ -2,6 +2,23 @@
 
 **Milestone:** M2 · **Status:** PLANNED · **Depends on:** M1
 
+> **Revised 2026-08-26.** The simulator must now model **true offline autonomy**
+> ([ADR-015](../adr/015-device-offline-autonomy.md)): declare capabilities,
+> persist and atomically activate an offline policy, evaluate it on monotonic
+> time while isolated, actuate through the *existing* gate, and buffer events for
+> idempotent replay. Issues M2-015…M2-018 were added; M2-003, M2-006, and M2-013
+> expanded for capabilities, batched telemetry, and isolation faults.
+>
+> The permissiveness rule extends unchanged: the simulator calls
+> `rhizo_policy::evaluate_offline` and `validate_water_command`, and has **no**
+> second actuation path. A simulator more permissive than firmware in offline
+> mode would make every SAFETY-013…020 test worthless.
+>
+> **Additional acceptance criteria:** an isolated simulator with no policy never
+> waters; one with a valid enabled policy waters within its budget; a reboot
+> during cooldown never shortens it; audit events survive a telemetry flood; a
+> replayed batch is byte-identical on `event_id` across replays.
+
 ## Summary
 
 A host Rust binary that behaves like an ESP32 plant node, speaks the identical

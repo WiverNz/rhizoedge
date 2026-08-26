@@ -1,6 +1,6 @@
 # Issue M4-001 — Implement device status ingestion
 
-**Milestone:** M4 · **PRD:** [PRD 040](../../prd/040-device-registry-and-health.md) · **Depends on:** M3-016
+**Milestone:** M4 · **PRD:** [PRD 040](../../prd/040-device-registry-and-health.md) · **Depends on:** M3-018
 
 ## Context
 
@@ -17,6 +17,7 @@ Ingest status messages into the device registry.
 - Record status, firmware and protocol version, `boot_id`, `clock_synced`, `applied_config_version`, uptime, heap, RSSI
 - Update `last_seen_at`
 - Record `online`/`offline` transitions as device events
+- **On every status received, publish `edge.time` to that device** — live, `retain=false`, QoS 1 (F-040-17)
 
 ## Non-goals
 
@@ -25,7 +26,7 @@ Ingest status messages into the device registry.
 
 ## Dependencies
 
-- M3-016
+- M3-018
 
 ## Implementation notes
 
@@ -43,6 +44,8 @@ not news.
 - [ ] A retained status is applied on subscribe.
 - [ ] An out-of-order older status does **not** overwrite a newer one.
 - [ ] Only transitions are logged at INFO.
+- [ ] Receiving a status triggers an `edge.time` publish to that device.
+- [ ] The `time` publish is **never** retained, asserted by a fresh-subscriber test.
 
 ## Verification
 
@@ -56,6 +59,9 @@ cargo test --test integration retained_status
 - Status update.
 - Transition events.
 - Out-of-order resolution.
+- SCEN-073 time sync on connect enables commands.
+- SCEN-074 no time sync refuses commands while monitoring continues.
+- SCEN-076 stale or duplicate `edge.time` is ignored.
 
 ## Documentation impact
 

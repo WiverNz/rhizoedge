@@ -4,6 +4,12 @@
 
 Accepted — 2026-08-25. Implemented in M1/M2, exercised in M9.
 
+**Extended 2026-08-26.** A **second** crate is now shared with the firmware:
+`rhizo-policy`, holding the offline evaluator
+([ADR-015](015-device-offline-autonomy.md)). The reasoning is identical to the
+reasoning for the shared command validator, and so is the rule: one
+implementation, one call site per consumer, no second copy of the decision.
+
 ## Context
 
 The project's central bet is that the Device Simulator can stand in for the
@@ -21,7 +27,7 @@ so sharing needs a deliberate mechanism.
 
 ## Decision
 
-### One crate is shared: `rhizo-mqtt-contract`
+### Two crates are shared: `rhizo-mqtt-contract` and `rhizo-policy`
 
 The firmware depends on it by **path**, with default features off:
 
@@ -31,10 +37,21 @@ The firmware depends on it by **path**, with default features off:
 rhizo-mqtt-contract = { path = "../../crates/mqtt-contract", default-features = false }
 ```
 
+```toml
+rhizo-policy = { path = "../../crates/policy", default-features = false }
+```
+
 A path dependency, not a version dependency: there is exactly one copy of the
 source on disk, so the firmware and the host workspace cannot drift to different
 versions. The cost is that the firmware workspace is not independently
 publishable, which nothing requires.
+
+**`rhizo-policy` is shared for exactly the same reason as the validator.** If the
+firmware had its own offline evaluator, every offline safety test in M6 and every
+isolation scenario in M8 would be exercising rules the hardware does not follow —
+the identical failure this ADR exists to prevent, one layer up. The Edge links it
+too, which additionally lets it reject a policy it cannot evaluate and predict
+what an isolated device will do.
 
 ### What is shared
 
@@ -155,8 +172,9 @@ without a board.
 
 ### Preventing skew — the mechanisms
 
-1. **Path dependency** — one source of truth on disk.
-2. **One validator** — no second implementation of the rules.
+1. **Path dependency** — one source of truth on disk, for both shared crates.
+2. **One validator and one offline evaluator** — no second implementation of
+   either rule set.
 3. **Shared fixtures** — both workspaces decode the same bytes.
 4. **CI builds the firmware whenever the contract changes** (M9-002); a
    `no_std` compile check runs on every change (M1-011).

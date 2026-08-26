@@ -1,6 +1,6 @@
-# Issue M4-011 — M4 verification and exit criteria
+# Issue M4-013 — M4 verification and exit criteria
 
-**Milestone:** M4 · **PRD:** [PRD 040](../../prd/040-device-registry-and-health.md) · **Depends on:** M4-001, M4-002, M4-003, M4-004, M4-005, M4-006, M4-007, M4-008, M4-009, M4-010
+**Milestone:** M4 · **PRD:** [PRD 040](../../prd/040-device-registry-and-health.md) · **Depends on:** M4-001, M4-002, M4-003, M4-004, M4-005, M4-006, M4-007, M4-008, M4-009, M4-010, M4-011, M4-012
 
 ## Context
 
@@ -33,6 +33,8 @@ Verify every PRD 040 acceptance criterion.
 - M4-008
 - M4-009
 - M4-010
+- M4-011
+- M4-012
 
 ## Implementation notes
 

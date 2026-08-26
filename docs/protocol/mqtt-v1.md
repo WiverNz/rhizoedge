@@ -6,6 +6,21 @@ independently and interoperate.
 
 **Conformance language:** MUST / MUST NOT / SHOULD / MAY as in RFC 2119.
 
+> **Revised 2026-08-26, before any implementation.** M1 had not started, so v1
+> was still unwritten and no compatibility was owed. Three changes:
+> the four `telemetry/*` topics became one batched `telemetry` topic carrying
+> typed measurement samples plus a separate `actuator` state topic
+> ([ADR-017](../adr/017-extensible-measurement-model.md)); a retained `policy`
+> topic and a device→edge `events` topic were added for offline autonomy
+> ([ADR-015](../adr/015-device-offline-autonomy.md)); and `device.status` now
+> declares device capabilities
+> ([ADR-016](../adr/016-plant-binding-and-policy-model.md)); and a live
+> `time` topic carries **Edge time synchronisation over MQTT**, replacing the
+> briefly-considered Edge-hosted NTP service
+> ([ADR-013](../adr/013-clock-and-time-semantics.md)). See
+> [versioning-policy.md](versioning-policy.md) §pre-implementation for why this
+> is not a v2.
+
 Related: [ADR-002](../adr/002-mqtt-topic-versioning-and-qos.md) (rationale),
 [versioning-policy.md](versioning-policy.md) (evolution rules),
 [ADR-013](../adr/013-clock-and-time-semantics.md) (time semantics).
@@ -56,32 +71,58 @@ Base namespace: `rhizo/v1/`
 
 | Topic | Publisher | Subscriber | QoS | Retained |
 |---|---|---|---|---|
-| `rhizo/v1/devices/{id}/telemetry/soil` | device | edge | 1 | no |
-| `rhizo/v1/devices/{id}/telemetry/weight` | device | edge | 1 | no |
-| `rhizo/v1/devices/{id}/telemetry/tank` | device | edge | 1 | no |
-| `rhizo/v1/devices/{id}/telemetry/pump` | device | edge | 1 | no |
+| `rhizo/v1/devices/{id}/telemetry` | device | edge | 1 | no |
+| `rhizo/v1/devices/{id}/actuator` | device | edge | 1 | no |
+| `rhizo/v1/devices/{id}/events` | device | edge | 1 | no |
 | `rhizo/v1/devices/{id}/status` | device | edge | 1 | **yes** |
 | `rhizo/v1/devices/{id}/config` | edge | device | 1 | **yes** |
+| `rhizo/v1/devices/{id}/policy` | edge | device | 1 | **yes** |
+| `rhizo/v1/devices/{id}/time` | edge | device | 1 | **no — never** |
 | `rhizo/v1/devices/{id}/commands/water` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/tare` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/calibrate` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/result` | device | edge | 1 | no |
 
+**`telemetry` carries a batch**, not one measurement kind. One message per
+sampling cycle, so the sample set shares one envelope and one deduplication key
+and cannot be split by a redelivery. Adding a measurement kind costs an enum
+variant, not a topic.
+
+**`policy` is separate from `config`** deliberately. Both are retained and
+versioned, but `config` tunes a device while `policy` authorises it to act
+alone; they have different validation, different rollback semantics, and very
+different safety weight ([ADR-015](../adr/015-device-offline-autonomy.md) §7).
+
+**`events` is device→edge replay** of history buffered while isolated. It is not
+a second telemetry channel: it carries events that already happened, with
+device-generated ids, deduplicated identically to everything else.
+
+**`time` MUST NOT be retained.** A retained timestamp is stale the instant it is
+stored, and a device applying one after a reconnect would set its clock to
+whenever the message was published. This is the one topic where retention would
+be actively harmful in a way that is easy to introduce by accident, so it is
+stated twice: here, and in the retention rules below.
+
 ### Retention rules — normative
 
-- `status` and `config` MUST be published with the retain flag set.
+- `status`, `config`, and `policy` MUST be published with the retain flag set.
 - **All other topics MUST NOT be published with the retain flag set.**
   Publishing a retained message on any `commands/*` topic is a protocol
   violation: the broker would redeliver it on every reconnect indefinitely,
   causing repeated watering. Publishing retained telemetry is also a violation:
   it would be served to new subscribers as though current.
+- **`time` in particular MUST NOT be retained.** A retained timestamp would be
+  delivered to a reconnecting device as though current, moving its clock
+  backwards to the moment of publication and making expired commands appear
+  valid — a direct route to violating SAFETY-002.
 
 ### Subscriptions
 
 - Edge subscribes to `rhizo/v1/devices/+/#`.
-- Device subscribes to `rhizo/v1/devices/{own_id}/config` and
+- Device subscribes to `rhizo/v1/devices/{own_id}/config`,
+  `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and
   `rhizo/v1/devices/{own_id}/commands/+` — and MUST NOT subscribe to
-  `commands/result`, which it publishes.
+  `commands/result`, `telemetry`, `actuator`, or `events`, which it publishes.
 
 ### QoS
 
@@ -97,7 +138,7 @@ Every payload on every topic is a JSON object with this envelope:
 ```json
 {
   "v": 1,
-  "kind": "telemetry.soil",
+  "kind": "telemetry.batch",
   "message_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a20",
   "device_id": "plant-node-01",
   "boot_id": "018fd6b0-1122-4000-8000-aabbccddeeff",
@@ -139,9 +180,11 @@ Notes:
 
 - All floats are JSON numbers. `NaN` and `Infinity` MUST NOT be emitted; a
   sensor producing a non-finite value MUST publish `null` for that field.
-- Units are encoded in field names (`_vwc`, `_c`, `_us_cm`, `_ml`, `_g`,
-  `_percent`, `_ms`, `_seconds`). Changing a unit therefore requires renaming a
-  field, which is a breaking change (§9).
+- **Measurement units come from the `kind`** (§5.1), never from the sender's
+  choice. The `unit` field is a consistency check and a mismatch is a rejection.
+- For non-measurement fields, units remain encoded in the field name (`_ml`,
+  `_ms`, `_seconds`, `_percent`), so changing one requires a rename and is
+  therefore a breaking change (§9).
 - Absent optional fields MAY be omitted or sent as `null`; the two are
   equivalent.
 
@@ -149,11 +192,47 @@ Notes:
 
 ## 5. Message kinds and payloads
 
-### 5.1 `telemetry.soil` → `telemetry/soil`
+### 5.1 Measurement kinds — normative
+
+Every measurement is a typed `kind` with **exactly one canonical unit** and a
+physical plausibility range, defined once in `rhizo-mqtt-contract` as compile-time
+data the firmware can use ([ADR-017](../adr/017-extensible-measurement-model.md)).
+
+| `kind` | Unit | Class | Valid range |
+|---|---|---|---|
+| `soil_moisture` | `vwc_percent` | scalar | 0.0 – 100.0 |
+| `soil_temperature` | `celsius` | scalar | −20.0 – 80.0 |
+| `soil_ec` | `us_cm` | scalar | 0 – 20000 |
+| `soil_ph` | `ph` | scalar | 0.0 – 14.0 |
+| `ambient_temperature` | `celsius` | scalar | −40.0 – 85.0 |
+| `ambient_humidity` | `percent_rh` | scalar | 0.0 – 100.0 |
+| `illuminance` | `lux` | scalar | 0.0 – 200000.0 |
+| `pot_weight` | `gram` | scalar | 0.0 – 100000.0 |
+| `tank_level` | `percent` | scalar | 0.0 – 100.0 |
+| `leak_state` | `boolean` | boolean | — |
+| `nitrate_concentration` | `mg_l` | scalar | 0.0 – 5000.0 |
+
+Rules:
+
+- A sender MUST use the canonical unit for the kind. The `unit` field is a
+  **check, not a choice**: a sample whose `unit` disagrees with its `kind` MUST be
+  rejected.
+- A receiver MUST decode an unrecognised `kind` to `Unknown`, MUST store the
+  sample, and MUST treat it as **advisory only** — it never gates actuation
+  (SAFETY-012).
+- `nitrate_concentration` is publishable **only** by a genuinely calibrated ion
+  sensor, and SHOULD carry `calibration_ref`. There is deliberately **no kind for
+  nitrogen, phosphorus, or potassium**: cheap "NPK" probes derive those from EC by
+  an undisclosed formula, and publishing them would be a false claim about a real
+  plant. EC is EC.
+
+### 5.2 `telemetry.batch` → `telemetry`
+
+One message per sampling cycle, carrying every sample taken in that cycle.
 
 ```json
 {
-  "v": 1, "kind": "telemetry.soil",
+  "v": 1, "kind": "telemetry.batch",
   "message_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a20",
   "device_id": "plant-node-01",
   "boot_id": "018fd6b0-1122-4000-8000-aabbccddeeff",
@@ -161,64 +240,118 @@ Notes:
   "device_time_ms": 1756121400000,
   "clock_synced": true,
   "data": {
-    "measurement_point": "default",
-    "moisture_vwc": 31.7,
-    "temperature_c": 21.4,
-    "ec_us_cm": 840
+    "batch_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a21",
+    "samples": [
+      { "point": "default", "kind": "soil_moisture",
+        "value": 31.7, "unit": "vwc_percent", "quality": "ok",
+        "sensor_id": "soil-0" },
+      { "point": "default", "kind": "soil_temperature",
+        "value": 21.4, "unit": "celsius", "quality": "ok",
+        "sensor_id": "soil-0" },
+      { "point": "default", "kind": "soil_ec",
+        "value": 840, "unit": "us_cm", "quality": "uncalibrated",
+        "sensor_id": "soil-0" },
+      { "point": "reservoir", "kind": "tank_level",
+        "value": 72.0, "unit": "percent", "quality": "ok",
+        "sensor_id": "tank-0" },
+      { "point": "tray", "kind": "leak_state",
+        "value": false, "unit": "boolean", "quality": "ok",
+        "sensor_id": "leak-0" }
+    ]
   }
 }
 ```
 
-| Field | Type | Required | Valid range |
+| Field | Type | Required | Rules |
 |---|---|---|---|
-| `measurement_point` | string | no, default `"default"` | device_id grammar |
-| `moisture_vwc` | float \| null | yes | 0.0 – 100.0 |
-| `temperature_c` | float \| null | no | −20.0 – 80.0 |
-| `ec_us_cm` | integer \| null | no | 0 – 20000 |
+| `batch_id` | UUID | yes | groups the cycle; stored so charts can align samples |
+| `samples` | array | yes | 1–64 entries; an empty batch MUST NOT be published |
+| `samples[].point` | string | no, default `"default"` | device_id grammar; e.g. `depth_30cm`, `ambient` |
+| `samples[].kind` | string | yes | §5.1 |
+| `samples[].value` | number \| boolean \| null | yes | `null` means "read failed"; see below |
+| `samples[].unit` | string | yes | MUST match the kind's canonical unit |
+| `samples[].quality` | string | yes | `ok` \| `uncalibrated` \| `suspect` \| `fault` |
+| `samples[].sensor_id` | string | no | MUST match a declared capability when present |
+| `samples[].calibration_ref` | string | no | opaque reference to a calibration record |
 
-`measurement_point` supports multi-probe and multi-depth devices without a
-protocol change. V1 devices send `"default"` or omit it.
+Normative behaviour:
 
-### 5.2 `telemetry.weight` → `telemetry/weight`
+- A read failure MUST publish the sample with `"value": null` and
+  `"quality": "fault"`. It MUST NOT publish the last good value, and MUST NOT
+  omit the sample silently — a repeated stale value would defeat both staleness
+  and stuck-sensor detection.
+- An uncalibrated sensor MUST publish `"quality": "uncalibrated"`. The edge stores
+  it and MUST NOT use it for control (SAFETY-005, SAFETY-017).
+- One sample out of range does **not** invalidate the batch. The receiver stores
+  that sample with a null value and raises `sensor_invalid`, keeping the rest
+  (§10).
+- A device MUST publish all samples of one cycle in one batch. Splitting a cycle
+  across messages breaks batch atomicity and is a conformance failure.
 
-```json
-"data": { "pot_weight_g": 5312.4, "stable": true }
-```
+### 5.3 `actuator.state` → `actuator`
 
-| Field | Type | Required | Range |
-|---|---|---|---|
-| `pot_weight_g` | float \| null | yes | 0.0 – 100000.0 |
-| `stable` | boolean | no, default `true` | `false` while the reading is settling |
-
-### 5.3 `telemetry.tank` → `telemetry/tank`
-
-```json
-"data": { "tank_level_percent": 72.0, "leak_detected": false }
-```
-
-| Field | Type | Required | Range |
-|---|---|---|---|
-| `tank_level_percent` | float \| null | yes | 0.0 – 100.0 |
-| `leak_detected` | boolean \| null | yes | — |
-
-`leak_detected: null` means the sensor is absent or faulty. The edge MUST treat
-`null` as `Unknown`, which is a lockout (SAFETY-012) — **not** as `false`.
-
-Leak state changes MUST be published immediately, not deferred to the next
-telemetry interval.
-
-### 5.4 `telemetry.pump` → `telemetry/pump`
-
-Published when the pump state changes, not periodically.
+Published when actuator state changes, not periodically. Actuator state is state,
+not a measurement, which is why it is not in the batch.
 
 ```json
 "data": {
-  "pump_active": false,
+  "actuator_id": "pump-0",
+  "kind": "irrigation_pump",
+  "active": false,
   "last_run_ms": 6120,
   "delivered_today_ml": 90.0,
   "faulted": false
 }
 ```
+
+### 5.4 `device.events` → `events` (device → edge)
+
+Replay of history buffered while the device was isolated
+([ADR-015](../adr/015-device-offline-autonomy.md) §6, §8). Sent in batches after
+reconnection, oldest first.
+
+```json
+"data": {
+  "replay": true,
+  "complete": false,
+  "events": [
+    { "event_id": "018fd7c0-…", "device_seq": 4411, "tier": "audit",
+      "kind": "watering.offline_autonomous",
+      "monotonic_ms": 8814000, "device_time_ms": null,
+      "detail": { "policy_version": 7, "delivered_ml": 35.0,
+                  "trigger_value": 26.4, "duration_ms": 4270 } },
+    { "event_id": "018fd7c1-…", "device_seq": 4412, "tier": "audit",
+      "kind": "offline.refused",
+      "monotonic_ms": 32400000,
+      "detail": { "reason": "tank_unknown" } },
+    { "event_id": "018fd7c2-…", "device_seq": 4413, "tier": "audit",
+      "kind": "history.gap",
+      "detail": { "from_seq": 4100, "to_seq": 4380,
+                  "lost_count": 281, "lost_tier": "telemetry" } }
+  ]
+}
+```
+
+| Field | Type | Rules |
+|---|---|---|
+| `replay` | boolean | `true` for buffered history, `false` for live events |
+| `complete` | boolean | `true` on the final batch; the edge holds the plant in `Uncertain` until it sees this |
+| `events[].event_id` | UUID | generated **once** at buffering time; MUST be stable across every replay |
+| `events[].device_seq` | integer | monotonic within `boot_id`; used to detect gaps |
+| `events[].tier` | string | `audit` \| `telemetry` |
+| `events[].monotonic_ms` | integer | elapsed since boot — always meaningful |
+| `events[].device_time_ms` | integer \| null | wall time if the clock was synced; `null` otherwise |
+
+Normative behaviour:
+
+- A device MUST NOT regenerate `event_id` on replay. A regenerated id defeats
+  deduplication and would create duplicate history (SAFETY-016).
+- A device MUST retain replayed events until the edge acknowledges them, so an
+  edge crash mid-reconciliation loses nothing.
+- A `history.gap` event MUST be emitted whenever eviction loses events, carrying
+  the lost `device_seq` range and count (SAFETY-020).
+- The edge MUST NOT issue a water command to a plant whose replay has not
+  reported `"complete": true` (SAFETY-016).
 
 ### 5.5 `device.status` → `status` (retained)
 
@@ -239,12 +372,28 @@ Published retained on connect, on config change, and at least every
     "uptime_ms": 912344,
     "free_heap_bytes": 143216,
     "rssi_dbm": -58,
-    "sensors": {
-      "soil":  { "present": true,  "healthy": true,  "errors": 0 },
-      "weight":{ "present": false, "healthy": true,  "errors": 0 },
-      "tank":  { "present": true,  "healthy": true,  "errors": 0 },
-      "leak":  { "present": true,  "healthy": true,  "errors": 0 }
+    "applied_policy_versions": { "monstera-01": 7 },
+    "connectivity": { "mode": "connected", "isolated_ms": 0 },
+
+    "capabilities": {
+      "sensors": [
+        { "sensor_id": "soil-0", "point": "default",
+          "kinds": ["soil_moisture", "soil_temperature", "soil_ec"],
+          "present": true, "healthy": true, "errors": 0,
+          "calibrated": true },
+        { "sensor_id": "tank-0", "point": "reservoir",
+          "kinds": ["tank_level"],
+          "present": true, "healthy": true, "errors": 0 },
+        { "sensor_id": "leak-0", "point": "tray",
+          "kinds": ["leak_state"],
+          "present": true, "healthy": true, "errors": 0 }
+      ],
+      "actuators": [
+        { "actuator_id": "pump-0", "kind": "irrigation_pump",
+          "present": true, "healthy": true }
+      ]
     },
+
     "limits": {
       "max_run_seconds": 20,
       "max_ml_per_run": 80.0,
@@ -258,6 +407,34 @@ Published retained on connect, on config change, and at least every
 one-way.** No message can change them (SAFETY-007).
 
 `status` MUST be one of `"online"` or `"offline"`.
+
+#### Capabilities — normative
+
+`capabilities` is how a device **declares** what it can do. The edge MUST NOT
+assume any capability that was not declared: `device == pump controller` is not
+an assumption this protocol permits
+([ADR-016](../adr/016-plant-binding-and-policy-model.md)).
+
+| Field | Rules |
+|---|---|
+| `sensors[].sensor_id` | device_id grammar; stable across reboots; unique per device |
+| `sensors[].kinds` | the measurement kinds this sensor can produce (§5.1) |
+| `sensors[].point` | default measurement point for its samples |
+| `sensors[].calibrated` | absent means "not applicable"; `false` means samples will carry `quality: "uncalibrated"` |
+| `actuators[].actuator_id` | stable, unique per device |
+| `actuators[].kind` | `irrigation_pump` in V1. `valve`, `grow_light`, `fan`, `heater`, `humidifier`, `fertiliser_dosing_pump` are **reserved** — representable, with no implementation and no automation semantics |
+
+A device with **no actuators** is a normal, fully supported device. An edge MUST
+reject a binding or a policy naming a capability the device did not declare.
+
+`applied_policy_versions` maps `plant_id` to the offline policy version currently
+active on this device, so the edge can detect policy drift the same way it
+detects config drift (§5.11).
+
+`connectivity.mode` is the device's own view: `connected`, or `isolated` with
+`isolated_ms` giving the elapsed duration. It is advisory — the edge determines
+liveness from message arrival — but it is what lets the UI say "this device ran
+alone for six hours" after a reconnection.
 
 ### 5.6 Last Will and Testament
 
@@ -323,6 +500,11 @@ Device behaviour:
 3. `applied_config_version` in the next `device.status` MUST reflect it.
 4. A config with `config_version` less than or equal to the applied version MUST
    be ignored (protects against retained-message replay after a rollback).
+
+**There is no time-server field.** The device's wall clock comes from the Edge
+over the MQTT connection it already has (§5.12), so there is nothing to
+configure: the Edge is reachable by definition or the device is isolated, in
+which case no configuration would help.
 
 **`config` MUST NOT contain safety limits.** The device ignores any field it
 does not recognise, so an attempt to smuggle `max_ml_per_run` has no effect.
@@ -430,7 +612,8 @@ delivered volume counts toward `FIRMWARE_MAX_DAILY_ML`.
     "duration_ms": 4878,
     "clamped": false,
     "reason": null,
-    "delivered_today_ml": 130.0
+    "delivered_today_ml": 130.0,
+    "origin": "edge_command"
   }
 }
 ```
@@ -456,6 +639,206 @@ published after the next boot — a result is ledger data, not a sample.
 
 ---
 
+### 5.11 `device.policy` → `policy` (retained, edge → device)
+
+The offline policy a device may act on when isolated
+([ADR-015](../adr/015-device-offline-autonomy.md)). One message carries the
+policies for every plant this device serves.
+
+```json
+{
+  "v": 1, "kind": "device.policy",
+  "message_id": "018fd7a1-…", "device_id": "plant-node-01",
+  "data": {
+    "policies": [
+      {
+        "plant_id": "monstera-01",
+        "policy_version": 7,
+        "enabled": true,
+
+        "actuator": {
+          "actuator_id": "pump-0",
+          "dose_ml": 35.0,
+          "max_doses_per_cycle": 3,
+          "absorption_wait_ms": 900000
+        },
+
+        "control_measurement": {
+          "kind": "soil_moisture",
+          "point": "default",
+          "trigger_below": 28.0,
+          "resume_above": 34.0,
+          "confirm_duration_ms": 1800000,
+          "max_age_ms": 900000
+        },
+
+        "required_measurements": [
+          { "kind": "tank_level",  "point": "reservoir", "max_age_ms": 1800000 },
+          { "kind": "leak_state",  "point": "tray",      "max_age_ms": 1800000 }
+        ],
+        "advisory_measurements": [
+          { "kind": "soil_temperature", "point": "default" }
+        ],
+
+        "limits": {
+          "cooldown_ms": 21600000,
+          "max_volume_per_window_ml": 300.0,
+          "window_ms": 86400000
+        },
+
+        "safety": {
+          "require_leak_clear": true,
+          "require_tank_above_percent": 15.0,
+          "require_pump_healthy": true
+        }
+      }
+    ]
+  }
+}
+```
+
+| Field | Rules |
+|---|---|
+| `policy_version` | `u32`, edge-owned, strictly monotonic per plant |
+| `enabled` | **default `false`**; offline autonomy is opted into per plant |
+| `actuator.dose_ml` | a **value**, never a formula; the only dose the device may deliver |
+| `control_measurement.resume_above` | MUST be > `trigger_below` — hysteresis |
+| `required_measurements` | absent or stale ⇒ refuse to actuate (SAFETY-017) |
+| `advisory_measurements` | recorded; MUST NOT gate actuation |
+| all durations | milliseconds, measured on the device's **monotonic** clock |
+
+#### Device behaviour — normative
+
+A device MUST apply **validate → stage → verify → activate → acknowledge**, and
+MUST NOT begin using a policy before activation completes (SAFETY-019):
+
+```text
+1. parse                      failure ⇒ keep active policy, report, STOP
+2. validate:
+     - actuator_id is a declared capability
+     - every referenced kind/point is producible by a declared sensor
+     - dose_ml     <= FIRMWARE_MAX_ML_PER_RUN
+     - dose_ml * max_doses_per_cycle <= max_volume_per_window_ml
+     - max_volume_per_window_ml <= FIRMWARE_MAX_DAILY_ML
+     - resume_above > trigger_below
+     - every duration > 0
+                              failure ⇒ keep active policy, report, STOP
+3. write to staging with CRC
+4. read back and verify CRC   failure ⇒ keep active policy, report, STOP
+5. atomically activate
+6. persist and report applied_policy_versions in device.status
+```
+
+Further requirements:
+
+- A policy whose `policy_version` is **less than or equal to** the applied
+  version MUST be ignored. This defends against a retained-message replay after a
+  rollback silently regressing the device.
+- Power loss at any step MUST leave exactly one valid policy active — the
+  previous one before step 5, the new one after (SAFETY-019).
+- A policy MUST NOT contain any field that could raise a firmware hard limit.
+  Unrecognised fields are ignored, so an attempt to smuggle `max_ml_per_run` has
+  no effect (SAFETY-007).
+- Removing a plant's policy is expressed by publishing it with
+  `"enabled": false` and a higher `policy_version`, **not** by omitting it. An
+  omitted plant retains its last policy, because a dropped MQTT message must not
+  be able to silently disable — or silently enable — autonomy.
+
+### 5.12 `edge.time` → `time` (edge → device, **never retained**)
+
+The device's wall clock is synchronised from the Edge over the MQTT connection it
+already has. There is no NTP client on the device and no NTP daemon on the Edge
+([ADR-013](../adr/013-clock-and-time-semantics.md)).
+
+```json
+{
+  "v": 1, "kind": "edge.time",
+  "message_id": "018fd8b2-…",
+  "device_id": "plant-node-01",
+  "data": { "edge_time_ms": 1756121400123 }
+}
+```
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `edge_time_ms` | integer | yes | the Edge's wall clock, Unix epoch ms UTC, sampled at publish time |
+
+#### Triggering — normative
+
+No request topic exists. The device's retained `device.status` already announces
+it, and that is the Edge's trigger:
+
+1. On receiving **any** `device.status` from a device, the Edge MUST publish
+   `edge.time` to that device.
+2. While a device is online, the Edge MUST publish `edge.time` to it at least
+   every `TIME_SYNC_INTERVAL_SECONDS`.
+3. A device holding no valid synchronisation SHOULD republish its retained
+   `device.status` (carrying `clock_synced: false`) at most once every 60 s until
+   it is synchronised. The existing status message is the request; adding a
+   dedicated request topic would be a second way to say the same thing.
+
+#### Applying a synchronisation — normative
+
+```text
+on receipt of edge.time:
+  if edge_time_ms < last_applied_edge_time_ms   → IGNORE (do not apply)
+  else:
+      set wall clock from edge_time_ms
+      last_applied_edge_time_ms := edge_time_ms
+      synced_at_monotonic       := monotonic_now
+```
+
+The **monotonically non-decreasing** rule is what makes a delayed or duplicated
+message harmless. MQTT gives no ordering guarantee across a reconnect, so an
+older `edge.time` can arrive after a newer one; applying it would move the device
+clock backwards and make expired commands look valid. Refusing to go backwards
+fails in the safe direction: a device clock slightly *ahead* of the Edge expires
+commands sooner, which is conservative.
+
+The device treats `edge_time_ms` as the time at **receipt**. The resulting error
+is one-way broker latency — milliseconds on a LAN, three orders of magnitude
+inside `MAX_CLOCK_SKEW_SECONDS`. **No round-trip estimation, offset filtering, or
+NTP-style discipline is required or permitted**; this mechanism only has to be
+comfortably inside the skew allowance, and a real clock algorithm here would be
+unjustified complexity in firmware.
+
+#### Validity — normative
+
+```text
+clock_synced  ==  (monotonic_now − synced_at_monotonic) < TIME_SYNC_MAX_AGE_SECONDS
+```
+
+`clock_synced` therefore means **"sufficiently synchronised to the Edge clock"**,
+not "an SNTP transaction succeeded".
+
+| Constant | Value | Reason |
+|---|---|---|
+| `TIME_SYNC_INTERVAL_SECONDS` | 300 | Edge push cadence while a device is online |
+| `TIME_SYNC_MAX_AGE_SECONDS` | 1800 | tolerates five consecutive missed syncs before commands are refused |
+
+Both are compile-time constants in `rhizo-mqtt-contract`, **not configurable**.
+Drift over the full 1800 s is about 180 ms even for a poor ±100 ppm oscillator,
+so the max age is not bounded by drift — it bounds how long a device may keep
+accepting commands without confirming that the Edge is still there and still
+agrees about the time.
+
+#### Reconnection and rejection — normative
+
+- After connecting or reconnecting, a device MUST NOT accept a water command
+  until synchronisation is established. Until then every water command is refused
+  with `reason: "clock_unsynced"` (§5.8 step 2).
+- **Telemetry, sampling, and status publication continue regardless.** A device
+  with no valid synchronisation is still a fully functioning sensor node; it is
+  only actuation on Edge authority that is withheld.
+- Losing MQTT means losing synchronisation refresh. Offline autonomy is
+  unaffected because it runs on the monotonic clock
+  ([ADR-015](../adr/015-device-offline-autonomy.md)) — but on reconnect, Edge
+  commands stay refused until a fresh `edge.time` is applied.
+- The Edge MUST NOT assume a reconnecting device is synchronised. It learns the
+  device's own view from `clock_synced` in `device.status`.
+
+---
+
 ## 6. Deduplication — normative
 
 **Receivers MUST deduplicate on `message_id` alone.**
@@ -476,6 +859,12 @@ actuate.
 
 `(device_id, boot_id, sequence)` MUST NOT be used as a dedup key. It is used
 only to detect gaps and regressions, which are recorded as diagnostic events.
+
+**Replayed offline events** (§5.4) deduplicate on their device-generated
+`event_id` through the same `processed_messages` transaction. The device MUST
+generate each `event_id` once, at buffering time, and MUST NOT regenerate it on
+replay — a regenerated id would defeat deduplication and create duplicate
+watering history (SAFETY-016).
 
 ---
 
@@ -498,11 +887,16 @@ Receivers MUST NOT assume ordered delivery. Specifically:
 
 1. Configure LWT before connecting.
 2. Connect with `clean_session = true`.
-3. Subscribe to `config` and `commands/+`.
-4. Publish retained `status: online`.
+3. Subscribe to `config`, `policy`, `time`, and `commands/+`.
+4. Publish retained `status: online`. This is what triggers the Edge to publish
+   `edge.time` (§5.12); until one is applied, the device MUST refuse water
+   commands with `clock_unsynced`.
 5. Resume telemetry on schedule. A device MUST NOT flush a backlog of buffered
-   telemetry beyond its 16-sample ring.
+   telemetry beyond its bounded ring.
 6. Republish any pending `command.result` from NVS.
+7. **Replay buffered offline events** (§5.4) in `device_seq` order, in batches,
+   setting `"complete": true` on the final batch. Events MUST be retained until
+   the edge acknowledges them.
 
 **Edge:**
 
@@ -511,6 +905,12 @@ Receivers MUST NOT assume ordered delivery. Specifically:
 2. Republish retained `config` for every known device if the broker may have
    lost retained state (detected by an absent retained status on resubscribe).
 3. Do not re-issue in-flight commands; reconcile them per SAFETY-010.
+4. **Hold every plant on a reconnecting device in `Uncertain`** until its event
+   replay reports `"complete": true` and has been committed. Issuing a dose on
+   top of an autonomous dose delivered moments ago is exactly the failure
+   SAFETY-016 prevents.
+5. Republish the retained `policy` if the broker may have lost retained state,
+   detected the same way as for `config`.
 
 ---
 
@@ -545,6 +945,11 @@ one broker indefinitely. Full process in
 | invalid `device_id` grammar | reject, `reason="device_id_grammar"` |
 | missing required envelope field | reject, `reason="envelope"` |
 | field outside its valid range | **store the message; set that field to null**; raise `sensor_invalid` |
+| one sample in a batch out of range | store the batch; null **that sample only**; raise `sensor_invalid`; keep the rest |
+| unrecognised `kind` in a sample | **store the sample**, mark it advisory-only; never gate actuation on it |
+| `unit` disagrees with the sample's `kind` | reject that sample, `reason="unit_mismatch"`; keep the rest of the batch |
+| empty `samples` array | reject the message, `reason="empty_batch"` |
+| replayed event with a duplicate `event_id` | ignored by the dedup path — the normal, expected outcome |
 | `NaN` / `Infinity` | treat as out of range |
 
 The last row is the important asymmetry: a message with one bad field is
@@ -573,6 +978,24 @@ An implementation is conformant when:
 - [ ] results are retried and survive a reboot
 - [ ] `validate_water_command` is the only actuation gate
 - [ ] unknown fields are ignored; unknown enum values map to a safe branch
+- [ ] telemetry is published as **one batch per sampling cycle**, never split
+- [ ] every sample carries `kind`, canonical `unit`, and `quality`
+- [ ] a read failure publishes `value: null` + `quality: "fault"`, never a stale value
+- [ ] an unrecognised `kind` is stored and treated as advisory only
+- [ ] `capabilities` is declared in status; the edge assumes nothing undeclared
+- [ ] `policy` is validated, staged, verified, then activated atomically
+- [ ] a policy with `policy_version` ≤ applied is ignored
+- [ ] an invalid or interrupted policy update leaves the previous policy active
+- [ ] buffered events keep a stable `event_id` across every replay
+- [ ] the final replay batch sets `"complete": true`
+- [ ] buffer overflow emits a `history.gap` event with range and count
+- [ ] audit-tier events are never evicted to make room for telemetry
+- [ ] `time` is published **non-retained**, QoS 1
+- [ ] the Edge sends `edge.time` on every `device.status` and at least every 300 s
+- [ ] an `edge.time` older than the last applied one is ignored, not applied
+- [ ] `clock_synced` reflects synchronisation **age**, not SNTP success
+- [ ] water commands are refused with `clock_unsynced` until sync is established
+- [ ] telemetry continues while unsynchronised
 
 Fixtures for automated conformance testing live in
 `test/fixtures/protocol/` and are run by both workspaces

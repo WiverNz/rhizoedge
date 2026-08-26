@@ -20,12 +20,24 @@ are detected.
 ### Topic grammar
 
 ```text
-rhizo/v1/devices/{device_id}/telemetry/{soil|weight|tank|pump}
-rhizo/v1/devices/{device_id}/status
-rhizo/v1/devices/{device_id}/config
+rhizo/v1/devices/{device_id}/telemetry          batch of typed measurements
+rhizo/v1/devices/{device_id}/actuator           actuator state
+rhizo/v1/devices/{device_id}/events             buffered/offline event replay
+rhizo/v1/devices/{device_id}/status             retained
+rhizo/v1/devices/{device_id}/config             retained
+rhizo/v1/devices/{device_id}/policy             retained — offline policy
 rhizo/v1/devices/{device_id}/commands/{water|tare|calibrate}
 rhizo/v1/devices/{device_id}/commands/result
 ```
+
+> **Revised 2026-08-26, before M1 implementation.** The original four telemetry
+> topics (`telemetry/{soil,weight,tank,pump}`) were replaced by one batched
+> `telemetry` topic plus a separate `actuator` state topic
+> ([ADR-017](017-extensible-measurement-model.md)), and two topics were added for
+> offline autonomy: retained `policy` and device→edge `events`
+> ([ADR-015](015-device-offline-autonomy.md)). Nothing was deployed at the time
+> of the change, so no compatibility was owed — see
+> [versioning-policy.md](../protocol/versioning-policy.md) §pre-implementation.
 
 - **Version in the topic, not only the payload.** `rhizo/v1/...` lets a v2 edge
   subscribe to both `rhizo/v1/#` and `rhizo/v2/#` during a migration, and lets a
@@ -37,6 +49,19 @@ rhizo/v1/devices/{device_id}/commands/result
   per-device credentials practical in [ADR-012](012-device-identity-and-provisioning.md).
 - **`commands/result` is a single topic**, not one per command type. Results are
   correlated by `command_id`, not by topic, so the edge subscribes once.
+- **One batched `telemetry` topic**, not one per measurement kind. A new kind
+  costs an enum variant rather than a topic, an ACL entry, and a firmware topic
+  table row; and the sample set from one sampling cycle shares one envelope, so
+  a redelivery cannot split it. Rationale in
+  [ADR-017](017-extensible-measurement-model.md).
+- **`policy` is separate from `config`.** Both are retained and versioned, but
+  they have different owners, different validation, and very different safety
+  weight: `config` tunes a device, `policy` authorises it to act alone. Merging
+  them would mean a telemetry-interval edit and an irrigation-rule edit shared a
+  version number and a rollback.
+- **`events` is device→edge only**, and carries buffered history after
+  isolation. It is not a second telemetry channel: it replays what already
+  happened, with device-generated ids, and is deduplicated identically.
 - **Version is also carried in the payload** (`"v": 1`) as a consistency check.
   A mismatch between topic version and payload version is a rejected message —
   it means something is misconfigured and guessing is worse than refusing.

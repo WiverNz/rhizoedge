@@ -1,7 +1,15 @@
 # Rhizo Edge — Documentation Index
 
 Everything needed to implement Rhizo Edge without rediscovering the
-architecture. **Planning is complete; implementation is in progress (M0).**
+architecture. **M0 is complete. M1 has not started.**
+
+> An architecture pass on 2026-08-26 added device offline autonomy
+> ([ADR-015](adr/015-device-offline-autonomy.md)), the per-plant binding and
+> policy model ([ADR-016](adr/016-plant-binding-and-policy-model.md)), and the
+> extensible measurement model
+> ([ADR-017](adr/017-extensible-measurement-model.md)). MQTT v1 was revised in
+> place before M1 froze it. Documents written before that date may describe the
+> device as having no irrigation intelligence — ADR-015 corrects that.
 
 **If you are here to write code, read these four, in this order:**
 
@@ -44,11 +52,13 @@ normalised out of the project plan.
 | [component-model.md](architecture/component-model.md) | Per-component responsibilities, interfaces, and prohibitions |
 | [data-flow.md](architecture/data-flow.md) | Ingestion, control, and cloud pipelines with transaction boundaries |
 | [deployment-model.md](architecture/deployment-model.md) | Dev, home, and future topologies; sizing and retention |
-| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…012** — rationale, enforcement, tests, milestone |
+| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…020** — rationale, enforcement, tests, milestone |
 | [failure-model.md](architecture/failure-model.md) | Every failure: detection, expected state, recovery, safety behaviour |
 | [time-model.md](architecture/time-model.md) | Clock authority, staleness, TTL, the rolling 24-hour window |
 | [configuration-model.md](architecture/configuration-model.md) | Five configuration layers and who may change what |
 | [dependency-graph.md](architecture/dependency-graph.md) | Milestone and issue execution order |
+| [connectivity-modes.md](architecture/connectivity-modes.md) | Cloud offline, site offline, device isolated — and what each degrades |
+| [offline-autonomy.md](architecture/offline-autonomy.md) | The offline policy model, evaluation, buffering, reconciliation |
 
 ## Architecture Decision Records
 
@@ -68,6 +78,9 @@ normalised out of the project plan.
 | [ADR-012](adr/012-device-identity-and-provisioning.md) | Device ID grammar, per-device credentials, ACLs |
 | [ADR-013](adr/013-clock-and-time-semantics.md) | Edge clock authority; unsynced device refuses commands |
 | [ADR-014](adr/014-failure-and-retry-policy.md) | Transient/Permanent/Fatal; full-jitter backoff |
+| [ADR-015](adr/015-device-offline-autonomy.md) | A provisioned device may water while isolated |
+| [ADR-016](adr/016-plant-binding-and-policy-model.md) | Per-plant bindings, roles, thresholds; optional actuator |
+| [ADR-017](adr/017-extensible-measurement-model.md) | Typed measurement kinds; batched telemetry; narrow table |
 
 ## Product requirements
 
@@ -104,7 +117,7 @@ One PRD per milestone.
 | Document | Contents |
 |---|---|
 | [strategy.md](testing/strategy.md) | The test pyramid, naming, CI gates, what is deliberately not tested |
-| [failure-scenarios.md](testing/failure-scenarios.md) | **SCEN-001…083** — the executable scenario catalogue and its invariant coverage matrix |
+| [failure-scenarios.md](testing/failure-scenarios.md) | **SCEN-001…107** — the executable scenario catalogue and its invariant coverage matrix |
 | [simulator-strategy.md](testing/simulator-strategy.md) | Physical model, fault catalogue, the permissiveness rule |
 | [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | HIL-1…HIL-7 gated checklists for real hardware |
 | [local-development.md](testing/local-development.md) | Running, debugging, inspecting, common problems |

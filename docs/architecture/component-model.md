@@ -11,6 +11,7 @@ firmware interchangeable.
 | Component | Path | Kind | Milestone introduced |
 |---|---|---|---|
 | `rhizo-mqtt-contract` | `crates/mqtt-contract` | lib (`no_std` + `alloc`) | M1 |
+| `rhizo-policy` | `crates/policy` | lib (`no_std` + `alloc`, pure) | M1 |
 | `rhizo-domain` | `crates/domain` | lib (std, pure) | M1 |
 | `rhizo-storage` | `crates/storage` | lib (sqlx/SQLite) | M3 |
 | `rhizo-telemetry` | `crates/telemetry` | lib (tracing/metrics) | M0 |
@@ -94,6 +95,39 @@ impl Topic {
 ```
 
 Full specification: [docs/protocol/mqtt-v1.md](../protocol/mqtt-v1.md).
+
+---
+
+## 2b. `rhizo-policy` — the offline decision subset
+
+The **second** crate shared with the firmware
+([ADR-015](../adr/015-device-offline-autonomy.md)). It holds the deliberately
+restricted rules an isolated device may evaluate, and nothing else.
+
+Owns:
+
+- `OfflinePolicy`, `OfflineState`, `OfflineInputs`, `OfflineDecision`, `RefuseReason`
+- `evaluate_offline(policy, state, inputs, elapsed) -> OfflineDecision`
+- the offline safety gate and rolling-budget accounting
+
+Constraints:
+
+- `#![no_std]` + `alloc`; depends only on `rhizo-mqtt-contract`
+- **Pure.** No I/O, no allocation beyond `alloc`, and **no clock**: elapsed time
+  arrives as a `MonotonicMillis` parameter, which is what makes SAFETY-015
+  structural rather than disciplined
+- Every absent-able input is `Option` or an explicit tri-state; the gate matches
+  exhaustively with no catch-all arm
+
+Must never:
+
+- fit a trend, generate a recommendation, score confidence, detect manual
+  watering, reason across plants, author a policy, or compute a dose size
+- be called from more than one place per consumer
+
+The Edge links it too, so it can validate a policy before publishing and predict
+what an isolated device will do. Full model:
+[offline-autonomy.md](offline-autonomy.md).
 
 ---
 
@@ -303,7 +337,7 @@ Owns:
 - sensor acquisition through a `SoilSensor` / `TankSensor` / `LeakSensor` /
   `Scale` trait set
 - pump actuation through a `Pump` trait
-- Wi-Fi, MQTT, SNTP, NVS
+- Wi-Fi, MQTT, NVS; wall time synchronised from the Edge over MQTT (no SNTP client)
 - **hard safety limits compiled into the binary and not remotely configurable**
 - command TTL validation, command deduplication across reboot
 - boot-safe state: pump off before anything else initialises
@@ -322,7 +356,7 @@ Must never:
 ## 11. Dependency direction
 
 ```text
-mqtt-contract  ◄── domain ◄── storage ◄── edge-controller
+mqtt-contract ◄── policy ◄── domain ◄── storage ◄── edge-controller
       ▲                          ▲              │
       │                          └──────────────┤
       ├── device-simulator                      ├── telemetry
@@ -333,7 +367,8 @@ mqtt-contract  ◄── domain ◄── storage ◄── edge-controller
 Rules enforced by review and by `rhizo-docscheck` where mechanical:
 
 1. `mqtt-contract` depends on nothing in this workspace.
-2. `domain` depends only on `mqtt-contract`.
+2. `policy` depends only on `mqtt-contract`, is `no_std`, and reads no clock.
+3. `domain` depends on `mqtt-contract` and `policy`.
 3. `storage` depends on `domain` and `mqtt-contract`.
 4. Binaries depend on libraries; libraries never depend on binaries.
 5. Nothing depends on `edge-controller` except integration tests.

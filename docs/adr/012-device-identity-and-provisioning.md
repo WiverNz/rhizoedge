@@ -114,7 +114,7 @@ command means one firmware image for all devices.
 ### Boot identity
 
 Each boot generates a fresh `boot_id` (UUIDv4 from the hardware RNG; v7 is not
-available before SNTP sync). Together with `sequence` it distinguishes messages
+available before the first Edge time sync). Together with `sequence` it distinguishes messages
 from different boot sessions, which a bare sequence number cannot do after a
 power cut. See [ADR-002](002-mqtt-topic-versioning-and-qos.md).
 

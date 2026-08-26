@@ -2,6 +2,22 @@
 
 **Milestone:** M3 · **Status:** PLANNED · **Depends on:** M1, M2
 
+> **Revised 2026-08-26.** The `measurements` table is now **narrow and
+> typed-kind** rather than wide columns
+> ([ADR-017](../adr/017-extensible-measurement-model.md)), and tables were added
+> for bindings, measurement policies, offline policies, capabilities, and
+> reported history gaps. Ingestion additionally handles replayed offline events
+> idempotently. Issues M3-016 and M3-017 were added; M3-003 and M3-009 expanded.
+>
+> The deduplicate-and-persist transaction is unchanged and is exactly what makes
+> replay safe: a replayed batch deduplicates on the device-generated `event_id`
+> through the same mechanism that protects live telemetry.
+>
+> **Additional acceptance criteria:** one sampling cycle produces rows sharing a
+> `batch_id`; a replayed batch ingested three times creates one row per
+> `event_id`; autonomous doses are stored with `origin = 'offline_autonomous'`;
+> a reported gap becomes a `history_gaps` row and is visible in the API.
+
 ## Summary
 
 The Edge Controller consumes MQTT telemetry, validates it, deduplicates QoS 1
@@ -135,12 +151,16 @@ during feature work) but only populates `devices`, `measurements`,
 Indexes that matter for M3:
 
 ```sql
-idx_meas_device_time  ON measurements(device_id, received_at DESC)
+idx_meas_lookup        ON measurements(device_id, point, kind, received_at DESC)
+idx_meas_batch         ON measurements(batch_id)
 idx_processed_received ON processed_messages(received_at)
 ```
 
-The first serves "latest sample", which the control loop will call every tick
-for every plant from M6 onward.
+`idx_meas_lookup` serves "latest control sample for this plant's binding", which
+the control loop calls every tick for every plant from M6 onward. It is the one
+query whose cost had to survive the move to a narrow typed-kind table
+([ADR-017](../adr/017-extensible-measurement-model.md)); `batch_id` preserves
+which readings came from the same sampling cycle.
 
 ## State model
 

@@ -5,6 +5,19 @@
 Accepted — 2026-08-25. Implemented across M1 (representation), M3 (stamping),
 M6 (staleness, TTL, rolling window).
 
+**Extended 2026-08-26** with two additions required by device offline autonomy
+([ADR-015](015-device-offline-autonomy.md)): devices obtain wall time **from the
+Edge over the existing MQTT connection**, so a site-offline outage does not
+disable watering; and **offline autonomy runs on monotonic elapsed time** rather
+than a wall clock. Everything below about edge-clock authority, staleness, and
+the rolling window is unchanged.
+
+**Superseded within the same day:** the first version of this extension had the
+Edge run an **NTP daemon** for the LAN. That was reopened before M1 and replaced
+with time synchronisation over MQTT — same guarantee, materially less to build
+and operate. See §The Edge is the site's time source, and
+[mqtt-v1.md](../protocol/mqtt-v1.md) §5.12 for the wire mechanism.
+
 ## Context
 
 Three safety invariants are time-derived:
@@ -74,6 +87,98 @@ Enforcement is not left to discipline — `clippy.toml` disallows
 `chrono::Utc::now` and `SystemTime::now` inside `rhizo-domain`
 ([ADR-001](001-rust-workspace-and-crate-boundaries.md), issue M1-013).
 
+### The Edge is the site's time source — over MQTT, not NTP
+
+**Devices get their wall clock from the Edge, on the MQTT connection they already
+have.** No NTP client on the device, no NTP daemon on the Edge, no public pool,
+and no time-server configuration field.
+
+The problem being solved: if devices synced from the internet, then losing the
+internet — mode B in
+[connectivity-modes.md](../architecture/connectivity-modes.md) — would leave
+every device with an unsynced clock and SAFETY-002 would refuse every water
+command site-wide. **An internet outage would become an irrigation outage**,
+which is exactly the coupling this project exists to prevent.
+
+The Edge is already the authority for staleness, for the rolling window, and for
+`received_at`. Making it the authority for the device's wall clock is consistent
+rather than novel.
+
+**Why MQTT rather than NTP.** The requirement is only that a device's clock be
+good enough to evaluate an absolute `expires_at` against a 5-second skew
+allowance on a command with a 120-second TTL. That is an enormously loose target:
+
+```text
+one-way MQTT latency on a LAN     ~ milliseconds
+oscillator drift over 30 minutes  ~ 180 ms at a poor ±100 ppm
+MAX_CLOCK_SKEW_SECONDS            5 s
+```
+
+A single timestamp delivered over the existing connection clears that by three
+orders of magnitude. Running a real NTP server would buy accuracy the system has
+no use for, at the cost of a daemon to install, supervise, and firewall on a
+Raspberry Pi, plus an SNTP client and its failure modes in firmware.
+
+**Mechanism** (normative detail in [mqtt-v1.md](../protocol/mqtt-v1.md) §5.12):
+
+```text
+device connects → publishes retained device.status
+Edge sees the status → publishes edge.time to that device   (live, retain=false)
+device applies it, records the monotonic instant
+Edge repeats every TIME_SYNC_INTERVAL_SECONDS while the device is online
+```
+
+Four properties do the safety work:
+
+1. **Never retained.** A retained timestamp is stale the moment it is stored, and
+   a reconnecting device applying one would set its clock backwards to the
+   publication time — making expired commands appear valid.
+2. **Monotonically non-decreasing.** An `edge.time` older than the last applied
+   one is ignored. MQTT does not guarantee ordering across a reconnect, so a
+   delayed message can arrive after a newer one; refusing to move the clock
+   backwards fails safe, because a device clock slightly *ahead* expires commands
+   sooner.
+3. **Age-bounded validity.** `clock_synced` means the last applied
+   synchronisation is younger than `TIME_SYNC_MAX_AGE_SECONDS`, measured on the
+   monotonic clock. It no longer means "an SNTP transaction succeeded".
+4. **No request topic.** The device's existing retained status is the trigger. A
+   device lacking synchronisation republishes its status, rate-limited, rather
+   than introducing a second way to ask the same question.
+
+Constants live in `rhizo-mqtt-contract` and are **not configurable**:
+`TIME_SYNC_INTERVAL_SECONDS = 300`, `TIME_SYNC_MAX_AGE_SECONDS = 1800`. The max
+age is not bounded by drift — it bounds how long a device may keep accepting
+commands without confirming the Edge is still there and still agrees.
+
+### Offline autonomy uses monotonic time, not wall time
+
+An isolated device (mode C) cannot refresh its clock. Naively that would disable
+autonomous watering for the same reason it disables commands — making the whole
+offline-autonomy capability useless in exactly the scenario it exists for.
+
+The resolution is that **every offline rule is a duration**:
+
+| Rule | Clock needed |
+|---|---|
+| dry confirmation | monotonic |
+| hysteresis dwell | monotonic |
+| cooldown between cycles | monotonic |
+| absorption wait | monotonic |
+| measurement staleness | monotonic |
+| rolling volume window | monotonic + persisted accumulator |
+| **edge command TTL** | **wall clock — unchanged; still refused when unsynced** |
+
+A monotonic timer measures durations correctly without knowing the date. So an
+isolated device with an unsynced wall clock **may** act autonomously while still
+refusing every edge command it cannot TTL-validate. SAFETY-002 is untouched.
+
+**Across a reboot** the monotonic clock resets. The device therefore persists the
+budget accumulator and the cooldown as a *remaining duration*, and on boot
+without a trustworthy wall clock **assumes no time has passed**: the cooldown
+resumes from its stored remainder and the budget is not replenished. A reboot can
+only ever delay watering, never grant more of it — the conservative direction
+(SAFETY-015).
+
 ### Accelerated virtual time in the simulator
 
 ```text
@@ -107,11 +212,17 @@ offline". Since it cannot tell, SAFETY-012 requires it to decline.
 
 Consequences, accepted deliberately:
 
-- A device must complete SNTP sync before it will water. This takes seconds
-  after Wi-Fi association and is reported as `clock_synced: true` in status.
-- A device that loses SNTP for a long period stops accepting water commands, and
-  the edge shows this as a lockout reason. **Monitoring continues normally** —
-  telemetry needs no synced clock, because the edge stamps arrival itself.
+- A device must be synchronised to the Edge before it will water. That normally
+  happens within a second of connecting, because the Edge sends `edge.time` as
+  soon as it sees the device's status, and it is reported as `clock_synced: true`.
+- A device whose synchronisation ages out past `TIME_SYNC_MAX_AGE_SECONDS` stops
+  accepting water commands, and the edge shows this as a lockout reason.
+  **Monitoring continues normally** — telemetry needs no synced clock, because
+  the edge stamps arrival itself.
+- Losing MQTT stops the refresh, so an isolated device eventually reports
+  `clock_synced: false`. That is correct and harmless: no Edge command can reach
+  it anyway, and offline autonomy runs on monotonic time. On reconnect, commands
+  stay refused until a fresh `edge.time` is applied.
 - The default TTL of 120 s is short enough that a command queued during a
   disconnect is almost always stale on arrival, which is the intent.
 
@@ -167,6 +278,21 @@ invites accidental naive/local timestamps.
 **Storing seconds.** Rejected: insufficient resolution for pump durations and
 for ordering messages within a second.
 
+**An Edge-hosted NTP daemon.** Considered and adopted briefly on 2026-08-26, then
+rejected before M1: it meets the requirement, but adds a service to install,
+supervise, and firewall on the edge host, plus an SNTP client in firmware, in
+exchange for microsecond accuracy against a 5-second allowance. The MQTT
+mechanism uses a connection that must already exist for anything to work.
+
+**Full NTP algorithm over MQTT** — round-trip estimation, offset filtering,
+clock discipline. Rejected as unjustified: the error budget is three orders of
+magnitude wider than the mechanism's worst case, and a clock algorithm in
+firmware is a maintenance liability with no benefit here.
+
+**A dedicated device→edge time-request topic.** Rejected: the retained
+`device.status` a device already publishes on connect is a clean trigger, and a
+second topic would be a second way to express the same intent.
+
 **A logical/Lamport clock instead of wall time.** Rejected: the safety rules are
 genuinely about physical elapsed time — soil dries in hours, not in ticks.
 
@@ -183,8 +309,10 @@ Positive:
 
 Negative, accepted:
 
-- Devices need working SNTP to water. A LAN without outbound NTP needs a local
-  NTP server — documented in M9's deployment notes.
+- A device only accepts Edge commands while it is in contact with the Edge — the
+  same connection carries both, so there is no case where commands arrive but
+  time does not. There is no separate time service to deploy, firewall, or
+  debug, and no dependency on outbound NTP from the site.
 - Two time representations (ms on MQTT, RFC 3339 on HTTP) is a seam where bugs
   can hide. Mitigated by converting in exactly one crate and round-trip testing.
 - `Clock` threaded through the domain adds a parameter to many signatures.
@@ -199,9 +327,19 @@ Negative, accepted:
   rolling window. *Mitigation:* the scale factor comes from one compose variable
   consumed by both services; M8-004 asserts the edge and simulator report the
   same scale at startup.
-- **SNTP unavailable on a home LAN** with restrictive firewall rules, silently
-  preventing all watering. *Mitigation:* `clock_unsynced` is a first-class
-  lockout reason shown in the UI with a specific remedy, not a generic error.
+- **A stale or replayed `edge.time`** moving a device clock backwards, making an
+  expired command appear valid. *Mitigation:* the monotonically-non-decreasing
+  acceptance rule, plus a test that replays an older timestamp and asserts it is
+  ignored (SAFETY-002).
+- **A device silently drifting out of synchronisation** because refreshes are
+  lost, then refusing every command. *Mitigation:* `clock_synced` is reported in
+  every status heartbeat and surfaced as a first-class lockout reason in the UI;
+  the device also republishes its status while unsynchronised, which re-triggers
+  the Edge push.
+- **An accidental `retain: true` on the `time` topic**, which would be the single
+  most damaging mistake available in this mechanism. *Mitigation:* stated twice
+  in the protocol, asserted by the existing retained-topic integration test
+  (M2-010) extended to cover `time`.
 
 ## Follow-up
 

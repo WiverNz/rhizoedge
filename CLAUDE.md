@@ -10,10 +10,11 @@ Working notes for Claude Code sessions on this repository.
 
 | | State |
 |---|---|
-| Planning artefacts | ✅ complete — commit `e5a3a2a`, 261 files |
-| M0-001…M0-013 | ✅ implemented and verified; working tree not yet committed |
-| M0 milestone | ✅ **DONE** — the five gate commands, the broker ACL checks, and the config tests all pass |
+| Planning artefacts | ✅ complete; revised by the 2026-08-26 architecture pass |
+| M0 milestone | ✅ **DONE** — implemented, verified, committed (`8fba4e7`) |
+| Architecture pass | ✅ done — offline autonomy, per-plant policy, extensible measurements (see §11) |
 | M1-001 | ⬜ **next** — create the `no_std` mqtt-contract crate skeleton |
+| M1 | 19 issues, none started |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -32,15 +33,19 @@ CLAUDE.md that lies about the current position is worse than none.
 ## 2. What this project is
 
 An offline-first Rust platform for soil monitoring and fail-safe irrigation:
-ESP32 devices → MQTT → a Rust edge controller that owns every watering decision
+ESP32 devices → MQTT → a Rust edge controller that owns watering decisions
 → SQLite → optional cloud. A Tauri desktop UI talks only to the edge's REST API.
 
-Two principles drive nearly every design decision:
+Three principles drive nearly every design decision:
 
 - **Edge-first.** The cloud is an append-only sink, disabled by default, and can
   vanish for a week without changing a single watering decision.
 - **Safety-first.** Missing, stale, invalid, or contradictory input means *do not
   water* plus a visible lockout — never *water anyway*.
+- **Offline-capable at every layer.** Three distinct outage modes, not one: cloud
+  offline, site offline, and **device isolated**. An isolated device that was
+  explicitly provisioned with a validated policy keeps the plant alive on its own
+  ([connectivity-modes.md](docs/architecture/connectivity-modes.md)).
 
 Read [README.md](README.md) once for the full picture.
 
@@ -59,8 +64,21 @@ In this order. Do not skip to the issue file.
    acceptance criteria
 
 When a decision seems arbitrary, the reason is in an ADR
-(`docs/adr/`). Fourteen of them, each with Context / Decision / Alternatives /
+(`docs/adr/`). Seventeen of them, each with Context / Decision / Alternatives /
 Consequences / Risks. Read the relevant one rather than re-deciding.
+
+The three newest are the ones most likely to surprise you if you learned this
+project from its earlier documents:
+
+- **[ADR-015](docs/adr/015-device-offline-autonomy.md)** — a device provisioned
+  with a validated policy **may** water while isolated. This amends ADR-003 and
+  ADR-006, which previously said the device had no irrigation intelligence.
+- **[ADR-016](docs/adr/016-plant-binding-and-policy-model.md)** — configuration
+  is per plant: bindings, roles, per-measurement thresholds. `PlantProfile` is now
+  only a template. The actuator is **optional**.
+- **[ADR-017](docs/adr/017-extensible-measurement-model.md)** — one batched
+  telemetry topic carrying typed `MeasurementKind` samples, and a narrow
+  typed-kind `measurements` table.
 
 ---
 
@@ -81,7 +99,7 @@ docs/
 ├── adr/               ADR-001…014 — why each decision was made
 ├── prd/               PRD 000…140 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
-├── testing/           strategy, 47 scenarios, simulator, HIL, local dev
+├── testing/           strategy, 71 scenarios, simulator, HIL, local dev
 └── issues/M0…M14/     204 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
@@ -108,9 +126,11 @@ read the relevant section before adding code to a crate.
 - **Rust only.** No Go, no Node.js, no TypeScript. The Tauri UI uses the
   Cargo/Trunk workflow specifically to avoid `npm`. A `package.json` appearing
   anywhere is a defect.
-- **Rust 1.98.0** for the host workspace and the UI. The firmware workspace may
-  pin a different ESP-compatible toolchain — that exception is isolated and
-  documented in ADR-007. **Never downgrade the host workspace to match it.**
+- **MSRV is Rust 1.98.0**; `rust-toolchain.toml` currently pins 1.98.0. The pin
+  may move to a newer stable as a deliberate change, but **no change may silently
+  raise the MSRV**, and nothing goes below 1.98.0. The firmware workspace may pin
+  a different ESP-compatible toolchain (ADR-007); the host workspace is never
+  downgraded to match it.
 - **`rhizo-domain` is pure.** No I/O, no `Utc::now()`. Clippy enforces the clock
   ban from M1-013 onward.
 - **`rhizo-mqtt-contract` is `no_std`.** It is the only crate shared with the
@@ -118,6 +138,16 @@ read the relevant section before adding code to a crate.
 - **One actuation gate.** `validate_water_command` lives in the contract crate;
   the simulator and the firmware each call it from exactly one place. A second
   implementation of the rules makes every simulator-based safety test worthless.
+- **One offline evaluator.** `rhizo_policy::evaluate_offline` is shared the same
+  way, for the same reason, and is also called from exactly one place per
+  consumer. It is pure and takes elapsed time as a parameter — it cannot read a
+  clock.
+- **Offline autonomy is opt-in and policy-driven.** No policy, an invalid policy,
+  or a missing required measurement all mean **no actuation**. A device never
+  invents a threshold.
+- **The actuator is optional.** A plant with no `ActuatorBinding` is a normal,
+  fully supported monitoring plant, not a degraded one. `POST /water` on it
+  returns 422, not 409.
 - **The UI has no MQTT dependency**, so `UI → MQTT pump command` does not
   compile. Keep it that way.
 - **No override / force / bypass parameter** on any watering endpoint or UI
@@ -195,17 +225,10 @@ are **not** real references. `docscheck` excludes them for that reason. Do not
 documentation index is `docs/README.md`; the project overview is the root
 `README.md`. They are different documents.
 
-**Docker lives in WSL2, not in Git Bash.** The Windows `docker.exe` on PATH has
-no Compose v2 plugin and no running daemon. Every Docker command in this
-repository is run through WSL:
-
-```bash
-wsl -e bash -lc "cd /mnt/d/Projects/rhizoedge && docker compose -f deploy/docker-compose.yml config"
-```
-
-Bind-mounted files under `/mnt/d` cannot take Unix permissions, so Mosquitto
-logs "world readable permissions" warnings about its passwd and ACL files on
-every start. They are a Windows filesystem artefact, not a misconfiguration.
+**Docker-based verification may need a Linux environment.** Compose, the
+integration tests that need a broker, and the M8 scenario suite are all
+exercised on Linux in CI. How a given developer reaches a Docker daemon is a
+machine detail — keep it in your own untracked `CLAUDE.local.md`, not here.
 
 **A denied MQTT publish still exits 0 under MQTT 3.1.1.** The broker ACKs and
 discards. Only MQTT v5 carries reason code 0x87 back to the client, which is
@@ -274,3 +297,29 @@ external risks in ROADMAP.md. The largest unresolved ones:
 
 Everything else has been decided. If a choice feels open, search the ADRs before
 re-opening it.
+
+---
+
+## 11. The 2026-08-26 architecture pass
+
+Requirements expanded after M0 shipped and before M1 started. Three ADRs landed,
+the MQTT v1 contract was revised in place, and 35 issues were added. If you
+learned this project from documents written earlier, these are the corrections:
+
+| Was | Is now |
+|---|---|
+| "Offline" meant the cloud was unreachable | Three modes: cloud offline, site offline, **device isolated** ([connectivity-modes.md](docs/architecture/connectivity-modes.md)) |
+| The device has no irrigation intelligence | A device with a **validated persisted policy** may water while isolated ([ADR-015](docs/adr/015-device-offline-autonomy.md)) |
+| One `PlantProfile` per plant | Bindings + roles + per-measurement thresholds; profile is a **template** ([ADR-016](docs/adr/016-plant-binding-and-policy-model.md)) |
+| Every plant has a pump | The actuator is **optional**; monitoring-only is first-class (SAFETY-018) |
+| Six hard-coded measurements, four telemetry topics | Typed `MeasurementKind` enum, **one batched telemetry topic** ([ADR-017](docs/adr/017-extensible-measurement-model.md)) |
+| Wide `measurements` table | Narrow typed-kind table with `batch_id` and `origin` |
+| 12 safety invariants | **20** — SAFETY-013…020 appended; the first twelve unchanged and never renumbered |
+| Rust pinned at exactly 1.98.0 | **MSRV 1.98.0**; the pin may move forward deliberately |
+| Devices sync SNTP from the internet | Devices take wall time from **the Edge over MQTT** (`edge.time`, never retained), so a site outage does not disable watering |
+
+Two things did **not** change and are worth restating: M0 was not reopened, and
+the cloud is still incapable of originating a command in any mode.
+
+New crate: `rhizo-policy` (`no_std`, pure) holds the offline evaluator and is the
+**second** crate shared with the firmware. `mqtt-contract ← policy ← domain`.
