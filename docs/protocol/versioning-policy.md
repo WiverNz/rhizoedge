@@ -59,8 +59,18 @@ These MAY be done at any time without a version bump:
 - **Adding a reserved actuator kind.** Same mechanism, same conservative
   handling.
 - Adding a new **optional** field to any `data` object.
-- Adding a new **message kind** on a new topic (existing subscribers using
-  `rhizo/v1/devices/+/#` will receive it and must ignore unknown kinds).
+- Adding a new **message kind** on a new topic (the edge, subscribing to
+  `rhizo/v1/devices/+/#`, will receive it and must ignore unknown kinds).
+
+  For an **edge→device** topic this is additive in a different and stronger
+  sense, because a device subscribes to exact topics
+  ([mqtt-v1.md](mqtt-v1.md) §3): a device built before the topic existed does
+  not subscribe to it and is never delivered it. `event.ack` §5.13 is the
+  worked example — such a device simply never learns its replay was persisted,
+  keeps its buffered history, and replays it again, which is the conservative
+  behaviour §5.4 required all along. **This only holds while the new topic's
+  absence is safe.** A new edge→device topic whose *absence* would change a
+  device's behaviour for the worse is not additive, whatever this list says.
 - Relaxing a validation range (widening what is accepted).
 - Adding a new optional field to the envelope.
 

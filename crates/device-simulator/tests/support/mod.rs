@@ -680,7 +680,8 @@ pub async fn clear_device_retained(broker: &TestBroker, device_id: &str) {
         rhizo_mqtt_contract::Topic::CommandResult(id.clone()),
         rhizo_mqtt_contract::Topic::Telemetry(id.clone()),
         rhizo_mqtt_contract::Topic::Actuator(id.clone()),
-        rhizo_mqtt_contract::Topic::Events(id),
+        rhizo_mqtt_contract::Topic::Events(id.clone()),
+        rhizo_mqtt_contract::Topic::EventsAck(id),
     ] {
         clear_retained(&cleaner.client(), &topic.as_string()).await;
     }

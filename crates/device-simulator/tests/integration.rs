@@ -1104,9 +1104,7 @@ async fn an_acknowledgement_over_the_broker_releases_history_and_is_never_retain
     // Nothing is waiting on `events/ack` for the next subscriber. A retained
     // acknowledgement is delivered on connect, so a fresh subscriber is exactly
     // the device's own position after a reconnect.
-    let mut fresh = broker
-        .edge_subscriber("test-ack-fresh", &ack_topic)
-        .await;
+    let mut fresh = broker.edge_subscriber("test-ack-fresh", &ack_topic).await;
     assert!(
         fresh
             .next_matching(Duration::from_secs(2), |m| m.topic == ack_topic)

@@ -16,6 +16,7 @@ started.**
 | Architecture pass | ✅ done — offline autonomy, per-plant policy, extensible measurements (see §11) |
 | M1 | 19 issues, **DONE** |
 | M2 | 19 issues, **DONE** — report in [docs/reports/M2.md](docs/reports/M2.md) |
+| Protocol seam cleanup | ✅ done (2026-08-28) — exact device subscriptions, `event.ack`, sealed gap markers; report in [docs/reports/M2.md](docs/reports/M2.md) §Amendment |
 | M3-001 | ⬜ **next** — create the edge-controller binary and task supervisor |
 
 **This section goes stale fastest. Verify it before trusting it:**
@@ -248,6 +249,30 @@ discards. Only MQTT v5 carries reason code 0x87 back to the client, which is
 why `scripts/verify-mosquitto-acls.sh` passes `-V 5` and asserts on output
 rather than exit status. Any future ACL test must do the same or it will pass
 unconditionally.
+
+**The device subscribes to seven *exact* topics, never a wildcard.** An earlier
+revision of protocol §3 specified `commands/+`, which also matches
+`commands/result` — the device's own output — and MQTT 3.1.1 has no "no local"
+option. The rule had to be "receive it but never act on it", which is a property
+of the dispatch code rather than of the wire. It is now
+`Topic::device_subscriptions` returning `[String; 7]`, and
+`Topic::device_command_filter` is gone. The cost: **adding a command kind means
+adding a subscription**, in the same change as the topic itself.
+
+**A `history.gap` marker is sealed when it is first sent.** It accumulates
+mutably while unsent — range widened, count raised — and
+`EventBufferState::seal_gap` turns it into an immutable event immediately before
+each replay, allocating its `device_seq` at that moment. Later losses open a new
+marker. Both halves are load-bearing: the edge deduplicates on `event_id`, so a
+marker that grew after publication would be discarded as a duplicate of the
+smaller first version; and a sequence allocated at the first loss would sit below
+events buffered afterwards, where a cumulative `event.ack` would bury a marker the
+edge had never seen. `replay_events()` therefore does **not** include a pending
+gap — a test that inspects the buffer directly must seal first, or reconnect.
+
+**An `event.ack` beyond the highest sequence a device issued is refused whole,
+not clamped.** Clamping would turn one corrupt field into "delete the entire
+buffer". Same shape for a mismatched `boot_id`: ignored, not best-effort.
 
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug.
