@@ -40,11 +40,11 @@ is Transient.
 
 ## Acceptance criteria
 
-- [ ] Every error type implements `Classify`.
-- [ ] No impl contains a catch-all arm.
-- [ ] Each variant has a test asserting its kind.
-- [ ] Adding a variant without classifying it fails to compile.
-- [ ] The implementation matches ADR-014's table exactly.
+- [x] Every error type implements `Classify`.
+- [x] No impl contains a catch-all arm.
+- [x] Each variant has a test asserting its kind.
+- [x] Adding a variant without classifying it fails to compile.
+- [x] The implementation matches ADR-014's table exactly.
 
 ## Verification
 

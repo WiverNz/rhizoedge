@@ -16,7 +16,8 @@ Consume MQTT reliably across broker restarts.
 ## Scope
 
 - `rumqttc` event loop with the edge client id and credentials
-- Subscribe to `rhizo/v1/devices/+/#`
+- Subscribe through `Topic::EDGE_SUBSCRIPTIONS` to the five device→Edge forms:
+  `telemetry`, `actuator`, `events`, `status`, and `commands/result`
 - **Re-subscribe on every reconnect**, never assumed to survive
 - Reconnect with M0-007 backoff, base 1 s cap 60 s, unlimited
 - Connection state tracked as Disconnected/Connecting/Connected/Subscribed
@@ -43,14 +44,18 @@ messages. An unbounded channel would grow until the process dies.
 
 The edge must start successfully with the broker down (failure-model 1.1).
 
+The narrow filters are equivalent to the normative Edge subtree for current
+v1 device-originated traffic while excluding every Edge→device form. They
+resolve wording that predated the final M1/M2 direction table.
+
 ## Acceptance criteria
 
-- [ ] The edge starts and stays up with the broker unavailable.
-- [ ] It connects when the broker appears.
-- [ ] Restarting the broker reconnects **and re-subscribes** — asserted by receiving messages afterwards.
-- [ ] Backoff delays increase and stay within bounds.
-- [ ] `mqtt_connection_state` and `mqtt_reconnects_total` reflect reality.
-- [ ] A slow pipeline applies backpressure rather than growing a queue.
+- [x] The edge starts and stays up with the broker unavailable.
+- [x] It connects when the broker appears.
+- [x] Restarting the broker reconnects **and re-subscribes** — asserted by receiving messages afterwards.
+- [x] Backoff delays increase and stay within bounds.
+- [x] `mqtt_connection_state` and `mqtt_reconnects_total` reflect reality.
+- [x] A slow pipeline applies backpressure rather than growing a queue.
 
 ## Verification
 

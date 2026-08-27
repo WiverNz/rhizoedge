@@ -38,11 +38,11 @@ counts rather than being a bare 'started'.
 
 ## Acceptance criteria
 
-- [ ] SIGTERM exits 0 with no partial transaction.
-- [ ] A hung task does not prevent exit past the timeout.
-- [ ] Startup restores the device registry from SQLite.
-- [ ] The startup log reports what was restored.
-- [ ] Ingest 50, restart, ingest 50 yields 100 rows with no duplicates.
+- [x] SIGTERM exits 0 with no partial transaction.
+- [x] A hung task does not prevent exit past the timeout.
+- [x] Startup restores the device registry from SQLite.
+- [x] The startup log reports what was restored.
+- [x] Ingest 50, restart, ingest 50 yields 100 rows with no duplicates.
 
 ## Verification
 

@@ -243,7 +243,8 @@ After changing a query or a migration:
 export DATABASE_URL="sqlite://$PWD/data/edge.sqlite"
 sqlx database create
 sqlx migrate run --source migrations/edge
-cargo sqlx prepare --workspace -- --all-targets
+cargo sqlx prepare --workspace
+cargo sqlx prepare --workspace --check   # CI/staleness check
 git add .sqlx
 ```
 

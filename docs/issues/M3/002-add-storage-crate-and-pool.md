@@ -40,11 +40,11 @@ compiler will not.
 
 ## Acceptance criteria
 
-- [ ] `connect` creates the file and applies all four pragmas.
-- [ ] Pragmas are verified on a **second** pooled connection, not just the first.
-- [ ] `begin`/`commit`/`rollback` work.
-- [ ] The in-memory constructor works for tests.
-- [ ] Concurrent readers proceed during a write (WAL confirmed).
+- [x] `connect` creates the file and applies all four pragmas.
+- [x] Pragmas are verified on a **second** pooled connection, not just the first.
+- [x] `begin`/`commit`/`rollback` work.
+- [x] The in-memory constructor works for tests.
+- [x] Concurrent readers proceed during a write (WAL confirmed).
 
 ## Verification
 

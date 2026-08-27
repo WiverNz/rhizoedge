@@ -4,9 +4,9 @@
 
 ## Context
 
-Protocol section 10's asymmetry: a message with one out-of-range field keeps
-its good fields and nulls the bad one. Discarding the whole message would throw
-away the reading the safety logic needs.
+Protocol section 10's asymmetry: a telemetry batch with one invalid typed
+sample keeps its good sibling samples and stores the invalid sample with null
+value columns. Discarding the whole batch would throw away useful readings.
 
 ## Goal
 
@@ -14,8 +14,10 @@ Write measurements and diagnostic events inside the dedup transaction.
 
 ## Scope
 
-- Range-validate each field; invalid becomes NULL plus a `sensor_invalid` event
-- Insert the measurement row with `received_at` and advisory `device_time_ms`
+- Validate every `MeasurementSample` through the shared kind specification;
+  invalid value columns become NULL plus a `sensor_invalid` event
+- Insert one narrow row per sample, preserving `batch_id`, point, kind, unit,
+  quality, calibration reference, `received_at`, and advisory `device_time_ms`
 - Update `devices.last_seen_at`, `boot_id`, `last_sequence`
 - Record `sequence_regression` when sequence decreases within a `boot_id`
 - Record `boot` when `boot_id` changes; **do not** flag the sequence restart
@@ -37,7 +39,7 @@ The boot_id/sequence interaction is subtle and easy to get wrong: a restart
 legitimately resets the sequence, so a naive regression check fires on every
 reboot and buries the real signal.
 
-`leak_detected: null` must be stored as NULL and must **not** become 0. M6 reads
+`leak_state` with a null value must be stored as NULL and must **not** become 0. M6 reads
 it as a tri-state, and a null-to-false conversion here would silently defeat
 SAFETY-012 later.
 
@@ -45,13 +47,13 @@ All of this happens inside the M3-008 transaction.
 
 ## Acceptance criteria
 
-- [ ] A valid message produces one measurement row.
-- [ ] `moisture_vwc: 150` stores NULL for that field, keeps the others, and raises `sensor_invalid`.
-- [ ] `NaN` is handled identically.
-- [ ] `leak_detected: null` stores NULL, not 0.
-- [ ] A sequence regression within a boot raises an event without rejecting.
-- [ ] A `boot_id` change raises `boot` and the sequence restart is **not** flagged.
-- [ ] An outbox row is written in the same transaction.
+- [x] A valid batch produces one row per typed sample sharing its `batch_id`.
+- [x] An out-of-range soil-moisture sample stores NULL value columns, keeps sibling rows, and raises `sensor_invalid`.
+- [x] `NaN` is handled identically.
+- [x] A null `leak_state` sample stores NULL, not 0.
+- [x] A sequence regression within a boot raises an event without rejecting.
+- [x] A `boot_id` change raises `boot` and the sequence restart is **not** flagged.
+- [x] An outbox row is written in the same transaction.
 
 ## Verification
 

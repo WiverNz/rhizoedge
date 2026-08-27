@@ -42,13 +42,13 @@ when the version actually changes.
 
 ## Acceptance criteria
 
-- [ ] All tables from ADR-004 exist with the documented columns.
-- [ ] All five indexes exist.
-- [ ] Migrations are idempotent — running twice is a no-op.
-- [ ] A failing migration exits the process non-zero.
-- [ ] A backup file appears when the schema version changes.
-- [ ] `commands.command_id` is the primary key.
-- [ ] Every timestamp column is INTEGER.
+- [x] All tables from ADR-004 exist with the documented columns.
+- [x] All five indexes exist.
+- [x] Migrations are idempotent — running twice is a no-op.
+- [x] A failing migration exits the process non-zero.
+- [x] A backup file appears when the schema version changes.
+- [x] `commands.command_id` is the primary key.
+- [x] Every timestamp column is INTEGER.
 
 ## Verification
 

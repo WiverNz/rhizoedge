@@ -44,6 +44,17 @@ pub enum TopicError {
 impl Topic {
     /// Edge wildcard subscription.
     pub const EDGE_SUBSCRIPTION: &'static str = "rhizo/v1/devices/+/#";
+    /// Narrow device-to-edge wildcard filters.
+    ///
+    /// These are equivalent to the normative subtree subscription for all v1
+    /// device-originated forms, while excluding every edge-to-device topic.
+    pub const EDGE_SUBSCRIPTIONS: [&'static str; 5] = [
+        "rhizo/v1/devices/+/telemetry",
+        "rhizo/v1/devices/+/actuator",
+        "rhizo/v1/devices/+/events",
+        "rhizo/v1/devices/+/status",
+        "rhizo/v1/devices/+/commands/result",
+    ];
     /// The seven subscriptions a device MUST establish, in protocol §3 order.
     ///
     /// **Exact topics, never a wildcard.** `commands/+` would also match

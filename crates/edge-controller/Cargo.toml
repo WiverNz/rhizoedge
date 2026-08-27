@@ -17,12 +17,29 @@ name = "edge-controller"
 path = "src/main.rs"
 
 [dependencies]
+axum = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 figment = { workspace = true }
+prometheus = { workspace = true }
+rhizo-domain = { path = "../domain" }
+rhizo-mqtt-contract = { path = "../mqtt-contract" }
+rhizo-storage = { path = "../storage" }
 rhizo-telemetry = { path = "../telemetry" }
+rumqttc = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+device-simulator = { path = "../device-simulator" }
+rhizo-testkit = { path = "../testkit" }
+sqlx = { workspace = true }
+tempfile = "3.27.0"
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true

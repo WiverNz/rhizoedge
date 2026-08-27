@@ -44,12 +44,12 @@ effect methods take `&mut Transaction` and there is no pool-based variant.
 
 ## Acceptance criteria
 
-- [ ] A new `message_id` returns `New` and effects apply.
-- [ ] A repeated `message_id` returns `Duplicate` and **nothing** is written.
-- [ ] A crash simulated between marker and effects leaves neither durable.
-- [ ] `SQLITE_BUSY` retries then fails cleanly with the message unprocessed.
-- [ ] `mqtt_duplicate_messages_total` increments on a duplicate.
-- [ ] There is no API to apply an effect without a transaction.
+- [x] A new `message_id` returns `New` and effects apply.
+- [x] A repeated `message_id` returns `Duplicate` and **nothing** is written.
+- [x] A crash simulated between marker and effects leaves neither durable.
+- [x] `SQLITE_BUSY` retries then fails cleanly with the message unprocessed.
+- [x] `mqtt_duplicate_messages_total` increments on a duplicate.
+- [x] There is no API to apply an effect without a transaction.
 
 ## Verification
 

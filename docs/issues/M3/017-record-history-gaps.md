@@ -14,9 +14,8 @@ Store reported gaps as first-class data.
 ## Scope
 
 - Handle `history.gap` events into the `history_gaps` table
-- Expose gaps through the device and plant event APIs
 - Raise a `history_gap` device event with severity `warning`
-- Metric `history_gaps_total{device_id,tier}`
+- Metric `history_gaps_total{tier}`
 
 ## Non-goals
 
@@ -46,13 +45,17 @@ correction of the first — store both.
 
 ## Acceptance criteria
 
-- [ ] A `history.gap` event creates a `history_gaps` row with range, count, and tier.
-- [ ] Gaps appear in the device event API.
-- [ ] An audit-tier gap is recorded at higher severity than a telemetry-tier gap.
-- [ ] The metric increments with the correct labels.
-- [ ] A duplicate gap event creates no second row.
-- [ ] Two distinct markers from the same device are stored as two gaps, not
+- [x] A `history.gap` event creates a `history_gaps` row with range, count, and tier.
+- [x] Gaps are available to the later M4 read API through durable repository rows.
+- [x] An audit-tier gap is recorded at higher severity than a telemetry-tier gap.
+- [x] The metric increments with the correct labels.
+- [x] A duplicate gap event creates no second row.
+- [x] Two distinct markers from the same device are stored as two gaps, not
       merged: they describe different losses.
+
+The earlier API wording belonged to M4 and the `device_id` metric label
+contradicted ADR-010's bounded-cardinality rule. M3 owns the durable row and a
+tier-only counter; M4 owns HTTP exposure.
 
 ## Verification
 

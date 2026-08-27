@@ -9,6 +9,17 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+rhizo-mqtt-contract = { path = "../mqtt-contract" }
+rhizo-telemetry = { path = "../telemetry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["migrate"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

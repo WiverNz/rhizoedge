@@ -38,11 +38,11 @@ future contributor reaching for it in the control loop because it is convenient.
 
 ## Acceptance criteria
 
-- [ ] The cache reflects the newest sample after ingest.
-- [ ] It is rebuilt correctly at startup.
-- [ ] A failed transaction does not update it.
-- [ ] The doc comment states it is not authoritative.
-- [ ] `grep` shows no use of it in any control path.
+- [x] The cache reflects the newest sample after ingest.
+- [x] It is rebuilt correctly at startup.
+- [x] A failed transaction does not update it.
+- [x] The doc comment states it is not authoritative.
+- [x] `grep` shows no use of it in any control path.
 
 ## Verification
 

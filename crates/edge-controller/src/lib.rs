@@ -17,3 +17,10 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod config;
+pub mod error;
+pub mod metrics;
+pub mod mqtt;
+pub mod pipeline;
+pub mod retention;
+pub mod state;
+pub mod supervisor;

@@ -38,10 +38,10 @@ added; check ADR-010's cardinality rules' rather than just showing two numbers.
 
 ## Acceptance criteria
 
-- [ ] The test passes at current cardinality.
-- [ ] Adding a `device_id` label to a hot counter fails it.
-- [ ] The threshold and its reasoning are documented.
-- [ ] The failure message explains what to check.
+- [x] The test passes at current cardinality.
+- [x] Adding a `device_id` label to a hot counter fails it.
+- [x] The threshold and its reasoning are documented.
+- [x] The failure message explains what to check.
 
 ## Verification
 

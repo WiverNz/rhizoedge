@@ -25,3 +25,29 @@
 //! - durations end in `_seconds`, byte counts in `_bytes`
 //! - gauges are named for the quantity, not the act of measuring it
 //!   (`devices_online`, not `devices_online_count`)
+/// MQTT messages received.
+pub const MQTT_MESSAGES_RECEIVED_TOTAL: &str = "mqtt_messages_received_total";
+/// MQTT decoding failures.
+pub const MQTT_DECODE_ERRORS_TOTAL: &str = "mqtt_decode_errors_total";
+/// MQTT duplicate messages.
+pub const MQTT_DUPLICATE_MESSAGES_TOTAL: &str = "mqtt_duplicate_messages_total";
+/// Successful reconnections.
+pub const MQTT_RECONNECTS_TOTAL: &str = "mqtt_reconnects_total";
+/// MQTT lifecycle state gauge.
+pub const MQTT_CONNECTION_STATE: &str = "mqtt_connection_state";
+/// Measurement samples processed.
+pub const MEASUREMENTS_PROCESSED_TOTAL: &str = "measurements_processed_total";
+/// Sensor validation failures.
+pub const SENSOR_ERRORS_TOTAL: &str = "sensor_errors_total";
+/// SQLite busy responses.
+pub const SQLITE_BUSY_TOTAL: &str = "sqlite_busy_total";
+/// Database storage bytes.
+pub const STORAGE_BYTES: &str = "storage_bytes";
+/// Supervised task panics.
+pub const TASK_PANICS_TOTAL: &str = "task_panics_total";
+/// MQTT pipeline latency.
+pub const MQTT_PROCESSING_DURATION_SECONDS: &str = "mqtt_processing_duration_seconds";
+/// Retention rows pruned.
+pub const ROWS_PRUNED_TOTAL: &str = "rows_pruned_total";
+/// Durable device-reported gaps.
+pub const HISTORY_GAPS_TOTAL: &str = "history_gaps_total";

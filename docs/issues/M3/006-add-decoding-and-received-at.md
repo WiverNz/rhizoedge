@@ -44,13 +44,13 @@ Do not use `device_time_ms` for anything except storage as advisory data.
 
 ## Acceptance criteria
 
-- [ ] Valid messages decode with `received_at` from the edge clock.
-- [ ] `device_time_ms` is stored but never used for freshness.
-- [ ] `v: 2` is rejected with reason `version`.
-- [ ] A device mismatch is rejected with reason `device_mismatch`.
-- [ ] A kind/topic mismatch is rejected with reason `kind_mismatch`.
-- [ ] Unknown topics are dropped and counted, not quarantined.
-- [ ] Every `DecodeError` variant maps to a distinct metric label.
+- [x] Valid messages decode with `received_at` from the edge clock.
+- [x] `device_time_ms` is stored but never used for freshness.
+- [x] `v: 2` is rejected with reason `version`.
+- [x] A device mismatch is rejected with reason `device_mismatch`.
+- [x] A kind/topic mismatch is rejected with reason `kind_mismatch`.
+- [x] Unknown topics are dropped and counted, not quarantined.
+- [x] Every `DecodeError` variant maps to a distinct metric label.
 
 ## Verification
 

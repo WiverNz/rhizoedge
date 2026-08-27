@@ -37,10 +37,10 @@ failure mode `sqlx` produces.
 
 ## Acceptance criteria
 
-- [ ] `.sqlx/` is committed.
-- [ ] CI verifies the cache is current.
-- [ ] Changing a query without regenerating fails CI.
-- [ ] The regeneration procedure is documented.
+- [x] `.sqlx/` is committed.
+- [x] CI verifies the cache is current.
+- [x] Changing a query without regenerating fails CI.
+- [x] The regeneration procedure is documented.
 
 ## Verification
 

@@ -250,8 +250,9 @@ counters.
       from SQLite.
 - [ ] Restarting Mosquitto results in reconnection **and** re-subscription;
       telemetry resumes without operator action.
-- [ ] A message with `moisture_vwc: 150` is stored with `moisture_vwc = NULL`,
-      the other fields intact, and a `sensor_invalid` event recorded.
+- [ ] A batch with one out-of-range soil-moisture sample stores that sample's
+      value columns as NULL, preserves valid sibling rows, and records a
+      `sensor_invalid` event.
 - [ ] Invalid JSON is quarantined and the next valid message is processed.
 - [ ] `SIGTERM` shuts down cleanly with exit 0 and no partial transaction.
 - [ ] A forced panic in the pipeline task exits the process non-zero.
@@ -272,5 +273,6 @@ counters.
 ## Future work
 
 - Hourly downsampling of old measurements (M13).
-- Multi-measurement-point ingestion beyond the reserved column (M14).
+- Field-readiness expansion of measurement points (M14); M3 already preserves
+  the v1 `point` value for every sample.
 - Backup/restore tooling (M13).

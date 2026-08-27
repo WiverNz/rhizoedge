@@ -83,6 +83,15 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
 
+      - name: Verify SQLx offline query metadata
+        run: |
+          cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite --locked
+          mkdir -p data
+          export DATABASE_URL="sqlite://$PWD/data/sqlx-ci.sqlite"
+          cargo sqlx database create
+          cargo sqlx migrate run --source migrations/edge
+          cargo sqlx prepare --workspace --check
+
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
@@ -159,6 +168,7 @@ jobs:
         run: |
           cargo test -p device-simulator --test integration
           cargo test -p device-simulator --test safety_007
+          cargo test -p edge-controller --test integration -- --test-threads=1
 
       - name: Broker logs on failure
         if: failure()

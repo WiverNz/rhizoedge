@@ -59,7 +59,7 @@ thiserror = "2.0.20"
 # Only a dev-dependency: `ServiceExt::oneshot` drives an axum router in a unit
 # test without binding a socket, so the control API is testable without a port.
 tower = { version = "0.5.3", features = ["util"] }
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.25.0", default-features = false, features = ["serde"] }

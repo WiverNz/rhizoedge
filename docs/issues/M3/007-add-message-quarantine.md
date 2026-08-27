@@ -41,12 +41,12 @@ message into an outage.
 
 ## Acceptance criteria
 
-- [ ] Invalid JSON is quarantined with its topic and error.
-- [ ] Payloads are truncated to 1 KiB.
-- [ ] The table never exceeds 1000 rows.
-- [ ] More than 10 malformed messages per minute from one device are counted but not stored.
-- [ ] A valid message following a quarantined one is processed normally.
-- [ ] `mqtt_decode_errors_total` increments regardless of rate limiting.
+- [x] Invalid JSON is quarantined with its topic and error.
+- [x] Payloads are truncated to 1 KiB.
+- [x] The table never exceeds 1000 rows.
+- [x] More than 10 malformed messages per minute from one device are counted but not stored.
+- [x] A valid message following a quarantined one is processed normally.
+- [x] `mqtt_decode_errors_total` increments regardless of rate limiting.
 
 ## Verification
 

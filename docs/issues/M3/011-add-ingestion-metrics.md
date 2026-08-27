@@ -38,11 +38,11 @@ is the point. Adding it here multiplies every series by the device count.
 
 ## Acceptance criteria
 
-- [ ] Every listed metric is exported.
-- [ ] Names come from constants, not string literals.
-- [ ] No `device_id` label appears on any ingestion metric.
-- [ ] `/metrics` output parses as valid exposition format.
-- [ ] Counters increment in the expected scenarios.
+- [x] Every listed metric is exported.
+- [x] Names come from constants, not string literals.
+- [x] No `device_id` label appears on any ingestion metric.
+- [x] `/metrics` output parses as valid exposition format.
+- [x] Counters increment in the expected scenarios.
 
 ## Verification
 

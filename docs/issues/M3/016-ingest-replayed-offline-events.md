@@ -65,19 +65,19 @@ boot, and correctly so.
 
 ## Acceptance criteria
 
-- [ ] A replayed batch is ingested and its events stored.
-- [ ] Replaying the same batch three times creates one row per `event_id`.
-- [ ] A batch split differently across messages still deduplicates correctly.
-- [ ] Autonomous doses are stored with `origin = 'offline_autonomous'`.
-- [ ] Replayed samples are stored with `origin = 'offline_replay'`.
-- [ ] `complete` is recorded so M6-020 can act on it.
-- [ ] An unacknowledged batch is safe to reprocess after an edge restart.
-- [ ] `event.ack` is published only after the transaction commits, and a
+- [x] A replayed batch is ingested and its events stored.
+- [x] Replaying the same batch three times creates one row per `event_id`.
+- [x] A batch split differently across messages still deduplicates correctly.
+- [x] Autonomous doses are stored with `origin = 'offline_autonomous'`.
+- [x] Replayed samples are stored with `origin = 'offline_replay'`.
+- [x] `complete` is recorded so M6-020 can act on it.
+- [x] An unacknowledged batch is safe to reprocess after an edge restart.
+- [x] `event.ack` is published only after the transaction commits, and a
       simulated commit failure publishes none.
-- [ ] `through_device_seq` never exceeds the highest contiguous committed
+- [x] `through_device_seq` never exceeds the highest contiguous committed
       sequence, including when batches commit out of order.
-- [ ] `event.ack` is published non-retained; a retained one is a test failure.
-- [ ] The acknowledged `boot_id` is the one the replay carried.
+- [x] `event.ack` is published non-retained; a retained one is a test failure.
+- [x] The acknowledged `boot_id` is the one the replay carried.
 
 ## Verification
 

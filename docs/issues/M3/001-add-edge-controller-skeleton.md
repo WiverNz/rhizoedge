@@ -42,11 +42,11 @@ supervisor's restart policy behaves correctly.
 
 ## Acceptance criteria
 
-- [ ] The binary starts, loads config, and initialises logging.
-- [ ] SIGTERM shuts down cleanly with exit 0.
-- [ ] A panic in any supervised task logs, increments the counter, and exits non-zero.
-- [ ] Task names appear in logs and in the metric label.
-- [ ] Shutdown waits for in-flight work up to a timeout.
+- [x] The binary starts, loads config, and initialises logging.
+- [x] SIGTERM shuts down cleanly with exit 0.
+- [x] A panic in any supervised task logs, increments the counter, and exits non-zero.
+- [x] Task names appear in logs and in the metric label.
+- [x] Shutdown waits for in-flight work up to a timeout.
 
 ## Verification
 

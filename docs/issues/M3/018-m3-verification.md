@@ -50,15 +50,15 @@ be quietly broken, because the connection metric looks healthy either way.
 
 ## Acceptance criteria
 
-- [ ] All gate commands pass.
-- [ ] Simulator telemetry appears in `measurements` with edge-stamped `received_at`.
-- [ ] A duplicate `message_id` produces one row.
-- [ ] Edge restart preserves history and restores the registry.
-- [ ] Broker restart reconnects **and re-subscribes**; telemetry resumes.
-- [ ] A partially invalid message stores good fields and nulls the bad one.
-- [ ] Invalid JSON is quarantined and the next message processes.
-- [ ] SIGTERM exits 0; a task panic exits non-zero.
-- [ ] ROADMAP.md updated and the report recorded.
+- [x] All gate commands pass.
+- [x] Simulator telemetry appears in `measurements` with edge-stamped `received_at`.
+- [x] A duplicate `message_id` produces one row.
+- [x] Edge restart preserves history and restores the registry.
+- [x] Broker restart reconnects **and re-subscribes**; telemetry resumes.
+- [x] A partially invalid message stores good fields and nulls the bad one.
+- [x] Invalid JSON is quarantined and the next message processes.
+- [x] SIGTERM exits 0; a task panic exits non-zero.
+- [x] ROADMAP.md updated and the report recorded.
 
 ## Verification
 

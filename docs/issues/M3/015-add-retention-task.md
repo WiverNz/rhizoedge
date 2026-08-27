@@ -42,12 +42,12 @@ future 'tidy up old data' change is exactly how a ledger gets destroyed.
 
 ## Acceptance criteria
 
-- [ ] `processed_messages` older than 7 days are pruned.
-- [ ] Synced outbox rows older than 24 hours are pruned.
-- [ ] Quarantine is capped at 1000 rows.
-- [ ] Measurements older than 90 days are pruned.
-- [ ] `watering_events`, `commands`, and `device_events` row counts are **unchanged** after a run over old data.
-- [ ] Deletes are batched and do not stall ingestion.
+- [x] `processed_messages` older than 7 days are pruned.
+- [x] Synced outbox rows older than 24 hours are pruned.
+- [x] Quarantine is capped at 1000 rows.
+- [x] Measurements older than 90 days are pruned.
+- [x] `watering_events`, `commands`, and `device_events` row counts are **unchanged** after a run over old data.
+- [x] Deletes are batched and do not stall ingestion.
 
 ## Verification
 
