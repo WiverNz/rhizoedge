@@ -2,21 +2,22 @@
 
 **Milestone:** M2 · **Status:** PLANNED · **Depends on:** M1
 
-> **Revised 2026-08-26.** The simulator must now model **true offline autonomy**
-> ([ADR-015](../adr/015-device-offline-autonomy.md)): declare capabilities,
-> persist and atomically activate an offline policy, evaluate it on monotonic
-> time while isolated, actuate through the *existing* gate, and buffer events for
-> idempotent replay. Issues M2-015…M2-018 were added; M2-003, M2-006, and M2-013
-> expanded for capabilities, batched telemetry, and isolation faults.
+> **Boundary clarified 2026-08-27.** M2 models every device-side mechanic needed
+> for later offline autonomy: capabilities, atomic policy persistence,
+> monotonic runtime-state persistence, isolation/reconnect behaviour, and the
+> bounded replay buffer. It deliberately does **not** evaluate the policy or
+> schedule an autonomous dose. M6-019 implements the one shared
+> `rhizo_policy::evaluate_offline` function and integrates its sole simulator
+> call site. Issues M2-015…M2-018 remain device-mechanics work.
 >
-> The permissiveness rule extends unchanged: the simulator calls
-> `rhizo_policy::evaluate_offline` and `validate_water_command`, and has **no**
-> second actuation path. A simulator more permissive than firmware in offline
-> mode would make every SAFETY-013…020 test worthless.
+> The permissiveness rule remains structural: M2 calls
+> `validate_water_command`, but contains **no simulator-specific offline
+> evaluator**. When M6 activates offline decisions, the simulator calls the
+> shared `rhizo_policy::evaluate_offline`; firmware later calls the same function.
 >
-> **Additional acceptance criteria:** an isolated simulator with no policy never
-> waters; one with a valid enabled policy waters within its budget; a reboot
-> during cooldown never shortens it; audit events survive a telemetry flood; a
+> **Additional acceptance criteria:** an isolated M2 simulator continues
+> sampling and buffering but never autonomously waters; policy activation and
+> acknowledgement survive restart; audit events survive a telemetry flood; a
 > replayed batch is byte-identical on `event_id` across replays.
 
 ## Summary
@@ -50,6 +51,8 @@ discovered when real water meets a real floor.
 - Soil-physics accuracy. The model is an approximation for exercising control
   logic, not a claim about real soil.
 - Irrigation intelligence. Like the firmware, the simulator obeys or refuses.
+- Offline-policy evaluation and autonomous dose scheduling. M6-019 adds the
+  single shared evaluator and its simulator integration.
 - Being deleted when hardware arrives — it remains the CI path and the
   conformance reference.
 
@@ -82,6 +85,11 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 | F-020-08 | Publishes a `command.result` for **every** command, including rejections |
 | F-020-09 | Retries result publication up to 60 s; persists unpublished results across restart |
 | F-020-10 | Never publishes retained on telemetry or command topics |
+| F-020-11 | Persists and atomically activates retained offline policies; reports applied versions |
+| F-020-12 | Models isolation/reconnect while sampling and buffering continue |
+| F-020-13 | Persists monotonic offline runtime state needed by the later shared evaluator |
+| F-020-14 | Contains no simulator-specific offline evaluator and performs no autonomous dose in M2 |
+| F-020-15 | Buffers bounded audit/telemetry history and replays stable event ids in order |
 
 ### Safety parity — the critical requirements
 
@@ -221,6 +229,8 @@ asserted directly by tests rather than sampled.
   command directly, assert clamping or rejection.
 - Fixture drift: `--capture-fixtures` output diffed against
   `test/fixtures/protocol/valid/`.
+- Structural: no `evaluate_offline` implementation or autonomous-dose scheduler
+  exists in the simulator during M2.
 
 ## Acceptance criteria
 
@@ -238,6 +248,10 @@ asserted directly by tests rather than sampled.
       completes in under 10 seconds of wall time.
 - [ ] Two simulators with different credentials cannot publish into each other's
       topics.
+- [ ] Isolation keeps sampling and bounded buffering active without autonomous
+      actuation.
+- [ ] Policy activation, version acknowledgement, and replay mechanics survive restart.
+- [ ] The simulator contains no offline-policy decision implementation.
 
 ## Dependencies
 

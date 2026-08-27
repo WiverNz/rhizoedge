@@ -1,6 +1,6 @@
 # Issue M6-019 — Implement the offline evaluator in rhizo-policy
 
-**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M6-002, M6-006
+**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M6-002, M6-006, M2-017
 
 ## Context
 
@@ -11,7 +11,8 @@ the offline rules.
 
 ## Goal
 
-Implement `evaluate_offline` with its gate, exhaustively and conservatively.
+Implement `evaluate_offline` with its gate, exhaustively and conservatively,
+then activate it in the existing simulator through one shared call site.
 
 ## Scope
 
@@ -21,17 +22,21 @@ Implement `evaluate_offline` with its gate, exhaustively and conservatively.
 - Cycle logic: confirm → dose → absorption → recheck → cooldown, with hysteresis and `max_doses_per_cycle`
 - Rolling budget from the persisted accumulator and window start
 - Pure: no clock, no I/O, no allocation beyond `alloc`
+- Extend the M2 simulator integration seam to call this evaluator from exactly one place while isolated
+- Route `Dose` decisions into the simulator's existing single actuation path
 
 ## Non-goals
 
 - Persistence (M2-016, M9-015).
-- Actuation (M2-017, M9-016).
+- Firmware actuation/integration (M9-016).
+- A simulator-local evaluator or duplicate rule implementation.
 - Any rule outside the restricted subset — trends, recommendations, dose computation.
 
 ## Dependencies
 
 - M6-002
 - M6-006
+- M2-017
 
 ## Implementation notes
 
@@ -47,6 +52,10 @@ the Edge and is simply unavailable when isolated.
 `elapsed` is a parameter. The crate must not be able to read a clock, which is
 what makes SAFETY-015 structural.
 
+M2-017 deliberately prepares persistence and isolation mechanics without making
+decisions. This issue adds the evaluator and simulator call site together, so
+there is never an interim simulator-specific implementation.
+
 ## Acceptance criteria
 
 - [ ] Every gate step returns its documented `RefuseReason`.
@@ -57,6 +66,9 @@ what makes SAFETY-015 structural.
 - [ ] The budget is respected and replenishes only as the window advances.
 - [ ] The function is pure — no clock access anywhere in the crate.
 - [ ] `cargo build -p rhizo-policy --no-default-features` still succeeds.
+- [ ] The simulator calls `rhizo_policy::evaluate_offline` from exactly one place.
+- [ ] An isolated simulator with a valid enabled policy can now schedule bounded autonomous doses.
+- [ ] No simulator-local evaluator exists.
 
 ## Verification
 
@@ -64,6 +76,8 @@ what makes SAFETY-015 structural.
 cargo test -p rhizo-policy
 cargo test safety_013 safety_017
 PROPTEST_CASES=10000 cargo test -p rhizo-policy prop_
+cargo test -p device-simulator offline::
+grep -rn 'evaluate_offline' crates/device-simulator/src
 ```
 
 ## Tests required
@@ -83,4 +97,5 @@ PROPTEST_CASES=10000 cargo test -p rhizo-policy prop_
 ```text
 crates/policy/src/evaluate.rs
 crates/policy/src/gate.rs
+crates/device-simulator/src/offline.rs
 ```

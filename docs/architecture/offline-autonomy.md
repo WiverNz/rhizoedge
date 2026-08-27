@@ -306,13 +306,26 @@ was away — is worse. But this is a considered trade, not a free feature.
 
 ## 10. Where the code lives
 
+### Milestone ownership
+
+- **M2:** device mechanics only — atomic policy persistence and acknowledgement,
+  monotonic evaluator-state persistence, isolation/reconnect modelling, and the
+  bounded event/replay protocol. It neither evaluates policy nor schedules an
+  autonomous dose.
+- **M6-019:** implements the single `rhizo-policy::evaluate_offline` function and
+  extends the M2 simulator with exactly one call site and autonomous scheduling.
+- **M9:** integrates that same function into firmware from exactly one call site.
+
+Thus M8 can test full autonomy because it follows M6; no M8 autonomy claim rests
+on M2 alone.
+
 | Crate | Contents | `no_std` |
 |---|---|---|
 | `rhizo-mqtt-contract` | wire types, capabilities, policy payload, hard limits, `validate_water_command` | ✅ |
 | **`rhizo-policy`** *(new)* | `OfflinePolicy`, `evaluate_offline`, offline state machine, budget accounting | ✅ |
 | `rhizo-domain` | recommendations, connected irrigation machine, plant model; **links `rhizo-policy`** to validate and predict | ❌ std |
 | `esp32-node` | adapters, NVS, event ring; calls `evaluate_offline` from exactly one place | — |
-| `device-simulator` | same call site, same crate | — |
+| `device-simulator` | same call site, same crate, installed by M6-019 after M2 prepares mechanics | — |
 
 `rhizo-policy` sits between the contract and the domain:
 `mqtt-contract ← policy ← domain`. See

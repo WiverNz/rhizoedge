@@ -5,7 +5,9 @@
 ## Context
 
 SAFETY-013…020 need the same treatment SAFETY-001…012 received: property tests
-against a pure function, cheap enough that they actually get run.
+against the pure function plus integration checks against the simulator call
+site installed by M6-019, cheap enough that they actually get run. These tests
+do not depend on M2 alone for autonomous evaluation.
 
 ## Goal
 

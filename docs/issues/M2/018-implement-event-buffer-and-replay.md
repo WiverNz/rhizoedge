@@ -5,8 +5,10 @@
 ## Context
 
 [ADR-014](../../adr/014-failure-and-retry-policy.md) specifies a bounded ring with
-tiered retention and explicit gap reporting. The simulator models it so
-SAFETY-016 and SAFETY-020 are testable without hardware.
+tiered retention and explicit gap reporting. The simulator models the
+device-side mechanics before autonomous event production is activated by
+M6-019. Tests may inject typed events into the ring; M6 later supplies real
+autonomous outcomes through the same buffer API.
 
 ## Goal
 
@@ -25,6 +27,7 @@ Buffer history while isolated and replay it idempotently on reconnection.
 ## Non-goals
 
 - Edge-side reconciliation (M3-016, M6-020).
+- Offline evaluation or autonomous event decisions (M6-019).
 
 ## Dependencies
 

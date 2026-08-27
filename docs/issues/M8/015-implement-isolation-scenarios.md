@@ -1,6 +1,6 @@
 # Issue M8-015 — Implement device isolation scenarios
 
-**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-006, M8-005
+**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-006, M8-005, M6-019, M6-021
 
 ## Context
 
@@ -30,12 +30,18 @@ Prove mode-C behaviour end to end.
 
 - M8-006
 - M8-005
+- M6-019
+- M6-021
 
 ## Implementation notes
 
 Isolate at the network layer, not by killing the simulator. The device must keep
 running, keep sampling, and keep evaluating — that is the whole point of mode C,
 and stopping the container would test a different thing entirely.
+
+The evaluation exercised here is the shared evaluator implemented and wired
+into the simulator by M6-019. M2 supplied isolation mechanics only; no scenario
+may treat M2 by itself as the source of autonomous decisions.
 
 SCEN-107 stops the **edge**, not just the broker. A dead edge host is the failure
 an owner actually experiences, and it is the scenario that justifies the whole

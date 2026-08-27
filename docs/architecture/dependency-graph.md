@@ -171,6 +171,11 @@ M1-019 + M0-006 ──→ M2-001 (skeleton)
              M2-008 + M2-009 ──→ M2-013 (fault injection) ◄──────────┘
              M2-004 + M2-009 ──→ M2-014 (virtual time)
              M2-006 + M1-010 ──→ M2-011 (fixture drift check)
+             M2-003 ──→ M2-015 (capabilities)
+             M2-008 + M2-015 ──→ M2-016 (atomic policy store)
+             M2-016 + M2-007 + M2-013 + M2-014 ──→ M2-017
+                                      (isolation + offline runtime state; no evaluation)
+             M2-017 ──→ M2-018 (bounded event buffer + replay mechanics)
                           all ──→ M2-019 (verification)
 ```
 
@@ -469,8 +474,9 @@ M1  014 offline policy payload ─┬─► 016 rhizo-policy crate ─► 018 po
     015 offline event payload ──┴─► 017 extended fixture corpus
                                               └──► 019 M1 verification
 
-M2  015 declare capabilities ──► 016 policy store ──► 017 autonomous dosing
+M2  015 declare capabilities ──► 016 policy store ──► 017 isolation/runtime state
                                                           └──► 018 event buffer
+    (policy evaluation and autonomous scheduling are deliberately absent)
 
 M3  016 ingest replayed events ──► 017 record history gaps
 
@@ -479,11 +485,11 @@ M4  011 ingest capabilities ──► 012 expose connectivity mode
 M5  013 bindings ──► 014 measurement policies ──┬─► 015 threshold evaluation
                                                  └─► 016 offline policy authoring
 
-M6  019 offline evaluator ──┐
+M2-017 mechanics ──► M6  019 shared evaluator + simulator integration ──┐
     020 reconciliation ─────┼─► 021 offline safety property tests
     (018 existing safety) ──┘
 
-M8  015 isolation scenarios ──► 016 reconciliation scenarios
+M6-019 + M6-021 ──► M8  015 isolation scenarios ──► 016 reconciliation scenarios
 
 M9  015 NVS policy store ──► 016 offline evaluator ──┬─► 017 event buffer
                                                       └─► 018 monotonic budget
@@ -498,9 +504,10 @@ M14 007 Helm planning        008 future actuator model
 ```
 
 **The chain that matters most** runs `M1-016` (the shared `rhizo-policy` crate)
-→ `M6-019` (the evaluator) → `M2-017` and `M9-016` (its two call sites). If that
-crate is wrong, both the simulator and the firmware are wrong in the same way,
-and every offline safety test is testing the wrong rules.
+→ `M2-017` (simulator mechanics only) → `M6-019` (the evaluator plus its sole
+simulator call site) → `M9-016` (the firmware call site). If that crate is wrong,
+both consumers are wrong in the same way; neither consumer may implement a
+second evaluator.
 
 ---
 
@@ -542,8 +549,10 @@ most easily missed, because the milestone table alone does not show them.
 | M3-016 | M3-008 | replay reuses the dedup transaction |
 | M4-011 | M4-001 | capabilities arrive in `device.status` |
 | M5-013 | M4-011 | a binding may only name a **declared** capability |
-| M6-019 | M6-002 | the offline gate mirrors the connected gate's discipline |
+| M6-019 | M6-002, M6-006, M2-017 | implements the shared offline gate and activates the prepared simulator seam |
 | M6-020 | M3-016 | reconciliation consumes ingested replay |
+| M8-015 | M6-019, M6-021 | full isolation scenarios require the shared evaluator and its safety tests, not M2 alone |
+| M8-016 | M6-019, M6-020, M6-021 | reconciliation scenarios require evaluator, reconciliation, and offline safety work |
 | M9-016 | M9-011 | offline dosing routes through the existing actuation gate |
 | M12-013 | M12-008 | extends the profile editor surface |
 | M13-014 | M13-013 | the MSRV matrix sits alongside release CI |

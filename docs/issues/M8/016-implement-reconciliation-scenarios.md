@@ -1,6 +1,6 @@
 # Issue M8-016 — Implement offline autonomy and reconciliation scenarios
 
-**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-015
+**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-015, M6-019, M6-020, M6-021
 
 ## Context
 
@@ -29,6 +29,9 @@ Prove reconciliation is exactly-once and blocks premature dosing.
 ## Dependencies
 
 - M8-015
+- M6-019
+- M6-020
+- M6-021
 
 ## Implementation notes
 

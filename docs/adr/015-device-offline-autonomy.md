@@ -152,8 +152,9 @@ Positive:
   property-testable without hardware — the same economics that made SAFETY-006
   affordable.
 - The Edge can validate and predict, because it links the same crate.
-- Simulator-first still holds: offline autonomy is fully testable in M2/M6/M8,
-  years before an ESP32 is involved.
+- Simulator-first still holds: M2 delivers the device mechanics, M6 installs the
+  shared evaluator and simulator call site, and M8 tests full autonomy end to
+  end — all before an ESP32 is involved.
 
 Negative, accepted:
 

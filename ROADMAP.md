@@ -33,7 +33,7 @@ pin may move forward deliberately
 |---|---|---|---|---|---|
 | M0 | Foundation and Engineering Baseline | A clean Rust repository whose tooling, lint, test, container, and observability baseline every later milestone inherits | — | 13 | **DONE** |
 | M1 | Domain Model and MQTT Protocol | The shared wire contract, typed measurement kinds, capability and offline-policy payloads, and the pure domain and policy crates | M0 | 19 | **DONE** |
-| M2 | Device Simulator | A host device indistinguishable from firmware at the protocol level, including **offline autonomy**, event buffering, fault injection, and virtual time | M1 | 19 | **READY** |
+| M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **READY** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **READY** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **READY** |
 | M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 17 | **READY** |
@@ -142,22 +142,25 @@ model with absorption lag, probe overshoot, and drainage · weight rising
 immediately while VWC lags · tank, leak, EC models · **actuation exclusively
 through `validate_water_command`** · **wall clock maintained solely from
 `edge.time`**, with strict duplicate rejection · NVS-equivalent persistent state ·
-**a persisted, versioned offline policy applied atomically** · **offline
-autonomous dosing through the shared `rhizo_policy::evaluate_offline`, giving
-evaluator parity with the firmware** · **a bounded offline event buffer with
+**a persisted, versioned offline policy applied atomically** · isolation and
+reconnect state plus persisted monotonic evaluator inputs, but **no offline
+decision or autonomous dosing until M6-019 installs the single shared
+`rhizo_policy::evaluate_offline` call site** · **a bounded offline event buffer with
 ordered replay and explicit gap reporting** · control API · thirteen injectable
 faults · accelerated virtual time.
 
 **Exit criteria.** Runs standalone against a bare broker. Exactly one call site
-of `validate_water_command` and exactly one of `evaluate_offline`.
+of `validate_water_command` and **no offline evaluator or autonomous-dose
+call site yet**.
 `requested_ml: 10000` published directly to the broker never delivers above the
 hard limit. No retained messages on command, telemetry, event, or `time` topics.
-A replayed `edge.time` never extends `clock_synced`. An isolated simulator with
-no policy never actuates. ACL isolation holds. A full cycle completes in under
+A replayed `edge.time` never extends `clock_synced`. An isolated simulator keeps
+sampling and buffering but never autonomously actuates in M2. ACL isolation holds. A full commanded cycle completes in under
 10 s at scale 600.
 
-**Invariants.** Makes SAFETY-002, SAFETY-007, SAFETY-011 testable before hardware
-exists, and gives SAFETY-013 … SAFETY-020 their first executable device.
+**Invariants.** Makes SAFETY-002, SAFETY-007, SAFETY-011, policy activation, and
+buffer/replay mechanics testable before hardware exists. M6-019/M6-021 provide
+the first executable autonomous-device evaluation for SAFETY-013…017.
 
 **PRD.** [020](docs/prd/020-device-simulator.md)
 

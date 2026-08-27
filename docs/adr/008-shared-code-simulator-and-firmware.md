@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted — 2026-08-25. Implemented in M1/M2, exercised in M9.
+Accepted — 2026-08-25. Contract/mechanics in M1/M2, evaluator and simulator
+integration in M6, firmware integration exercised in M9.
 
 **Extended 2026-08-26.** A **second** crate is now shared with the firmware:
 `rhizo-policy`, holding the offline evaluator
@@ -52,6 +53,12 @@ isolation scenario in M8 would be exercising rules the hardware does not follow 
 the identical failure this ADR exists to prevent, one layer up. The Edge links it
 too, which additionally lets it reject a policy it cannot evaluate and predict
 what an isolated device will do.
+
+Milestone sequencing is deliberate: M2 persists policies and evaluator state,
+models isolation/reconnection, and buffers/replays history, but makes no offline
+watering decision. M6-019 implements `rhizo-policy::evaluate_offline` once and
+adds the simulator's sole call site. M9 adds the firmware's sole call site. At no
+point may the simulator or firmware contain its own copy of the rules.
 
 ### What is shared
 

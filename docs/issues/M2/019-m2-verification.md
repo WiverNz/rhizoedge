@@ -15,6 +15,7 @@ Verify every PRD 020 acceptance criterion, especially the permissiveness parity 
 
 - Full gate plus simulator integration tests
 - Verify the single-call-site property for `validate_water_command`
+- Verify the simulator contains no offline evaluator or autonomous-dose scheduler
 - Verify no retained messages on command topics
 - Verify ACL isolation
 - Update ROADMAP.md and record the report
@@ -52,6 +53,8 @@ Everything M6 claims about SAFETY-007 rests on this being true.
 
 Also confirm by inspection that there is exactly one call site of
 `validate_water_command` and no code path to actuation that avoids it.
+An enabled stored offline policy must remain inert in M2: policy evaluation and
+autonomous scheduling activate together in M6-019 through the shared crate.
 
 ## Acceptance criteria
 
@@ -59,6 +62,8 @@ Also confirm by inspection that there is exactly one call site of
 - [ ] `docker compose up mosquitto device-simulator` runs standalone and telemetry is visible.
 - [ ] `safety_007_simulator_refuses_like_hardware` passes.
 - [ ] Exactly one call site of `validate_water_command`.
+- [ ] No `evaluate_offline` implementation/call site and no autonomous-dose scheduler exists in M2.
+- [ ] Isolation continues sampling and buffering while an enabled policy remains non-actuating.
 - [ ] No retained messages on command or telemetry topics.
 - [ ] ACL isolation holds.
 - [ ] A full cycle completes in under 10 s at scale 600.

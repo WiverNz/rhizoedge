@@ -23,7 +23,7 @@ Persist and activate offline policies exactly as the firmware must.
 
 ## Non-goals
 
-- Evaluating the policy (M2-017).
+- Evaluating the policy or scheduling autonomous doses (M6-019).
 
 ## Dependencies
 

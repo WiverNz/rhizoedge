@@ -7,6 +7,10 @@
 > while a device was isolated ([ADR-015](../adr/015-device-offline-autonomy.md)).
 > Issues M6-019…M6-021 were added. Everything about the connected state machine,
 > the safety gate, and the command lifecycle is unchanged.
+> M2 supplies policy persistence, isolation state, monotonic runtime state, and
+> replay mechanics only. M6-019 both implements the single evaluator in
+> `rhizo-policy` and extends the existing simulator to call it from exactly one
+> place; no simulator-specific decision implementation is permitted.
 >
 > The reconnection seam is the new safety-critical surface. Two rules carry it:
 > replay applies exactly once on `event_id`, and **the edge issues no dose to a
@@ -44,6 +48,8 @@ outcomes structurally difficult rather than merely tested against.
 4. Manual, recommended, and automatic modes with explicitly different privileges.
 5. Every non-hardware SAFETY invariant enforced and tested.
 6. Lockout management with explicit and automatic clearing rules.
+7. Activate offline autonomy by implementing the shared evaluator and wiring
+   the M2 simulator to that implementation without a second decision path.
 
 ## Non-goals
 
@@ -142,6 +148,16 @@ POST /plants/monstera-01/water {"ml":30,"mode":"manual"}
 | F-060-50 | Rolling 24-hour window computed by summing `watering_events`, never a counter |
 | F-060-51 | Forward clock step > 10 min → all plants `Lock(Uncertain)` for one cooldown |
 | F-060-52 | Backward step logged; the window naturally becomes more conservative |
+
+### Offline evaluator activation
+
+| ID | Requirement |
+|---|---|
+| F-060-60 | `rhizo_policy::evaluate_offline` is the single implementation of restricted offline decisions |
+| F-060-61 | M6-019 installs exactly one simulator call site using the persistence/isolation seam prepared by M2-017 |
+| F-060-62 | The simulator contains no duplicated policy rules; firmware later calls the same evaluator in M9-016 |
+| F-060-63 | Autonomous `Dose` decisions route through the simulator's existing single actuation/validator path |
+| F-060-64 | Missing, stale, unknown, invalid, or disabled policy inputs fail closed before autonomous scheduling |
 
 ## Interfaces
 
