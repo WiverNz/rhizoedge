@@ -106,12 +106,19 @@ pub fn validate_water_command<'a>(
     if state.leak == LeakState::Unknown {
         return CommandVerdict::Reject(RejectReason::LeakUnknown);
     }
-    let Some(tank) = state.tank_percent else {
+    // §5.8 step 7: an absent, unreadable, or unusably configured tank is
+    // `Unknown`, never `TankLow` — the latter is a *measured* condition.
+    let Some(tank) = state.tank_percent.filter(|t| t.is_finite()) else {
         return CommandVerdict::Reject(RejectReason::TankUnknown);
     };
-    if !tank.is_finite() || tank <= state.tank_min_percent {
+    if !state.tank_min_percent.is_finite() {
+        return CommandVerdict::Reject(RejectReason::TankUnknown);
+    }
+    if tank <= state.tank_min_percent {
         return CommandVerdict::Reject(RejectReason::TankLow);
     }
+    // §5.8 step 9: an unusable calibration is an unavailable pump, and step 12
+    // divides by it.
     if state.pump_faulted
         || !state.pump_enabled
         || !state.pump_ml_per_second.is_finite()
@@ -121,6 +128,8 @@ pub fn validate_water_command<'a>(
     }
     let mut effective = cmd.requested_ml.min(FIRMWARE_MAX_ML_PER_RUN);
     let mut clamped = effective < cmd.requested_ml;
+    // §5.8 step 11: a device that cannot prove it is under budget assumes it is
+    // not. `NaN + x > max` is false, so the guard must precede the comparison.
     if !state.delivered_today_ml.is_finite()
         || state.delivered_today_ml + effective > FIRMWARE_MAX_DAILY_ML
     {
@@ -249,6 +258,48 @@ mod tests {
             CommandVerdict::Reject(RejectReason::OverDailyMax)
         );
     }
+    /// §5.8 steps 7, 9 and 11: every non-finite guard input maps to the refusal
+    /// its usable counterpart would produce, never to permission (SAFETY-012).
+    #[test]
+    fn safety_012_nonfinite_guard_inputs_are_unknown_not_permission() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut s = state(&[]);
+            s.tank_percent = Some(bad);
+            assert_eq!(
+                validate_water_command(&cmd(), &s),
+                CommandVerdict::Reject(RejectReason::TankUnknown),
+                "tank_percent {bad}"
+            );
+            let mut s = state(&[]);
+            s.tank_min_percent = bad;
+            assert_eq!(
+                validate_water_command(&cmd(), &s),
+                CommandVerdict::Reject(RejectReason::TankUnknown),
+                "tank_min_percent {bad}"
+            );
+            let mut s = state(&[]);
+            s.pump_ml_per_second = bad;
+            assert_eq!(
+                validate_water_command(&cmd(), &s),
+                CommandVerdict::Reject(RejectReason::PumpUnavailable),
+                "pump_ml_per_second {bad}"
+            );
+            let mut s = state(&[]);
+            s.delivered_today_ml = bad;
+            assert_eq!(
+                validate_water_command(&cmd(), &s),
+                CommandVerdict::Reject(RejectReason::OverDailyMax),
+                "delivered_today_ml {bad}"
+            );
+        }
+        let mut s = state(&[]);
+        s.pump_ml_per_second = 0.;
+        assert_eq!(
+            validate_water_command(&cmd(), &s),
+            CommandVerdict::Reject(RejectReason::PumpUnavailable)
+        );
+    }
+
     #[test]
     fn safety_002_expired_command_rejected_before_clamp() {
         let mut c = cmd();

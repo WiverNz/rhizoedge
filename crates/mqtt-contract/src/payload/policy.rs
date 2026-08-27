@@ -110,10 +110,12 @@ pub struct OfflineSafety {
 /// Distinct policy validation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyError {
-    DisabledActuatorPresent,
     MissingActuator,
     UnsupportedActuator,
+    /// Control kind not recognised by this contract version.
     UnknownControlKind,
+    /// Control kind recognised but not scalar; hysteresis needs a scalar.
+    NonScalarControlKind,
     InvalidHysteresis,
     ZeroDuration,
     DoseInvalid,
@@ -124,7 +126,12 @@ pub enum PolicyError {
     TankThreshold,
 }
 impl OfflinePolicy {
-    /** Validates against firmware hard limits; never clamps. */
+    /** Validates against firmware hard limits; never clamps.
+
+    A disabled policy carries no rules to check. §5.11 makes disabling a plant an
+    `enabled: false` republish of its *existing* policy at a higher
+    `policy_version`, so a disabled policy normally retains its actuator binding
+    and thresholds — that is the documented shape, not an error. */
     pub fn validate(&self) -> Result<(), PolicyError> {
         if !self.enabled {
             return Ok(());
@@ -133,8 +140,11 @@ impl OfflinePolicy {
         if a.kind != ActuatorKind::IrrigationPump {
             return Err(PolicyError::UnsupportedActuator);
         }
-        if !self.control_measurement.kind.control_eligible() {
+        if !self.control_measurement.kind.is_known() {
             return Err(PolicyError::UnknownControlKind);
+        }
+        if !self.control_measurement.kind.control_eligible() {
+            return Err(PolicyError::NonScalarControlKind);
         }
         if self.control_measurement.resume_above <= self.control_measurement.trigger_below {
             return Err(PolicyError::InvalidHysteresis);
@@ -217,6 +227,38 @@ mod tests {
         let p: OfflinePolicy = serde_json::from_value(value).unwrap();
         assert!(!p.enabled);
     }
+    /// §5.11: disabling a plant is an `enabled: false` republish of its existing
+    /// policy, so a retained actuator binding is the documented shape.
+    #[test]
+    fn disabled_policy_retaining_its_actuator_is_valid() {
+        let mut p = policy();
+        p.enabled = false;
+        p.policy_version = 8;
+        assert!(p.actuator.is_some());
+        assert_eq!(p.validate(), Ok(()));
+    }
+
+    /// §5.11 hysteresis is numeric, so only a recognised scalar kind may be the
+    /// control measurement. Leak remains an independent veto, never the trigger.
+    #[test]
+    fn control_measurement_must_be_a_known_scalar_kind() {
+        let mut p = policy();
+        p.control_measurement.kind = MeasurementKind::LeakState;
+        assert_eq!(p.validate(), Err(PolicyError::NonScalarControlKind));
+        let mut p = policy();
+        p.control_measurement.kind = MeasurementKind::Unknown("future_kind".into());
+        assert_eq!(p.validate(), Err(PolicyError::UnknownControlKind));
+        for k in [
+            MeasurementKind::SoilMoisture,
+            MeasurementKind::SoilTemperature,
+            MeasurementKind::PotWeight,
+        ] {
+            let mut p = policy();
+            p.control_measurement.kind = k;
+            assert_eq!(p.validate(), Ok(()));
+        }
+    }
+
     #[test]
     fn each_bound_is_rejected_not_clamped() {
         let mut p = policy();

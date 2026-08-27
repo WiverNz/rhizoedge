@@ -44,7 +44,8 @@ not treat the absence as an error.
 
 ## Acceptance criteria
 
-- [x] Every new payload kind has at least one valid fixture.
+- [x] Every new payload kind has at least one valid fixture, decoded as its
+      concrete type and passed through that payload's own validation.
 - [x] An unknown measurement kind decodes successfully and is marked advisory.
 - [x] A status with no actuators parses cleanly.
 - [x] Each invalid fixture fails with its documented error variant.
@@ -54,7 +55,7 @@ not treat the absence as an error.
 ## Verification
 
 ```bash
-cargo test -p rhizo-mqtt-contract fixtures::
+cargo test -p rhizo-mqtt-contract --test fixtures
 ```
 
 ## Tests required
@@ -71,6 +72,6 @@ cargo test -p rhizo-mqtt-contract fixtures::
 
 ```text
 test/fixtures/protocol/valid/*.json
-test/fixtures/protocol/invalid/*.json
+test/fixtures/protocol/invalid/<expected_variant>/*.json
 crates/mqtt-contract/tests/fixtures.rs
 ```

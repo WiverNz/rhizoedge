@@ -68,9 +68,25 @@ impl MeasurementKind {
             Self::Unknown(_) => None,
         }
     }
-    /** Whether this kind may provide actuation evidence. */
-    pub const fn control_eligible(&self) -> bool {
+    /** Whether this contract version recognises the kind. An unrecognised kind
+    is stored but never gates actuation (§5.1, SAFETY-012). */
+    pub const fn is_known(&self) -> bool {
         !matches!(self, Self::Unknown(_))
+    }
+    /** Whether the kind may be a policy's **primary control measurement**.
+    Requires a recognised *scalar* kind: `trigger_below` / `resume_above`
+    hysteresis and "continuous time below trigger" have no meaning for a boolean
+    kind (§5.11, ADR-015 §4). A boolean safety input such as `leak_state`
+    remains an independent hard veto — gate step 3 — and is never the control
+    measurement. */
+    pub const fn control_eligible(&self) -> bool {
+        matches!(
+            self.spec(),
+            Some(KindSpec {
+                class: MeasurementClass::Scalar,
+                ..
+            })
+        )
     }
 }
 impl<'de> Deserialize<'de> for MeasurementKind {
@@ -232,9 +248,11 @@ impl MeasurementSample {
         }
         r
     }
-    /** Unknown kinds are always advisory. */
+    /** Unrecognised kinds and non-`Ok` quality are always advisory. Advisory
+    status tracks *recognition*, not value class: a healthy `leak_state` sample
+    is a recognised boolean safety input and gates actuation. */
     pub const fn advisory_only(&self) -> bool {
-        !self.kind.control_eligible() || !matches!(self.quality, Quality::Ok)
+        !self.kind.is_known() || !matches!(self.quality, Quality::Ok)
     }
 }
 /// One atomic sampling-cycle batch.
@@ -353,6 +371,31 @@ mod tests {
         assert!(matches!(s.kind,MeasurementKind::Unknown(ref v)if v=="future_sensor"));
         assert!(s.advisory_only());
     }
+    /// Advisory status tracks recognition; control eligibility tracks value
+    /// class. A healthy `leak_state` sample is a recognised boolean safety input
+    /// that gates actuation, yet may never be a policy control measurement.
+    #[test]
+    fn advisory_and_control_eligibility_are_independent() {
+        let leak = sample(
+            MeasurementKind::LeakState,
+            MeasurementValue::Boolean(true),
+            Unit::Boolean,
+        );
+        assert!(
+            !leak.advisory_only(),
+            "a healthy leak reading is not advisory"
+        );
+        assert!(!MeasurementKind::LeakState.control_eligible());
+        assert!(MeasurementKind::LeakState.is_known());
+        assert!(MeasurementKind::SoilMoisture.control_eligible());
+        assert!(!MeasurementKind::Unknown("future".into()).control_eligible());
+        assert!(!MeasurementKind::Unknown("future".into()).is_known());
+        let mut faulted = leak;
+        faulted.quality = Quality::Fault;
+        faulted.value = None;
+        assert!(faulted.advisory_only(), "non-Ok quality is advisory");
+    }
+
     #[test]
     fn boolean_scalar_and_nonfinite_are_distinct() {
         assert!(

@@ -79,7 +79,7 @@ OfflinePolicy
 │   └── absorption_wait   duration
 │
 ├── control_measurement
-│   ├── kind              e.g. soil_moisture
+│   ├── kind              a recognised SCALAR kind, e.g. soil_moisture
 │   ├── point
 │   ├── trigger_below     start a cycle below this
 │   ├── resume_above      hysteresis: cycle ends at/above this
@@ -114,6 +114,11 @@ Design points that are not arbitrary:
   weight is unaffected by a broken scale (SAFETY-017).
 - **`resume_above` is separate from `trigger_below`.** Without hysteresis a
   sensor sitting on the threshold produces a dose per evaluation tick.
+- **The control measurement is scalar.** `trigger_below`, `resume_above` and
+  `confirm_duration` are numeric-threshold semantics; a boolean kind such as
+  `leak_state` has no meaningful hysteresis. Leak is a **veto at gate step 3**,
+  never the trigger, and a policy naming a boolean control kind is rejected
+  (`PolicyError::NonScalarControlKind`).
 
 ## 4. Evaluation
 

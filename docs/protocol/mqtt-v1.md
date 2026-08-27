@@ -550,15 +550,17 @@ The device MUST evaluate these checks in this order and MUST publish a
         → reject(leak_detected)         [SAFETY-003]
 6. leak_detected == null (unknown)
         → reject(leak_unknown)          [SAFETY-012]
-7. tank_level_percent == null
+7. tank_level_percent == null, not finite, or tank.min_percent not finite
         → reject(tank_unknown)          [SAFETY-012]
 8. tank_level_percent <= tank.min_percent
         → reject(tank_low)              [SAFETY-004]
-9. pump faulted or pump.enabled == false
+9. pump faulted, pump.enabled == false,
+   or pump.ml_per_second not finite or <= 0
         → reject(pump_unavailable)
 10. requested_ml > FIRMWARE_MAX_ML_PER_RUN
         → CLAMP to FIRMWARE_MAX_ML_PER_RUN, set clamped = true   [SAFETY-007]
-11. delivered_today_ml + effective_ml > FIRMWARE_MAX_DAILY_ML
+11. delivered_today_ml not finite,
+    or delivered_today_ml + effective_ml > FIRMWARE_MAX_DAILY_ML
         → reject(over_daily_max)        [SAFETY-007]
 12. run_ms = effective_ml / pump.ml_per_second * 1000
     if run_ms > FIRMWARE_MAX_RUN_SECONDS * 1000
@@ -569,6 +571,23 @@ The device MUST evaluate these checks in this order and MUST publish a
 
 Steps 10 and 12 clamp; every other failure rejects. Step 13 **MUST** complete
 before step 14, so an interrupted dose is detectable on the next boot.
+
+**Non-finite guard inputs are `Unknown`, never permission.** §4 forbids emitting
+`NaN` or `Infinity`, so a non-finite value reaching the gate means the reading or
+the configuration is unusable, not that the condition is satisfied. Every
+comparison against `NaN` is false, so a gate written only as `value <= limit`
+would *pass* a `NaN` and water on unusable evidence — the exact SAFETY-012
+failure. Steps 7, 9 and 11 therefore name their non-finite inputs explicitly and
+map each to the refusal its usable counterpart would produce: an unreadable tank
+level or an unusable tank minimum is `tank_unknown` (not `tank_low`, which is a
+*measured* condition), an unusable pump calibration is `pump_unavailable`, and an
+unreadable rolling total is `over_daily_max` because a device that cannot prove
+it is under budget MUST assume it is not.
+
+Step 9 covers `pump.ml_per_second` for a second reason: step 12 divides by it. A
+device whose calibration is absent or non-positive cannot compute a bounded run
+duration, so the pump is genuinely unavailable and MUST be refused before the
+division is reached.
 
 The reference implementation of steps 1–12 is
 `rhizo_mqtt_contract::validate_water_command`, which both the simulator and the
@@ -702,6 +721,7 @@ policies for every plant this device serves.
 | `policy_version` | `u32`, edge-owned, strictly monotonic per plant |
 | `enabled` | **default `false`**; offline autonomy is opted into per plant |
 | `actuator.dose_ml` | a **value**, never a formula; the only dose the device may deliver |
+| `control_measurement.kind` | MUST be a **recognised scalar** kind (§5.1). `trigger_below` / `resume_above` / `confirm_duration_ms` are numeric-threshold semantics with no meaning for a boolean kind such as `leak_state`, and an unrecognised kind is advisory and can never gate actuation (SAFETY-012). A boolean safety input is a **veto**, declared under `safety` or `required_measurements`, never the control measurement. |
 | `control_measurement.resume_above` | MUST be > `trigger_below` — hysteresis |
 | `required_measurements` | absent or stale ⇒ refuse to actuate (SAFETY-017) |
 | `advisory_measurements` | recorded; MUST NOT gate actuation |

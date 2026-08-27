@@ -96,6 +96,7 @@ fn main() {
 
     check_required_files(&root, &mut r);
     check_roadmap(&root, &issues, &mut r);
+    check_status_summary(&root, &mut r);
     check_starting_point(&root, &issues, &mut r);
     check_references(&root, &docs, &issues, &adrs, &prds, &safety, &scen, &mut r);
     check_links(&root, &docs, &mut r);
@@ -404,6 +405,70 @@ fn check_roadmap(root: &Path, issues: &BTreeMap<usize, BTreeSet<String>>, r: &mu
         txt.contains(&format!("{total} issues")),
         format!("ROADMAP.md does not state the real total issue count ({total})"),
     );
+}
+
+/// Status recorded in the milestone table row for `M<n>`, if the row exists.
+fn milestone_status(txt: &str, m: usize) -> Option<String> {
+    let row_marker = format!("| M{m} |");
+    txt.lines()
+        .find(|l| l.starts_with(&row_marker))
+        .map(|line| {
+            line.rsplit('|')
+                .find(|c| !c.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .trim_matches('*')
+                .to_string()
+        })
+}
+
+/// The one-line implementation-status summary near the top of the ROADMAP is
+/// prose, and prose drifts: the table said M1 was `DONE` while the summary still
+/// read "M0 complete; M1 next". This does not read the sentence — it only
+/// requires that the milestone identifiers appearing in it are the two the table
+/// implies: the last `DONE` milestone and the first one that is not.
+fn check_status_summary(root: &Path, r: &mut Report) {
+    let path = root.join("ROADMAP.md");
+    if !path.is_file() {
+        return; // already reported
+    }
+    let txt = read(&path);
+
+    let Some(line) = txt
+        .lines()
+        .find(|l| l.contains("**Implementation status:**"))
+    else {
+        r.fail("ROADMAP.md has no \"**Implementation status:**\" summary line");
+        return;
+    };
+
+    let done: Vec<usize> = (0..MILESTONES)
+        .filter(|&m| milestone_status(&txt, m).as_deref() == Some("DONE"))
+        .collect();
+    let named = |m: usize| {
+        // "M1" but not the "M1" inside "M14".
+        line.match_indices(&format!("M{m}"))
+            .any(|(i, s)| !line[i + s.len()..].starts_with(|c: char| c.is_ascii_digit()))
+    };
+
+    if let Some(&last_done) = done.last() {
+        r.check(
+            named(last_done),
+            format!(
+                "ROADMAP.md implementation-status summary does not name M{last_done}, \
+                 the last milestone the table marks DONE"
+            ),
+        );
+    }
+    if let Some(next) = (0..MILESTONES).find(|m| !done.contains(m)) {
+        r.check(
+            named(next),
+            format!(
+                "ROADMAP.md implementation-status summary does not name M{next}, \
+                 the first milestone the table does not mark DONE"
+            ),
+        );
+    }
 }
 
 /// The ROADMAP names one issue as the implementation starting point. It goes

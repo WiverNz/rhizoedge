@@ -53,6 +53,9 @@ tank-low, pump-unavailable, clamp-ml, daily-max, clamp-duration.
 - [x] `clock_synced = false` always rejects, whatever else is true.
 - [x] `tank_percent = None` rejects with `TankUnknown`.
 - [x] `leak = Unknown` rejects with `LeakUnknown`.
+- [x] Every non-finite guard input fails closed to the refusal §5.8 names for it —
+      `TankUnknown` (tank level or minimum), `PumpUnavailable` (calibration),
+      `OverDailyMax` (rolling total) — and never to `Accept`.
 - [x] A `command_id` in the ring yields `AlreadyExecuted` and never `Accept`.
 - [x] The function performs no heap allocation.
 - [x] It compiles with `--no-default-features`.

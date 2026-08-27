@@ -239,6 +239,17 @@ unconditionally.
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug.
 
+**A protocol fixture's directory is part of its assertion.** Under
+`test/fixtures/protocol/invalid/`, the directory name *is* the expected typed
+failure (`policy_dose_above_hard_limit/`, `event_duplicate_id/`, …) and maps to a
+case of `Expected` in `crates/mqtt-contract/tests/fixtures.rs`. A directory the
+harness does not recognise fails the suite rather than being skipped, so a new
+failure class costs one match arm. Valid fixtures are decoded as their **concrete
+payload type**, never as `serde_json::Value` — the whole point is that renaming a
+payload field turns the suite red. Run them with
+`cargo test -p rhizo-mqtt-contract --test fixtures`; a bare `fixtures::` filter
+matches nothing in an integration-test binary and passes vacuously.
+
 ---
 
 ## 8. Identifier conventions

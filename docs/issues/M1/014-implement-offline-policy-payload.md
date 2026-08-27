@@ -18,7 +18,10 @@ Implement the `device.policy` payload types with their validation rules.
 - `OfflinePolicySet` carrying one policy per plant served by the device
 - `OfflinePolicy` with `policy_version`, `enabled`, actuator, control measurement, required/advisory measurements, limits, safety block
 - All durations as `u32` milliseconds — device-side monotonic, never wall clock
-- Validation: `resume_above > trigger_below`; every duration > 0; `dose_ml <= FIRMWARE_MAX_ML_PER_RUN`; `dose_ml * max_doses <= max_volume_per_window_ml <= FIRMWARE_MAX_DAILY_ML`
+- Validation: control kind is a recognised **scalar** kind;
+  `resume_above > trigger_below`; every duration > 0;
+  `dose_ml <= FIRMWARE_MAX_ML_PER_RUN`;
+  `dose_ml * max_doses <= max_volume_per_window_ml <= FIRMWARE_MAX_DAILY_ML`
 - `enabled` defaults to `false` on deserialisation when absent
 
 ## Non-goals
@@ -53,6 +56,10 @@ that needed one would be unusable in exactly the mode it exists for
 - [x] Each validation rule rejects with its own distinct error variant.
 - [x] `dose_ml` above `FIRMWARE_MAX_ML_PER_RUN` is **rejected**, never clamped.
 - [x] `resume_above <= trigger_below` is rejected.
+- [x] A boolean control kind (`leak_state`) is rejected as `NonScalarControlKind`;
+      an unrecognised control kind is rejected as `UnknownControlKind`.
+- [x] A **disabled** policy that retains its actuator binding is valid — §5.11
+      expresses removal as an `enabled: false` republish, not an omission.
 - [x] A policy containing an unrecognised field decodes successfully and ignores it.
 - [x] A policy containing `max_ml_per_run` has no representable effect on limits.
 - [x] No `chrono` type appears in the policy types.

@@ -47,7 +47,9 @@ edit it, which would silently break compatibility.
 
 - [x] At least eleven valid fixtures covering all eleven message kinds.
 - [x] At least five invalid fixtures.
-- [x] Every valid fixture decodes and re-encodes equivalently.
+- [x] Every valid fixture decodes into its **concrete payload type**, not a
+      generic `Value`, and re-encodes equivalently — every wire field it states
+      survives the round trip through that type.
 - [x] Every invalid fixture fails with its documented variant.
 - [x] The README states the append-only rule.
 - [x] The test discovers files automatically — adding a fixture needs no code change.
@@ -55,7 +57,7 @@ edit it, which would silently break compatibility.
 ## Verification
 
 ```bash
-cargo test -p rhizo-mqtt-contract fixtures::
+cargo test -p rhizo-mqtt-contract --test fixtures
 ```
 
 ## Tests required
@@ -71,7 +73,7 @@ cargo test -p rhizo-mqtt-contract fixtures::
 
 ```text
 test/fixtures/protocol/valid/*.json
-test/fixtures/protocol/invalid/*.json
+test/fixtures/protocol/invalid/<expected_variant>/*.json
 test/fixtures/protocol/README.md
 crates/mqtt-contract/tests/fixtures.rs
 ```

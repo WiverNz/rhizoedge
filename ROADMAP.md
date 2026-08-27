@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0 complete; M1 next.
+**Planning status:** complete. **Implementation status:** M0 and M1 complete; M2 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -121,7 +121,9 @@ noted, checked against the §11 conformance checklist. `validate_water_command`'
 ordering matches §5.8 exactly. `TimeSyncState` accepts only a **strictly** newer
 `edge_time_ms` (§5.12). The contract crate builds for a bare-metal target with
 default features off. `Utc::now()` in `rhizo-domain` fails clippy. Every fixture
-behaves as documented.
+behaves as documented: each valid file decodes into its **concrete payload type**
+and survives a re-encode without losing a stated field, and each invalid file
+fails with its **named** typed variant.
 
 **Invariants.** Delivers the mechanism for SAFETY-002, SAFETY-007, SAFETY-012;
 enforcement tested in M6.
