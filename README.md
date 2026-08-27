@@ -6,16 +6,17 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 complete. M1 not started.**
+> **Status: M0 and M1 complete. M2 ready.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
-> The engineering baseline — workspace, toolchain, lint policy, Mosquitto with
-> per-device ACLs, CI — is implemented and green. Everything above it is
-> specified and not yet built: architecture, 17 decision records, 15 requirement
-> documents, a normative protocol, and 239 implementation issues.
+> The engineering baseline and M1 foundation are implemented and green. M1
+> delivered the `no_std` MQTT contract, typed batched measurements, capabilities,
+> device/plant policy contracts, shared water-command validator, clock/domain
+> primitives, fixtures, and the pure `rhizo-policy` state/contract crate.
+> Runtime components remain milestone work.
 > Start at [ROADMAP.md](ROADMAP.md); the next issue is
-> [M1-001](docs/issues/M1/001-add-mqtt-contract-crate-skeleton.md).
+> [M2-001](docs/issues/M2/001-add-simulator-skeleton.md).
 
 ---
 
@@ -183,7 +184,7 @@ monitoring + offline autonomous watering
   ESP32 Plant Node (Rust)              Device Simulator (Rust)
   ┌──────────────────────────┐         ┌──────────────────────────┐
   │ sensors: soil · ambient  │         │ same MQTT protocol       │
-  │   light · tank · leak …  │         │ same offline evaluator   │
+  │   light · tank · leak …  │         │ shared evaluator (M6+)   │
   │ pump (optional)          │         │ virtual time · faults    │
   │ offline policy + budget  │         │ offline policy + budget  │
   │ HARD SAFETY LIMITS       │         │ HARD SAFETY LIMITS       │
@@ -225,11 +226,11 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 | Component | Role |
 |---|---|
 | `rhizo-mqtt-contract` | `no_std` wire contract, measurement kinds, hard limits, the shared command validator |
-| `rhizo-policy` | `no_std` offline evaluator — the one implementation of the offline rules, shared by firmware, simulator, and edge |
-| `rhizo-domain` | Pure decision logic: plant state, irrigation machine, safety gate. No I/O, no clock access |
+| `rhizo-policy` | `no_std` offline-policy state and decision contract; M6-019 adds the one evaluator shared by simulator, firmware, and any required edge use |
+| `rhizo-domain` | Pure M1 plant, binding, policy, state, validation, and clock abstractions; later milestones add recommendation and irrigation behaviour |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
 | `edge-controller` | The control plane — the only component that decides while connected |
-| `device-simulator` | Reference device; same protocol, same evaluator, virtual time, fault injection |
+| `device-simulator` | Planned reference device: M2 adds protocol mechanics, persistence, isolation/replay, virtual time, and faults; M6 connects the shared evaluator |
 | `cloud-api` | Idempotent event ingestion into PostgreSQL |
 | `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
@@ -237,10 +238,13 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 ## Development strategy: simulator before hardware
 
 The Device Simulator implements the *same* MQTT protocol as the firmware and
-calls the *same* command validator and the *same* offline evaluator, so it can
-never be more permissive than real hardware. That makes roughly the entire
-control plane — **including offline autonomy** — buildable and testable before
-any electronics exist.
+calls the *same* command validator. M2 supplies connectivity, policy/runtime
+state persistence, isolation, buffering/replay, virtual time, and fault
+mechanics, but an enabled offline policy remains inert there. M6-019 then adds
+the single evaluator to `rhizo-policy` and its sole simulator call site. Firmware
+later calls that same implementation; there is never a simulator-specific copy.
+This keeps the full control plane — including offline autonomy after M6 —
+buildable and testable before electronics exist.
 
 **Milestones M0–M8 require no hardware at all.** M8 delivers the complete
 software system, verified end to end by one command:
@@ -293,6 +297,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
 cargo run -p rhizo-docscheck
 ```
