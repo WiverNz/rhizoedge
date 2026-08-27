@@ -134,9 +134,6 @@ jobs:
       # Throwaway credentials for a throwaway broker on a throwaway runner.
       # `.env` is gitignored, so CI generates one exactly as first-run setup
       # tells a developer to — which also keeps that path exercised.
-      # Throwaway credentials for a throwaway broker on a throwaway runner.
-      # `.env` is gitignored, so CI generates one exactly as first-run setup
-      # tells a developer to — which also keeps that path exercised.
       - name: Generate credentials and start Mosquitto
         run: |
           set -euo pipefail

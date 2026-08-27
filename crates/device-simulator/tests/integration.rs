@@ -1030,6 +1030,95 @@ fn policy_payload(device_id: &str, plant: &str, version: u32) -> String {
 /// `policy` completes the positive-retention set alongside `status` and
 /// `config` (mqtt-v1.md §3), and a late-connecting device applies what the
 /// broker kept.
+/// `event.ack` end to end: the edge acknowledges a replay over the broker and
+/// the device releases exactly the covered prefix — and the acknowledgement
+/// leaves nothing retained behind it.
+///
+/// The retention half is the one worth having a real broker for. A retained
+/// acknowledgement would be redelivered to this device on every future
+/// reconnect, telling it to discard history the edge may no longer hold; a
+/// unit test can assert the flag we pass, but only the broker can show that
+/// nothing was stored.
+#[tokio::test]
+async fn an_acknowledgement_over_the_broker_releases_history_and_is_never_retained() {
+    let Some(broker) = support::broker("event_ack_over_the_broker").await else {
+        return;
+    };
+    let id = DeviceId::parse(DEVICE).unwrap();
+    let policy_topic = Topic::Policy(id.clone()).as_string();
+    let ack_topic = Topic::EventsAck(id.clone()).as_string();
+    support::clear_device_retained(&broker, DEVICE).await;
+
+    let edge = broker
+        .edge_subscriber("test-ack-edge", &format!("rhizo/v1/devices/{DEVICE}/#"))
+        .await;
+    let device = SimulatedDevice::start(&broker, DEVICE, &[]).await;
+
+    // Activating a policy buffers one audit event, which is the history to
+    // acknowledge.
+    publish(
+        &edge.client(),
+        &policy_topic,
+        &policy_payload(DEVICE, "monstera-01", 7),
+        true,
+    )
+    .await;
+    assert!(
+        support::eventually(RECEIVE_TIMEOUT, || device.core().buffered_events() > 0).await,
+        "policy activation is a buffered audit event"
+    );
+
+    let (boot, through) = {
+        let core = device.core();
+        (
+            core.boot_id(),
+            core.highest_allocated_seq()
+                .expect("a sequence has been allocated"),
+        )
+    };
+
+    publish(
+        &edge.client(),
+        &ack_topic,
+        &format!(
+            r#"{{"v":1,"kind":"event.ack",
+                "message_id":"018fd8c0-0000-7000-8000-0000000000e1",
+                "device_id":"{DEVICE}",
+                "data":{{"boot_id":"{boot}","through_device_seq":{through}}}}}"#
+        ),
+        // Derived from the topic, never chosen here: a hard-coded `false` would
+        // make the retention assertion below a test of this line rather than of
+        // the contract's rule.
+        Topic::EventsAck(DeviceId::parse(DEVICE).unwrap())
+            .metadata()
+            .retained,
+    )
+    .await;
+
+    assert!(
+        support::eventually(RECEIVE_TIMEOUT, || device.core().buffered_events() == 0).await,
+        "the device must release history the edge has acknowledged"
+    );
+    assert_eq!(device.core().acknowledged_through(), Some(through));
+
+    // Nothing is waiting on `events/ack` for the next subscriber. A retained
+    // acknowledgement is delivered on connect, so a fresh subscriber is exactly
+    // the device's own position after a reconnect.
+    let mut fresh = broker
+        .edge_subscriber("test-ack-fresh", &ack_topic)
+        .await;
+    assert!(
+        fresh
+            .next_matching(Duration::from_secs(2), |m| m.topic == ack_topic)
+            .await
+            .is_none(),
+        "an acknowledgement must never be retained"
+    );
+
+    device.stop_cleanly().await;
+    clear_retained(&edge.client(), &policy_topic).await;
+}
+
 #[tokio::test]
 async fn retained_policy_reaches_a_late_connecting_device_and_is_acknowledged() {
     let Some(broker) = support::broker("retained_policy").await else {
