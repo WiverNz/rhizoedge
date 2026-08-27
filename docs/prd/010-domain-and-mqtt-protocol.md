@@ -77,9 +77,9 @@ guard a command  → validate_water_command(&cmd, &guard_state) → Verdict
 | F-010-01 | `#![no_std]` with `extern crate alloc`; a `std` feature adds only `std::error::Error` impls |
 | F-010-02 | No `chrono` dependency; time is `UtcMillis(i64)` |
 | F-010-03 | `DeviceId` newtype with the §2 grammar; no constructor bypasses validation |
-| F-010-04 | `Topic` enum with `to_string` and `parse` covering all eleven topic forms |
+| F-010-04 | `Topic` enum with `to_string` and `parse` covering all twelve topic forms |
 | F-010-05 | `Envelope<T>` with all envelope fields per protocol §4 |
-| F-010-06 | Payload types for all eleven message kinds |
+| F-010-06 | Payload types for all twelve message kinds |
 | F-010-07 | Range constants and per-field validation returning which field failed |
 | F-010-13 | `EdgeTime` payload (`edge_time_ms`) plus `TIME_SYNC_INTERVAL_SECONDS` and `TIME_SYNC_MAX_AGE_SECONDS` constants |
 | F-010-08 | Inbound types use `#[serde(default)]`; unknown fields ignored |
@@ -220,8 +220,8 @@ expectation) for the caller to log usefully.
 
 ## Acceptance criteria
 
-- [x] All eleven topic forms build and parse round-trip.
-- [x] All eleven message kinds encode and decode round-trip.
+- [x] All twelve topic forms build and parse round-trip.
+- [x] All twelve message kinds encode and decode round-trip.
 - [x] `DeviceId::parse("x/#")` and `DeviceId::parse("Plant-01")` both fail.
 - [x] Every ordered check in protocol §5.8 has a test asserting its reason.
 - [x] `validate_water_command(requested_ml = 10000)` never returns an `Accept`

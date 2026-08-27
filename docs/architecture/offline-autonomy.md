@@ -210,13 +210,23 @@ design that fails quietly in the field.
 | **audit** | autonomous dose, refuse-with-reason, lockout set/cleared, policy activation, pump fault, leak | 64 events, never evicted by telemetry | oldest audit event evicted, `gap` recorded |
 | **telemetry** | measurement samples | remaining space, target ~256 samples | oldest evicted silently |
 
-Every event carries a device-generated `event_id` (UUID) and a monotonically
-increasing `device_seq` scoped by `boot_id`. When eviction occurs the device
-records a **gap marker**: the `device_seq` range lost and how many events. On
-reconnect the gap is reported explicitly.
+Every event carries a device-generated `event_id` (UUID) and a `device_seq` that
+increases strictly for the lifetime of the device, across reboots. When eviction
+occurs the device records a **gap marker**: the `device_seq` range lost and how
+many events. On reconnect the gap is reported explicitly.
 
 > A gap is data. It is reported, stored, and visible in the plant's history —
 > never silently absorbed (SAFETY-020).
+
+A marker accumulates locally while the run of losses continues and is **sealed**
+when it first enters a replay batch: at that moment its range and count are
+fixed for ever, and it takes its `device_seq`. Later losses open a new marker.
+Both halves matter. The edge deduplicates on `event_id`, so a marker
+republished with a wider range would be discarded as a duplicate of the smaller
+first version — the extra loss would never be recorded. And taking the sequence
+at send time keeps a marker above anything the edge can already have
+acknowledged ([mqtt-v1.md](../protocol/mqtt-v1.md) §5.4, §5.13), so a
+cumulative acknowledgement cannot bury a marker the edge has never seen.
 
 Audit events outrank telemetry because the record of what the machine did to a
 living plant is not optional, while a missing moisture sample is a missing pixel
@@ -289,7 +299,8 @@ Three properties, each with an invariant:
    commanded doses. There is one budget per plant, not one per control path
    (SAFETY-014).
 
-The device retains replayed events until the edge acknowledges them, so an edge
+The device retains replayed events until the edge acknowledges them with an
+`event.ack` ([mqtt-v1.md](../protocol/mqtt-v1.md) §5.13), so an edge
 crash mid-reconciliation loses nothing — it simply replays again.
 
 ## 9. What this costs

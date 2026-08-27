@@ -113,6 +113,7 @@ pub const fn file_stem(kind: MessageKind) -> &'static str {
         MessageKind::CommandTare => "command-tare",
         MessageKind::CommandCalibrate => "command-calibrate",
         MessageKind::CommandResult => "command-result",
+        MessageKind::EventAck => "event-ack",
     }
 }
 
@@ -326,6 +327,7 @@ mod tests {
     #[test]
     fn every_message_kind_has_a_distinct_file_stem() {
         let kinds = [
+            MessageKind::EventAck,
             MessageKind::TelemetryBatch,
             MessageKind::ActuatorState,
             MessageKind::DeviceEvents,

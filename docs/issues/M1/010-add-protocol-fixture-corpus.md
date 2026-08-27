@@ -45,7 +45,7 @@ edit it, which would silently break compatibility.
 
 ## Acceptance criteria
 
-- [x] At least eleven valid fixtures covering all eleven message kinds.
+- [x] At least twelve valid fixtures covering all twelve message kinds.
 - [x] At least five invalid fixtures.
 - [x] Every valid fixture decodes into its **concrete payload type**, not a
       generic `Value`, and re-encodes equivalently — every wire field it states

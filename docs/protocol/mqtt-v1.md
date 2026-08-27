@@ -82,6 +82,7 @@ Base namespace: `rhizo/v1/`
 | `rhizo/v1/devices/{id}/commands/tare` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/calibrate` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/result` | device | edge | 1 | no |
+| `rhizo/v1/devices/{id}/events/ack` | edge | device | 1 | **no — never** |
 
 **`telemetry` carries a batch**, not one measurement kind. One message per
 sampling cycle, so the sample set shares one envelope and one deduplication key
@@ -96,6 +97,12 @@ different safety weight ([ADR-015](../adr/015-device-offline-autonomy.md) §7).
 **`events` is device→edge replay** of history buffered while isolated. It is not
 a second telemetry channel: it carries events that already happened, with
 device-generated ids, deduplicated identically to everything else.
+
+**`events/ack` closes the replay loop** (§5.13). Without it a device has no way
+to learn that its buffered history is safely on the edge, so it must either keep
+replaying it for ever or discard it on a guess. Both are wrong; an explicit
+acknowledgement is the only mechanism that lets a bounded buffer be emptied
+without losing history.
 
 **`time` MUST NOT be retained.** A retained timestamp is stale the instant it is
 stored, and a device applying one after a reconnect would set its clock to
@@ -115,24 +122,51 @@ stated twice: here, and in the retention rules below.
   delivered to a reconnecting device as though current, moving its clock
   backwards to the moment of publication and making expired commands appear
   valid — a direct route to violating SAFETY-002.
+- **`events/ack` MUST NOT be retained**, for the same shape of reason. An
+  acknowledgement is a statement about one moment: "as of now, everything
+  through this sequence is committed here." Retained, the broker would repeat
+  that statement to a device reconnecting hours later, and the device would
+  delete buffered history on the strength of a claim about a database that may
+  since have been restored from an older backup. Acknowledgements are live
+  messages or they are nothing.
 
 ### Subscriptions
 
 - Edge subscribes to `rhizo/v1/devices/+/#`.
-- Device subscribes to `rhizo/v1/devices/{own_id}/config`,
-  `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and
-  `rhizo/v1/devices/{own_id}/commands/+` — and MUST NOT subscribe to
-  `telemetry`, `actuator`, or `events`, which it publishes.
+- A device MUST subscribe to exactly these **seven exact topics**, and to no
+  wildcard:
 
-**`commands/+` also matches `commands/result`, and a device MUST ignore what
-arrives there.** MQTT has no way to subtract a child from a wildcard, so a device
-holding the normative `commands/+` filter is necessarily delivered its own
-`command.result` publications back. This is not a licence to act on them: a
-device MUST NOT treat any message on `commands/result` as input, whatever its
-contents. The rule is "never act on it", not "never receive it", because the
-latter is not expressible. Subscribing to the three concrete command topics
-instead is **not** conformant — a future command kind added under `commands/`
-would then be silently unreceived, which is the failure the wildcard prevents.
+  | | |
+  |---|---|
+  | `rhizo/v1/devices/{own_id}/config` | `rhizo/v1/devices/{own_id}/commands/water` |
+  | `rhizo/v1/devices/{own_id}/policy` | `rhizo/v1/devices/{own_id}/commands/tare` |
+  | `rhizo/v1/devices/{own_id}/time` | `rhizo/v1/devices/{own_id}/commands/calibrate` |
+  | `rhizo/v1/devices/{own_id}/events/ack` | |
+
+- A device MUST NOT subscribe to `telemetry`, `actuator`, `events`, `status`, or
+  `commands/result`, all of which it publishes.
+
+**Exact topics, not `commands/+`.** An earlier revision specified a
+`commands/+` filter. That filter also matches `commands/result`, which is the
+device's own output, and MQTT 3.1.1 offers no way to subtract a child from a
+wildcard and no "no local" subscription option. A device holding it was
+therefore delivered every result it published, and the rule had to be softened
+to "receive it but never act on it" — a property of the dispatch code rather
+than of the wire, one refactor away from being untrue, and paid for in
+round-trips in the meantime.
+
+Exact topics make it a property of the subscription set instead: the broker
+cannot deliver the device its own output, so no code has to remember not to act
+on it. The cost is that adding a command kind adds a subscription; that is a
+one-line change to a list this specification already enumerates, made at the
+same time as the new topic itself, and it is checked by conformance (§11).
+
+**Adding a command kind is therefore a protocol change, by design.** A device
+built against v1 will not receive a topic v1 does not define, which is the
+correct behaviour: an unreceived command produces no result and the edge marks
+it failed, whereas a wildcard would deliver a payload the device cannot parse
+and must discard anyway. The wildcard bought nothing but the delivery of the
+device's own results.
 
 ### QoS
 
@@ -347,7 +381,7 @@ reconnection, oldest first.
 | `replay` | boolean | `true` for buffered history, `false` for live events |
 | `complete` | boolean | `true` on the final batch; the edge holds the plant in `Uncertain` until it sees this |
 | `events[].event_id` | UUID | generated **once** at buffering time; MUST be stable across every replay |
-| `events[].device_seq` | integer | monotonic within `boot_id`; used to detect gaps |
+| `events[].device_seq` | integer | strictly increasing for the lifetime of the device, across reboots; used to detect gaps and to acknowledge (§5.13) |
 | `events[].tier` | string | `audit` \| `telemetry` |
 | `events[].monotonic_ms` | integer | elapsed since boot — always meaningful |
 | `events[].device_time_ms` | integer \| null | wall time if the clock was synced; `null` otherwise |
@@ -356,20 +390,37 @@ Normative behaviour:
 
 - A device MUST NOT regenerate `event_id` on replay. A regenerated id defeats
   deduplication and would create duplicate history (SAFETY-016).
-- A device MUST retain replayed events until the edge acknowledges them, so an
-  edge crash mid-reconciliation loses nothing.
-
-  **v1 defines no acknowledgement topic.** The requirement above has no wire
-  mechanism yet: QoS 1 gives the device the *broker's* acknowledgement, not the
-  edge's, and the two are different facts — the broker acks a message the edge
-  may never have committed. Until a mechanism exists, a device retains buffered
-  events across every reconnection and replays them again, which is the
-  conservative side of the requirement: the edge deduplicates on `event_id`, so
-  repeated replay costs bandwidth and nothing else, while premature discard
-  would lose history permanently. **M6-020 owns the mechanism**, alongside the
-  edge-side reconciliation that will drive it.
+- A device MUST retain replayed events until the edge acknowledges them with an
+  `event.ack` (§5.13), so an edge crash mid-reconciliation loses nothing.
+  QoS 1 is not sufficient and MUST NOT be treated as sufficient: it gives the
+  device the *broker's* acknowledgement, not the edge's, and the broker acks a
+  message the edge may never have committed. An unacknowledged replay is
+  repeated on the next reconnection; the edge deduplicates on `event_id`, so
+  repeating costs bandwidth and nothing else, while discarding on a guess loses
+  history permanently.
 - A `history.gap` event MUST be emitted whenever eviction loses events, carrying
   the lost `device_seq` range and count (SAFETY-020).
+- **A `history.gap` marker takes its `device_seq` when it is first sent, not
+  when the loss occurs.** A run of losses is accumulated locally — range widened
+  and count raised — for as long as it has not been transmitted; the moment it
+  enters a replay batch it is fixed and never changes again, and any later loss
+  opens a new marker with its own `event_id`.
+
+  Both halves are load-bearing. A marker that could still change after being
+  sent would be dropped by the edge's own deduplication as a duplicate of the
+  smaller earlier version, permanently under-reporting the loss. And a marker
+  that took its sequence at the moment of the first loss would sit *below*
+  events buffered afterwards, so a cumulative acknowledgement covering those
+  events would also cover a marker the edge had never received — and, because
+  acknowledgement only moves forward, no later acknowledgement could ever cover
+  it again. Allocating the sequence at send time makes a marker's sequence
+  always higher than anything the edge could have acknowledged, because it did
+  not exist when the edge spoke. The position of the loss is carried by
+  `from_seq`/`to_seq`, which is where it belongs.
+- **An acknowledgement never applies to an unsent gap**, which follows from the
+  rule above rather than needing a special case: a device MUST NOT discard a
+  gap marker that has not yet appeared in a replay batch, however high the
+  acknowledged sequence.
 - The edge MUST NOT issue a water command to a plant whose replay has not
   reported `"complete": true` (SAFETY-016).
 
@@ -634,20 +685,46 @@ firmware call. There MUST NOT be a second implementation
 measure the delivered volume, and its delivered volume counts toward
 `FIRMWARE_MAX_DAILY_ML`.
 
-**Calibration goes through the full §5.8 gate, not a subset.** An earlier
-wording said "steps 1–9 and 12", which is not implementable: applying some of
-the checks and not others requires a *second* validation path, and §5.8 forbids
-a second implementation of the rules for exactly the reason ADR-008 gives. A
-device therefore converts the request to the volume it would deliver —
-`run_seconds × pump.ml_per_second` — and puts that through
-`validate_water_command` unchanged. The consequence is that steps 10 and 11
-apply as well: a calibration that would exceed `FIRMWARE_MAX_ML_PER_RUN` is
-clamped and reports `clamped: true`, and one that would exceed the daily total
-is refused with `over_daily_max`. That is stricter than the earlier wording and
-never more permissive, which is the direction this protocol always errs in. An
-operator wanting a full-length run reduces `run_seconds` until the implied
-volume is inside the limit; the clamped result reports the duration that
-actually ran, which is the number a calibration needs.
+#### Calibration goes through the full §5.8 gate — normative
+
+A calibration run is a real dose into a real pot from a real reservoir. It can
+overflow, it can run a pump dry, and it can be issued while a leak is detected.
+Nothing about the operator's intent changes what the water does, so **every step
+of §5.8 applies, in order, with no exemption**.
+
+A device MUST convert the request to the volume it implies and put that through
+`validate_water_command` unchanged:
+
+```text
+synthetic_ml := run_seconds × config.pump.ml_per_second
+```
+
+where `pump.ml_per_second` is the value from the currently applied
+`device.config` (§5.6) — the same figure the device uses to time an ordinary
+dose. The synthetic volume is what the gate sees as `requested_ml`; the
+`command_id`, `issued_at_ms`, and `expires_at_ms` are the calibration's own.
+
+Consequences, which follow rather than being separate rules:
+
+- Steps 10 and 11 apply. A calibration whose implied volume exceeds
+  `FIRMWARE_MAX_ML_PER_RUN` is **clamped**, and the result reports
+  `clamped: true` together with the duration that actually ran — which is the
+  number a calibration needs, and is why clamping is more useful here than
+  refusing. One that would exceed the daily total is refused with
+  `over_daily_max`.
+- A device with no leak sensor refuses a calibration for `leak_unknown`, like
+  any other actuation (step 6, SAFETY-012).
+- The delivered volume is recorded against the rolling 24-hour total. A
+  calibration is not free water.
+
+An operator wanting a longer run reduces `run_seconds` until the implied volume
+is inside the limit, or performs several runs and sums the measurements.
+
+**A device MUST NOT implement a second validator for calibration**, nor a subset
+copy of the §5.8 checks. The synthetic-volume mapping exists precisely so that
+one gate serves both paths: a subset would be a second implementation of the
+rules, which ADR-008 forbids because it makes every simulator-based safety test
+prove something about only one of them.
 
 ### 5.10 `command.result` → `commands/result` (device → edge)
 
@@ -911,6 +988,105 @@ agrees about the time.
 
 ---
 
+### 5.13 `event.ack` → `events/ack` (edge → device, **never retained**)
+
+The other half of §5.4. A device buffers history while isolated and replays it on
+reconnection; this is how it learns that the replay is safely on the edge and the
+buffer can be emptied.
+
+```json
+{
+  "v": 1, "kind": "event.ack",
+  "message_id": "018fd8c0-…",
+  "device_id": "plant-node-01",
+  "data": { "boot_id": "018fd6b0-…", "through_device_seq": 4413 }
+}
+```
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `boot_id` | UUID | yes | the device boot this acknowledgement is addressed to |
+| `through_device_seq` | integer | yes | every event at or below this `device_seq` is durably committed on the edge |
+
+#### Cumulative, not a list — normative
+
+`through_device_seq` is a **prefix**: it says "everything up to and including
+this sequence is committed", not "these particular events are committed". A list
+of `event_id`s would be the obvious alternative and is the wrong shape here.
+
+A device buffer is bounded and a replay is built as `device_seq`-ordered slices
+of the whole buffer, so every batch the edge can commit *is* a prefix — the
+information a list would carry beyond a prefix does not exist. Against that, a
+list grows with the backlog, so the acknowledgement for the worst outage is the
+largest message, arriving exactly when the link is least able to carry it; and
+it forces the device to hold a set and compute a difference, on the part with
+the least RAM. A prefix is a single integer, is idempotent by construction, and
+degrades to a no-op rather than to partial deletion.
+
+#### Publishing — normative
+
+- The edge MUST NOT publish an `event.ack` before the transaction that persists
+  those events has **committed**. Acknowledging on receipt, or from a buffer, or
+  optimistically before a commit that may still fail, tells the device to delete
+  history the edge does not have. The order is: receive → persist → commit →
+  acknowledge.
+- `through_device_seq` MUST be the highest sequence such that every event at or
+  below it has been committed. If a batch is committed out of order — which QoS
+  1 permits — the edge acknowledges only up to the last contiguous sequence, and
+  the device keeps replaying the rest. A prefix that skips a hole is a lie about
+  what the edge holds.
+- The edge MUST set `boot_id` to the `boot_id` of the replay being acknowledged.
+- `event.ack` MUST NOT be retained (§3).
+- The edge MAY acknowledge once per replay or once per batch. Neither is more
+  correct; batching costs a round-trip, per-batch costs a message.
+- An acknowledgement is advisory in one direction only: losing one costs a
+  repeated replay, so the edge is not required to retry it. It MUST NOT retry it
+  by *raising* the sequence to cover events committed since — that is a new
+  acknowledgement and is fine — but MUST NOT lower it.
+
+#### Applying — normative
+
+On receiving an `event.ack`, a device:
+
+1. **MUST ignore it if `boot_id` is not the device's current `boot_id`.** A
+   delayed acknowledgement from an earlier boot says nothing about the history
+   this boot holds, and `device_seq` continues across reboots, so honouring one
+   would delete events buffered since it was sent.
+2. **MUST ignore it if `through_device_seq` exceeds the highest `device_seq` the
+   device has ever allocated**, and MUST NOT clamp it to that highest value. A
+   sequence the device never issued cannot have been committed by anyone; the
+   acknowledgement is corrupt or misaddressed, and clamping would turn that into
+   "delete everything". Nothing is deleted and nothing is recorded.
+3. **MUST ignore it if `through_device_seq` is at or below one already applied.**
+   Acknowledgement only moves forward. A duplicate is a no-op; a lower one is
+   not a rewind.
+4. Otherwise, discards every buffered event with `device_seq <= through_device_seq`
+   and records `through_device_seq` as the highest applied.
+
+- The discard and the record MUST be one durable step. A device that recorded
+  the acknowledgement without discarding would replay events it has already
+  been told about — harmless. One that discarded without recording, then
+  restarted, would be unable to tell what it had already discarded. If only one
+  can happen, it must be the first.
+- A device MUST NOT publish anything in response to an `event.ack`. There is no
+  acknowledgement of the acknowledgement; the next replay carries the same
+  information, and a device that has nothing left to replay says so with the
+  empty `"complete": true` batch of §8.
+- A device MUST NOT discard a `history.gap` marker that has not yet been sent,
+  whatever the acknowledged sequence (§5.4).
+
+#### What is not here
+
+This section defines the **wire mechanism** and the device's obligations. The
+edge-side reconciliation that decides *when* a plant leaves `Uncertain`, and
+what a gap marker means for a watering decision, is safety policy and belongs to
+M6 (SAFETY-016, SAFETY-020). M3 owns durable ingest and the acknowledgement
+itself: persist, commit, acknowledge. Neither milestone may implement the other's
+half — an edge that acknowledged without persisting would satisfy M3's shape and
+destroy M6's guarantee.
+
+---
+
 ## 6. Deduplication — normative
 
 **Receivers MUST deduplicate on `message_id` alone.**
@@ -938,6 +1114,11 @@ generate each `event_id` once, at buffering time, and MUST NOT regenerate it on
 replay — a regenerated id would defeat deduplication and create duplicate
 watering history (SAFETY-016).
 
+Deduplication is also why a `history.gap` marker is immutable once sent (§5.4):
+a marker republished with a widened range carries the `event_id` the edge has
+already seen, so it is discarded as a duplicate and the extra loss it now
+describes is never recorded.
+
 ---
 
 ## 7. Ordering
@@ -959,7 +1140,9 @@ Receivers MUST NOT assume ordered delivery. Specifically:
 
 1. Configure LWT before connecting.
 2. Connect with `clean_session = true`.
-3. Subscribe to `config`, `policy`, `time`, and `commands/+`.
+3. Subscribe to the seven exact topics of §3 — `config`, `policy`, `time`,
+   `events/ack`, and the three `commands/*` topics. No wildcard: a device MUST
+   NOT subscribe to a filter that matches a topic it publishes.
 4. Publish retained `status: online`. This is what triggers the Edge to publish
    `edge.time` (§5.12); until one is applied, the device MUST refuse water
    commands with `clock_unsynced`.
@@ -967,8 +1150,10 @@ Receivers MUST NOT assume ordered delivery. Specifically:
    telemetry beyond its bounded ring.
 6. Republish any pending `command.result` from NVS.
 7. **Replay buffered offline events** (§5.4) in `device_seq` order, in batches,
-   setting `"complete": true` on the final batch. Events MUST be retained until
-   the edge acknowledges them.
+   setting `"complete": true` on the final batch. Any accumulated `history.gap`
+   is sealed and takes its `device_seq` at this point (§5.4). Events MUST be
+   retained until an `event.ack` (§5.13) covers them — not merely until the
+   broker has acked the publish.
 
 **Edge:**
 
@@ -981,7 +1166,11 @@ Receivers MUST NOT assume ordered delivery. Specifically:
    replay reports `"complete": true` and has been committed. Issuing a dose on
    top of an autonomous dose delivered moments ago is exactly the failure
    SAFETY-016 prevents.
-5. Republish the retained `policy` if the broker may have lost retained state,
+5. **Publish `event.ack` (§5.13) only after the transaction persisting the
+   replayed events has committed**, covering the highest contiguous
+   `device_seq`. Acknowledging earlier tells a device with a bounded buffer to
+   delete history the edge does not have.
+6. Republish the retained `policy` if the broker may have lost retained state,
    detected the same way as for `config`.
 
 ---
@@ -1060,10 +1249,26 @@ An implementation is conformant when:
 - [ ] `policy` is validated, staged, verified, then activated atomically
 - [ ] a policy with `policy_version` ≤ applied is ignored
 - [ ] an invalid or interrupted policy update leaves the previous policy active
+- [ ] the device subscribes to seven **exact** topics and to no wildcard
+- [ ] no subscription matches a topic the device publishes, `commands/result`
+      included — checked as a subscription-set property, not as "ignored on
+      receipt"
 - [ ] buffered events keep a stable `event_id` across every replay
 - [ ] the final replay batch sets `"complete": true`
 - [ ] buffer overflow emits a `history.gap` event with range and count
+- [ ] a `history.gap` marker is immutable once sent, and takes its `device_seq`
+      at send time
 - [ ] audit-tier events are never evicted to make room for telemetry
+- [ ] replayed events are discarded only on `event.ack`, never on the broker's
+      publish ack
+- [ ] `event.ack` is published **non-retained**, QoS 1, and only after the
+      persisting transaction has committed
+- [ ] an `event.ack` for another `boot_id` is ignored
+- [ ] an `event.ack` beyond the highest issued `device_seq` deletes nothing and
+      is **not** clamped
+- [ ] a duplicate `event.ack` is idempotent; a lower one does not regress
+- [ ] an applied `event.ack` survives a device restart
+- [ ] an unsent `history.gap` survives any acknowledgement
 - [ ] `time` is published **non-retained**, QoS 1
 - [ ] the Edge sends `edge.time` on every `device.status` and at least every 300 s
 - [ ] an `edge.time` older than **or equal to** the last applied one is ignored

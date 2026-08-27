@@ -172,7 +172,9 @@ judgement as `value_tier` at the edge, made under tighter constraints.
 is replayed on reconnect, stored in `history_gaps`, and shown in the plant's
 history. It is never silently absorbed (SAFETY-020).
 
-Replayed events are retained until the edge acknowledges them, so an edge crash
+Replayed events are retained until the edge acknowledges them with an
+`event.ack` ([mqtt-v1.md](../protocol/mqtt-v1.md) §5.13) — not merely until the
+broker acks the publish, which is a different fact — so an edge crash
 mid-reconciliation loses nothing — the device simply replays again. Replay is
 idempotent on the device-generated `event_id` (SAFETY-016).
 

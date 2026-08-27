@@ -77,7 +77,7 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 |---|---|
 | F-020-01 | LWT configured before connect; `clean_session = true` |
 | F-020-02 | Retained `status: online` on connect; `offline` LWT on unclean disconnect |
-| F-020-03 | Subscribes only to `rhizo/v1/devices/{own_id}/config`, `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and `rhizo/v1/devices/{own_id}/commands/+` |
+| F-020-03 | Subscribes to exactly the seven exact topics of protocol §3, built from `Topic::device_subscriptions`; no wildcard, and no filter matching a topic it publishes |
 | F-020-04 | Publishes one `telemetry.batch` payload on `rhizo/v1/devices/{id}/telemetry` per sampling cycle, containing all `MeasurementSample` values taken in that cycle; publishes a separate `actuator.state` payload on `rhizo/v1/devices/{id}/actuator` when actuator state changes |
 | F-020-05 | `boot_id` fresh each start; `sequence` monotonic within a boot |
 | F-020-06 | `message_id` is UUIDv7 when the clock is synced |
@@ -90,6 +90,7 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 | F-020-13 | Persists monotonic offline runtime state needed by the later shared evaluator |
 | F-020-14 | Contains no simulator-specific offline evaluator and performs no autonomous dose in M2 |
 | F-020-15 | Buffers bounded audit/telemetry history and replays stable event ids in order |
+| F-020-16 | Applies `event.ack` (protocol §5.13) cumulatively: ignores another `boot_id`, ignores a sequence beyond any it issued without clamping, ignores one not newer, and never discards an unsent `history.gap` |
 
 ### Safety parity — the critical requirements
 

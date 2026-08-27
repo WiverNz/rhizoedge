@@ -1,5 +1,5 @@
 //! Typed buffered event replay.
-use crate::{EventId, UtcMillis};
+use crate::{BootId, EventId, UtcMillis};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
@@ -118,6 +118,43 @@ pub struct DeviceEventBatch {
     /** Events. */
     pub events: Vec<BufferedEvent>,
 }
+
+/// Cumulative acknowledgement of replayed history (edge → device).
+///
+/// The transport primitive behind protocol §5.4's "a device MUST retain
+/// replayed events until the edge acknowledges them". Without it that rule has
+/// no mechanism: QoS 1 gives the device the *broker's* acknowledgement, and the
+/// broker acks a message the edge may never have committed.
+///
+/// # Cumulative, not a list of ids
+///
+/// A prefix acknowledgement rather than an array of `event_id` values because it
+/// is bounded on the wire whatever the buffer holds, is naturally idempotent, is
+/// cheap for a device with kilobytes of RAM to apply, and matches the replay it
+/// acknowledges — which is emitted in `device_seq` order, so every batch the
+/// edge can have persisted is a prefix.
+///
+/// # What it asserts
+///
+/// > The edge has **durably committed** every replayed event for this
+/// > `boot_id` up to and including `through_device_seq`.
+///
+/// Durably: the acknowledgement is published *after* the persistence
+/// transaction commits, never before. An acknowledgement sent on receipt would
+/// license the device to delete history the edge is about to lose.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EventAck {
+    /// The boot whose replay is being acknowledged.
+    ///
+    /// Echoed from the envelope of the replay batch. A device MUST ignore an
+    /// acknowledgement naming any other boot: a delayed acknowledgement from a
+    /// previous run says nothing about the history this run is holding, and
+    /// acting on it would delete unacknowledged events.
+    pub boot_id: BootId,
+    /// The highest `device_seq` the edge has durably committed.
+    pub through_device_seq: u64,
+}
+
 /// Event batch structural failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EventBatchError {

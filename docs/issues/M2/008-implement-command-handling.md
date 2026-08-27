@@ -14,7 +14,7 @@ Handle water, tare, and calibrate commands with hardware-identical refusal behav
 
 ## Scope
 
-- Subscribe and dispatch on `commands/+`
+- Dispatch on the three exact `commands/*` topics of protocol §3
 - **Every** water command goes through `validate_water_command` — no other path exists
 - `Accept` runs the pump model; `Reject` publishes the reason; `AlreadyExecuted` republishes the stored result
 - NVS-equivalent persistence written **before** actuation
@@ -88,7 +88,7 @@ grep -rn 'validate_water_command(' crates/device-simulator/src | grep -v '^\s*//
 ## Documentation impact
 
 - `docs/protocol/mqtt-v1.md` §5.9: `command.calibrate` goes through the **full**
-  §5.8 gate, not "steps 1–9 and 12". A subset of the checks would require the
+  §5.8 gate. A subset of the checks would require the
   second validation path §5.8 forbids; the full gate is stricter and never more
   permissive.
 

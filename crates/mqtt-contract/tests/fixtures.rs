@@ -138,6 +138,12 @@ fn check_valid(path: &PathBuf) -> MessageKind {
             cmd.validate().unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }),
         MessageKind::CommandResult => typed!(CommandResult, _d => {}),
+        // `EventAck` carries no wire-level semantic rule: every `u64` is a
+        // representable sequence. Whether a *particular* sequence may be
+        // acted on is device state — "beyond what I have buffered" is not a
+        // property of the bytes — so that check lives in the simulator
+        // (`buffer::acknowledge`), not here.
+        MessageKind::EventAck => typed!(EventAck, _d => {}),
     }
     probe.kind
 }
@@ -145,7 +151,7 @@ fn check_valid(path: &PathBuf) -> MessageKind {
 #[test]
 fn valid_fixtures_decode_as_their_concrete_payload_type() {
     let files = json_files(&root().join("valid"));
-    assert!(files.len() >= 11, "the corpus lost fixtures");
+    assert!(files.len() >= 12, "the corpus lost fixtures");
     for path in &files {
         check_valid(path);
     }
@@ -171,6 +177,7 @@ fn valid_fixtures_cover_every_message_kind() {
         MessageKind::CommandTare,
         MessageKind::CommandCalibrate,
         MessageKind::CommandResult,
+        MessageKind::EventAck,
     ] {
         assert!(covered.contains(&kind), "no valid fixture for {kind:?}");
     }

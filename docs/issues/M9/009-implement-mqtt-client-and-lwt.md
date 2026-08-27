@@ -24,7 +24,8 @@ the Edge.
 - **LWT configured before connect**, retained, QoS 1
 - `clean_session = true`
 - Retained `status: online` on connect
-- Subscribe to own `config`, `policy`, `time` and `commands/+` only
+- Subscribe to the seven exact topics of protocol §3 — `config`, `policy`,
+  `time`, `events/ack`, and the three `commands/*` — and to no wildcard
 - Reconnect with backoff
 - Apply `edge.time` only when `edge_time_ms > last_applied_edge_time_ms`
   (**strictly** newer); an ignored message updates nothing at all
@@ -71,7 +72,8 @@ above all not `synced_at_monotonic`.
 - [ ] The LWT is set **before** connect, asserted by a host test.
 - [ ] `clean_session` is true.
 - [ ] Retained online status is published on connect.
-- [ ] It subscribes to `config`, `policy`, `time` and `commands/+` only.
+- [ ] It subscribes to the seven exact topics of protocol §3 and to no
+      wildcard, so no subscription can match a topic it publishes.
 - [ ] It does **not** subscribe to `commands/result`.
 - [ ] Killing power produces the LWT within the keepalive window.
 - [ ] Applying an `edge.time` makes `clock_synced` true.

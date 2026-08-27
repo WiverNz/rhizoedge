@@ -179,8 +179,6 @@ pub struct OfflineRuntime {
 pub struct GapMetadata {
     /// The stable id the replayed marker carries.
     pub event_id: rhizo_mqtt_contract::EventId,
-    /// The sequence the marker occupies.
-    pub device_seq: u64,
     /// Monotonic instant the first loss occurred.
     pub monotonic_ms: u64,
     /// Wall time, if the clock was synchronised.
@@ -981,7 +979,6 @@ mod tests {
                 s.offline_events.next_seq = 4_381;
                 s.offline_events.gap = Some(GapMetadata {
                     event_id: rhizo_mqtt_contract::EventId::from_uuid(Uuid::from_u128(77)),
-                    device_seq: 4_381,
                     monotonic_ms: 8_814_000,
                     device_time_ms: None,
                     from_seq: 4_100,

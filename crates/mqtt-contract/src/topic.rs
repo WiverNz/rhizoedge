@@ -17,7 +17,7 @@ pub struct TopicMetadata {
     /** Required retain flag. */
     pub retained: bool,
 }
-/// Every MQTT v1 topic (eleven concrete topic forms).
+/// Every MQTT v1 topic (twelve concrete topic forms).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Topic {
     Telemetry(DeviceId),
@@ -31,6 +31,7 @@ pub enum Topic {
     CommandTare(DeviceId),
     CommandCalibrate(DeviceId),
     CommandResult(DeviceId),
+    EventsAck(DeviceId),
 }
 /// Topic parse failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,27 +44,35 @@ pub enum TopicError {
 impl Topic {
     /// Edge wildcard subscription.
     pub const EDGE_SUBSCRIPTION: &'static str = "rhizo/v1/devices/+/#";
-    /// Wildcard filter covering the three edge→device command topics.
+    /// The seven subscriptions a device MUST establish, in protocol §3 order.
     ///
-    /// A subscription *filter*, not a topic, so it is a string rather than a
-    /// [`Topic`] variant — but it is still topic grammar, so it is built here
-    /// and nowhere else. A device assembling `commands/+` from its own string
-    /// concatenation would be a second grammar to keep in step with this one.
-    pub fn device_command_filter(device_id: &DeviceId) -> String {
-        alloc::format!("rhizo/v1/devices/{device_id}/commands/+")
-    }
-    /// The four subscriptions a device MUST establish, in protocol §3 order.
+    /// **Exact topics, never a wildcard.** `commands/+` would also match
+    /// `commands/result`, which the device itself publishes, and MQTT 3.1.1 has
+    /// no subscription-level "no local" option to suppress that. A device would
+    /// then be delivered every result it had just sent, and the rule "MUST NOT
+    /// subscribe to `commands/result`" would be unenforceable rather than merely
+    /// unenforced. Naming the three command topics costs two extra SUBSCRIBE
+    /// entries and removes the seam entirely.
     ///
-    /// `commands/result`, `telemetry`, `actuator`, and `events` are absent
-    /// deliberately: a device publishes those and MUST NOT subscribe to them.
-    /// Returning the complete set as one value is what lets a reconnect restore
-    /// *exactly* these, rather than whichever subset a call site remembered.
-    pub fn device_subscriptions(device_id: &DeviceId) -> [String; 4] {
+    /// `telemetry`, `actuator`, `events`, `status`, and `commands/result` are
+    /// absent deliberately: a device publishes those. Returning the complete set
+    /// as one value is what lets a reconnect restore *exactly* these, rather
+    /// than whichever subset a call site remembered.
+    ///
+    /// The cost of the exact form is that a command kind added in a later v1
+    /// revision is not received until the device names it. That is the safer
+    /// failure: an unreceived command is a command not executed, whereas a
+    /// wildcard that silently delivered the device its own output is a live
+    /// seam in the one topic tree that carries actuation.
+    pub fn device_subscriptions(device_id: &DeviceId) -> [String; 7] {
         [
             Self::Config(device_id.clone()).as_string(),
             Self::Policy(device_id.clone()).as_string(),
             Self::Time(device_id.clone()).as_string(),
-            Self::device_command_filter(device_id),
+            Self::CommandWater(device_id.clone()).as_string(),
+            Self::CommandTare(device_id.clone()).as_string(),
+            Self::CommandCalibrate(device_id.clone()).as_string(),
+            Self::EventsAck(device_id.clone()).as_string(),
         ]
     }
     /// Builds the exact wire topic.
@@ -80,6 +89,7 @@ impl Topic {
             Self::CommandTare(i) => (i, "commands/tare"),
             Self::CommandCalibrate(i) => (i, "commands/calibrate"),
             Self::CommandResult(i) => (i, "commands/result"),
+            Self::EventsAck(i) => (i, "events/ack"),
         };
         alloc::format!("rhizo/v1/devices/{id}/{suffix}")
     }
@@ -105,6 +115,7 @@ impl Topic {
             ["commands", "tare"] => Ok(Self::CommandTare(id)),
             ["commands", "calibrate"] => Ok(Self::CommandCalibrate(id)),
             ["commands", "result"] => Ok(Self::CommandResult(id)),
+            ["events", "ack"] => Ok(Self::EventsAck(id)),
             _ => Err(TopicError::UnknownSuffix),
         }
     }
@@ -121,7 +132,8 @@ impl Topic {
             | Self::CommandWater(i)
             | Self::CommandTare(i)
             | Self::CommandCalibrate(i)
-            | Self::CommandResult(i) => i,
+            | Self::CommandResult(i)
+            | Self::EventsAck(i) => i,
         }
     }
     /// Returns required QoS and retention.
@@ -173,7 +185,8 @@ mod tests {
                 "commands/calibrate",
                 false,
             ),
-            (Topic::CommandResult(id), "commands/result", false),
+            (Topic::CommandResult(id.clone()), "commands/result", false),
+            (Topic::EventsAck(id), "events/ack", false),
         ];
         for (topic, suffix, retained) in cases {
             assert_eq!(
@@ -190,9 +203,23 @@ mod tests {
             );
         }
     }
-    /// Protocol §3 "Subscriptions": exactly four, and never `commands/result`.
+    /// An acknowledgement is a statement about one moment, and retaining it
+    /// would make the broker repeat that statement to a device that reconnects
+    /// much later — after which the device would delete history the edge may
+    /// since have lost. Protocol §5.13: `event.ack` is never retained.
     #[test]
-    fn device_subscribes_to_exactly_the_four_normative_filters() {
+    fn an_acknowledgement_is_never_retained() {
+        let id = DeviceId::parse("node-01").unwrap();
+        assert!(
+            !Topic::EventsAck(id).metadata().retained,
+            "a retained acknowledgement would be replayed at every reconnect"
+        );
+    }
+
+    /// Protocol §3 "Subscriptions": exactly seven **exact** topics, and no
+    /// wildcard that could reach the device's own output.
+    #[test]
+    fn device_subscribes_to_exactly_the_normative_topics() {
         let id = DeviceId::parse("node-01").unwrap();
         let subs = Topic::device_subscriptions(&id);
         assert_eq!(
@@ -201,7 +228,10 @@ mod tests {
                 "rhizo/v1/devices/node-01/config",
                 "rhizo/v1/devices/node-01/policy",
                 "rhizo/v1/devices/node-01/time",
-                "rhizo/v1/devices/node-01/commands/+",
+                "rhizo/v1/devices/node-01/commands/water",
+                "rhizo/v1/devices/node-01/commands/tare",
+                "rhizo/v1/devices/node-01/commands/calibrate",
+                "rhizo/v1/devices/node-01/events/ack",
             ]
             .map(String::from)
         );
@@ -216,6 +246,37 @@ mod tests {
                 !subs.contains(&published_by_the_device.as_string()),
                 "a device must not subscribe to {published_by_the_device}"
             );
+        }
+    }
+
+    /// The property the exact form exists to guarantee: no subscription can
+    /// match anything the device publishes.
+    ///
+    /// Checked as "contains no wildcard" rather than only as string inequality,
+    /// because the failure being removed was a *wildcard that matched* — which
+    /// an equality check would not have caught.
+    #[test]
+    fn no_device_subscription_can_match_a_topic_the_device_publishes() {
+        let id = DeviceId::parse("node-01").unwrap();
+        let published = [
+            Topic::Telemetry(id.clone()),
+            Topic::Actuator(id.clone()),
+            Topic::Events(id.clone()),
+            Topic::Status(id.clone()),
+            Topic::CommandResult(id.clone()),
+        ];
+        for filter in Topic::device_subscriptions(&id) {
+            assert!(
+                !filter.contains('+') && !filter.contains('#'),
+                "{filter} is a wildcard; only an exact topic cannot over-match"
+            );
+            for topic in &published {
+                assert_ne!(
+                    filter,
+                    topic.as_string(),
+                    "a device subscription reaches its own {topic}"
+                );
+            }
         }
     }
 

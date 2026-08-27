@@ -29,6 +29,8 @@ pub enum MessageKind {
     CommandCalibrate,
     #[serde(rename = "command.result")]
     CommandResult,
+    #[serde(rename = "event.ack")]
+    EventAck,
 }
 impl MessageKind {
     /// Expected discriminator for a topic.
@@ -45,6 +47,7 @@ impl MessageKind {
             Topic::CommandTare(_) => Self::CommandTare,
             Topic::CommandCalibrate(_) => Self::CommandCalibrate,
             Topic::CommandResult(_) => Self::CommandResult,
+            Topic::EventsAck(_) => Self::EventAck,
         }
     }
 }

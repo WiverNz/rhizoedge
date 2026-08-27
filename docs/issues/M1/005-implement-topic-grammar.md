@@ -4,7 +4,7 @@
 
 ## Context
 
-Protocol section 3 defines eleven concrete topic forms. Both sides build
+Protocol section 3 defines twelve concrete topic forms. Both sides build
 and parse them, so a single implementation prevents the classic bug where one
 side publishes to a topic the other never subscribes to.
 
@@ -14,7 +14,7 @@ Implement the `Topic` enum with lossless round-tripping.
 
 ## Scope
 
-- `Topic` enum with all eleven variants
+- `Topic` enum with all twelve variants
 - `to_string()` building `rhizo/v1/devices/{id}/...`
 - `parse()` rejecting unknown, malformed, and wrong-version topics
 - `device_id()` accessor
@@ -43,7 +43,7 @@ variant.
 
 ## Acceptance criteria
 
-- [x] All eleven variants build the exact strings in protocol section 3.
+- [x] All twelve variants build the exact strings in protocol section 3.
 - [x] Round-trip holds for every variant.
 - [x] `rhizo/v2/devices/x/status` is rejected.
 - [x] `rhizo/v1/devices/x%23/status` and other invalid ids are rejected.

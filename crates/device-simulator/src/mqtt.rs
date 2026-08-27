@@ -140,11 +140,9 @@ pub enum Step {
         /// The topic it arrived on.
         topic: String,
     },
-    /// A message arrived that the device must not act on.
-    ///
-    /// In practice this is `commands/result` — the device's own output, which
-    /// the normative `commands/+` filter unavoidably also matches — or a topic
-    /// whose grammar is invalid.
+    /// A message arrived that the device must not act on: a topic whose
+    /// grammar is invalid, one addressed to another device, or — if a
+    /// subscription were ever widened by mistake — one the device publishes.
     Ignored {
         /// The topic it arrived on.
         topic: String,
@@ -251,11 +249,10 @@ impl Connection {
 
     /// Classifies an inbound message.
     ///
-    /// The normative `commands/+` filter (protocol §3) also matches
-    /// `commands/result`, which the device itself publishes. MQTT gives a
-    /// device no way to subscribe to the first without the second, so "MUST NOT
-    /// subscribe to `commands/result`" is honoured the only way it can be: the
-    /// device never acts on what arrives there.
+    /// Since the device subscribes to exact topics rather than `commands/+`,
+    /// nothing it publishes can be delivered here. Anything on such a topic
+    /// therefore means a subscription was widened somewhere, which is worth
+    /// saying loudly rather than quietly dropping.
     fn on_inbound(&self, topic: String) -> Step {
         let ignored = |reason| Step::Ignored {
             topic: topic.clone(),
@@ -274,11 +271,12 @@ impl Connection {
         match parsed {
             Topic::Config(_) | Topic::Policy(_) | Topic::Time(_) => {}
             Topic::CommandWater(_) | Topic::CommandTare(_) | Topic::CommandCalibrate(_) => {}
-            Topic::CommandResult(_) => {
-                tracing::trace!(topic, "ignoring the device's own result echo");
-                return ignored("published_by_this_device");
-            }
-            Topic::Telemetry(_) | Topic::Actuator(_) | Topic::Events(_) | Topic::Status(_) => {
+            Topic::EventsAck(_) => {}
+            Topic::CommandResult(_)
+            | Topic::Telemetry(_)
+            | Topic::Actuator(_)
+            | Topic::Events(_)
+            | Topic::Status(_) => {
                 // Not subscribed to, so reaching here means an over-broad
                 // subscription somewhere — worth saying so loudly.
                 tracing::warn!(topic, "inbound message on a device-published topic");

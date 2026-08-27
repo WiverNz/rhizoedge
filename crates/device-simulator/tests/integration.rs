@@ -15,7 +15,7 @@ use support::{RECEIVE_TIMEOUT, Received, SimulatedDevice, clear_retained, publis
 
 const DEVICE: &str = "plant-node-01";
 
-fn topics(device_id: &str) -> [String; 4] {
+fn topics(device_id: &str) -> [String; 7] {
     let id = DeviceId::parse(device_id).unwrap();
     Topic::device_subscriptions(&id)
 }
@@ -66,28 +66,22 @@ async fn connect_publishes_a_retained_online_status_a_fresh_subscriber_receives(
 }
 
 #[tokio::test]
-async fn every_connect_restores_exactly_the_four_normative_subscriptions() {
-    let Some(broker) = support::broker("every_connect_restores_the_four_subscriptions").await
-    else {
+async fn every_connect_restores_exactly_the_normative_subscriptions() {
+    let Some(broker) = support::broker("every_connect_restores_the_subscriptions").await else {
         return;
     };
     let mut device = SimulatedDevice::start(&broker, DEVICE, &[]).await;
     let edge = broker
         .edge_subscriber("test-subs-edge", &status_topic(DEVICE))
         .await;
-    let filters = topics(DEVICE);
-    // `commands/+` is a filter; publish to a concrete topic underneath it.
-    let concrete = [
-        filters[0].clone(),
-        filters[1].clone(),
-        filters[2].clone(),
-        Topic::CommandWater(DeviceId::parse(DEVICE).unwrap()).as_string(),
-    ];
+    // Every subscription is now an exact topic, so each can be published to
+    // directly — there is no wildcard needing a concrete member chosen for it.
+    let concrete = topics(DEVICE);
 
     for round in ["first connect", "after a reconnect"] {
         // Retained topics would be redelivered on reconnect and could make the
         // second round pass without a live subscription; clear them first.
-        for retained in [&filters[0], &filters[1]] {
+        for retained in [&concrete[0], &concrete[1]] {
             clear_retained(&edge.client(), retained).await;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -121,9 +115,19 @@ async fn every_connect_restores_exactly_the_four_normative_subscriptions() {
     device.stop_cleanly().await;
 }
 
+/// Nothing the device publishes is ever delivered back to it.
+///
+/// The seam this replaces: the device used to subscribe to `commands/+`, which
+/// matches `commands/result` — its own output. MQTT 3.1.1 has no "no local"
+/// subscription option, so the only fix was to stop subscribing to a wildcard.
+///
+/// The assertion is about **delivery**, not about the router discarding the
+/// message after receipt. A device that received its own results and then
+/// ignored them would still be carrying the seam: one refactor of the dispatch
+/// table away from acting on them, and burning bandwidth in the meantime.
 #[tokio::test]
-async fn the_device_never_acts_on_what_it_publishes() {
-    let Some(broker) = support::broker("the_device_never_acts_on_what_it_publishes").await else {
+async fn nothing_the_device_publishes_is_delivered_back_to_it() {
+    let Some(broker) = support::broker("nothing_the_device_publishes_comes_back").await else {
         return;
     };
     let mut device = SimulatedDevice::start(&broker, DEVICE, &[]).await;
@@ -131,47 +135,115 @@ async fn the_device_never_acts_on_what_it_publishes() {
         .edge_subscriber("test-nosub-edge", &status_topic(DEVICE))
         .await;
     let id = DeviceId::parse(DEVICE).unwrap();
-    let never_delivered = [
+
+    let published_by_the_device = [
+        Topic::CommandResult(id.clone()).as_string(),
         Topic::Telemetry(id.clone()).as_string(),
         Topic::Actuator(id.clone()).as_string(),
         Topic::Events(id.clone()).as_string(),
+        Topic::Status(id.clone()).as_string(),
     ];
-    for topic in &never_delivered {
+    for topic in &published_by_the_device {
         publish(&edge.client(), topic, r#"{"probe":true}"#, false).await;
     }
-    let seen = device
-        .observe_inbound(&never_delivered, Duration::from_secs(2))
+
+    // Anything at all on one of those topics — dispatched or ignored — means the
+    // broker delivered it, which means a subscription matched it.
+    let leaked = device
+        .next_step(Duration::from_secs(3), |step| match step {
+            device_simulator::mqtt::Step::Inbound { topic }
+            | device_simulator::mqtt::Step::Ignored { topic, .. } => {
+                published_by_the_device.contains(topic)
+            }
+            _ => false,
+        })
         .await;
     assert!(
-        seen.is_empty(),
-        "the device's subscriptions must not reach its own output topics; it received {seen:?}"
+        leaked.is_none(),
+        "the broker delivered the device a topic it publishes: {leaked:?}"
     );
 
-    // `commands/result` is the one exception, and it is unavoidable: the
-    // normative `commands/+` filter matches it. MQTT offers no way to exclude
-    // a child of a wildcard, so "MUST NOT subscribe to commands/result"
-    // (protocol §3) is honoured by never *acting* on what arrives there.
-    let result_topic = Topic::CommandResult(id).as_string();
-    publish(&edge.client(), &result_topic, r#"{"probe":true}"#, false).await;
-    let step = device
-        .next_step(RECEIVE_TIMEOUT, |s| {
-            matches!(
-                s,
-                device_simulator::mqtt::Step::Inbound { topic } | device_simulator::mqtt::Step::Ignored { topic, .. }
-                    if *topic == Topic::CommandResult(DeviceId::parse(DEVICE).unwrap()).as_string()
-            )
-        })
-        .await
-        .expect("the wildcard delivers the device's own result echo");
-    assert!(
-        matches!(
-            step,
-            device_simulator::mqtt::Step::Ignored {
-                reason: "published_by_this_device",
-                ..
-            }
+    // Non-vacuity: the same publisher on a topic the device *does* subscribe to
+    // is delivered, so the negative above is about the subscription set rather
+    // than about nothing having been published.
+    let command_topic = Topic::CommandWater(id).as_string();
+    publish(&edge.client(), &command_topic, r#"{"probe":true}"#, false).await;
+    assert_eq!(
+        device
+            .observe_inbound(std::slice::from_ref(&command_topic), RECEIVE_TIMEOUT)
+            .await,
+        vec![command_topic],
+        "a real command must still arrive, or this test proves only that the \
+         broker is silent"
+    );
+
+    device.stop_cleanly().await;
+}
+
+/// The same property at the moment it matters: a *real* result the device
+/// itself published must not come back.
+#[tokio::test]
+async fn a_result_the_device_published_does_not_re_enter_command_dispatch() {
+    let Some(broker) = support::broker("a_published_result_does_not_re_enter_dispatch").await
+    else {
+        return;
+    };
+    support::clear_device_retained(&broker, DEVICE).await;
+    let mut device = SimulatedDevice::start(&broker, DEVICE, &["--initial-moisture", "15"]).await;
+    let id = DeviceId::parse(DEVICE).unwrap();
+    let result_topic = Topic::CommandResult(id.clone()).as_string();
+    let mut edge = broker
+        .edge_subscriber("test-result-echo", &format!("rhizo/v1/devices/{DEVICE}/#"))
+        .await;
+
+    let now_ms = 1_756_121_400_000_i64;
+    publish(
+        &edge.client(),
+        &Topic::Time(id.clone()).as_string(),
+        &edge_time_payload(DEVICE, now_ms),
+        false,
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    // A command the device will refuse instantly, so a result is published
+    // without waiting out a dose.
+    publish(
+        &edge.client(),
+        &Topic::CommandWater(id).as_string(),
+        &format!(
+            r#"{{"v":1,"kind":"command.water",
+                "message_id":"018fd7b1-0000-7000-8000-00000000ff01",
+                "device_id":"{DEVICE}",
+                "data":{{"command_id":"018fd7b1-4c2e-7f10-a3b8-9d1e2f304080",
+                         "requested_ml":40.0,
+                         "issued_at_ms":{},
+                         "expires_at_ms":{}}}}}"#,
+            now_ms - 300_000,
+            now_ms - 60_000
         ),
-        "the device must ignore its own result echo, not act on it: {step:?}"
+        false,
+    )
+    .await;
+
+    // The edge sees the result, so it really was published to the broker.
+    let result = edge
+        .next_matching(RECEIVE_TIMEOUT, |m| m.topic == result_topic)
+        .await
+        .expect("every command produces a result");
+    assert_eq!(result.json()["data"]["status"], "rejected");
+
+    // The device does not.
+    let leaked = device
+        .next_step(Duration::from_secs(3), |step| match step {
+            device_simulator::mqtt::Step::Inbound { topic }
+            | device_simulator::mqtt::Step::Ignored { topic, .. } => *topic == result_topic,
+            _ => false,
+        })
+        .await;
+    assert!(
+        leaked.is_none(),
+        "the device was delivered the result it had just published: {leaked:?}"
     );
 
     device.stop_cleanly().await;

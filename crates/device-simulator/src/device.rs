@@ -13,14 +13,16 @@ use rhizo_mqtt_contract::payload::{
     ActuatorState, CommandOrigin, CommandResult, CommandStatus, Connectivity, DeviceConfig,
     DeviceStatus, DeviceStatusValue, EdgeTime, MeasurementKind, ReportedLimits, TelemetryBatch,
 };
-use rhizo_mqtt_contract::payload::{EventDetail, EventKind, EventTier};
+use rhizo_mqtt_contract::payload::{EventAck, EventDetail, EventKind, EventTier};
 use rhizo_mqtt_contract::safety::{
     FIRMWARE_MAX_DAILY_ML, FIRMWARE_MAX_ML_PER_RUN, FIRMWARE_MAX_RUN_SECONDS, LeakState,
 };
-use rhizo_mqtt_contract::{DecodeError, DeviceId, Envelope, EventId, PROTOCOL_VERSION, Topic};
+use rhizo_mqtt_contract::{
+    BootId, DecodeError, DeviceId, Envelope, EventId, PROTOCOL_VERSION, Topic,
+};
 use std::collections::BTreeMap;
 
-use crate::buffer::Buffered;
+use crate::buffer::{AckOutcome, Buffered};
 use crate::capabilities::Capabilities;
 use crate::cli::Cli;
 use crate::clock::MonotonicClock;
@@ -121,6 +123,8 @@ pub struct Device {
     pub(crate) last_policy_rejection: Option<crate::policy::PolicyRejection>,
     /// Observed monotonic time not yet folded into the persisted runtime state.
     unpersisted_runtime_ms: u64,
+    /// What the most recent `event.ack` did.
+    last_ack_outcome: Option<AckOutcome>,
 }
 
 impl Device {
@@ -216,6 +220,7 @@ impl Device {
             recent_samples: RecentSamples::default(),
             last_policy_rejection: None,
             unpersisted_runtime_ms: 0,
+            last_ack_outcome: None,
         };
         // A boot always begins with the pump off, and a dose that was in flight
         // when the power went is reported before anything else happens
@@ -516,9 +521,12 @@ impl Device {
         self.connected
     }
 
-    /// The four subscriptions to establish on every connect.
+    /// The subscriptions to establish on every connect.
+    ///
+    /// Exact topics from the contract, never a wildcard: `commands/+` would
+    /// also match `commands/result`, which this device publishes.
     #[must_use]
-    pub fn subscriptions(&self) -> [String; 4] {
+    pub fn subscriptions(&self) -> [String; 7] {
         Topic::device_subscriptions(self.device_id())
     }
 
@@ -799,9 +807,11 @@ impl Device {
             Topic::CommandTare(_) => self.on_tare_command(payload),
             Topic::CommandCalibrate(_) => self.on_calibrate_command(payload),
             Topic::Policy(_) => self.on_policy(payload),
-            // Never subscribed to, or the device's own output echoed back by
-            // the `commands/+` wildcard. The driver filters these; refusing
-            // again here means no future call site can route one in by mistake.
+            Topic::EventsAck(_) => self.on_event_ack(payload),
+            // Never subscribed to: the device publishes all of these. Since the
+            // subscriptions became exact topics, the broker cannot deliver one
+            // here at all — refusing again is belt and braces, so no future call
+            // site can route one in by mistake.
             Topic::CommandResult(_)
             | Topic::Telemetry(_)
             | Topic::Actuator(_)
@@ -1097,6 +1107,86 @@ impl Device {
         self.isolation.connectivity(self.monotonic.elapsed_ms())
     }
 
+    /// Applies an `event.ack` (protocol §5.13).
+    ///
+    /// Deletion is the *last* step and happens in one persisted mutation, so a
+    /// crash between "decided to delete" and "wrote the file" leaves the events
+    /// still buffered. Replaying history the edge already has costs bandwidth;
+    /// deleting history it does not have loses it for ever.
+    fn on_event_ack(&mut self, payload: &[u8]) -> Vec<Publication> {
+        let Some(envelope) = self.decode::<EventAck>(payload, "event.ack") else {
+            return Vec::new();
+        };
+        let ack = envelope.data;
+
+        // An acknowledgement names the boot whose replay it covers. A delayed
+        // one from a previous run says nothing about the history this run is
+        // holding — sequences continue across boots, so a stale acknowledgement
+        // would silently cover events buffered since. Refuse it.
+        if ack.boot_id != self.identity.boot_id() {
+            tracing::warn!(
+                acked_boot = %ack.boot_id,
+                this_boot = %self.identity.boot_id(),
+                "ignoring an acknowledgement for another boot"
+            );
+            return Vec::new();
+        }
+
+        let outcome = match self
+            .store
+            .mutate(|state| state.offline_events.acknowledge(ack.through_device_seq))
+        {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                tracing::error!(error = %e, "could not persist the acknowledgement; history is kept");
+                return Vec::new();
+            }
+        };
+        match outcome {
+            AckOutcome::Applied {
+                through_seq,
+                removed,
+            } => tracing::info!(through_seq, removed, "replay acknowledged"),
+            AckOutcome::NotNewer { through_seq } => tracing::debug!(
+                through_seq,
+                applied = ?self.store.state().offline_events.pending_ack_through_seq,
+                "acknowledgement is not newer; ignored"
+            ),
+            AckOutcome::BeyondKnown {
+                through_seq,
+                highest,
+            } => tracing::error!(
+                through_seq,
+                highest,
+                "refusing an acknowledgement beyond any sequence this device issued; \
+                 nothing was deleted"
+            ),
+        }
+        self.last_ack_outcome = Some(outcome);
+        Vec::new()
+    }
+
+    /// This boot's `boot_id`.
+    ///
+    /// An acknowledgement names the boot it covers, so a caller has to be able
+    /// to see which boot is current.
+    #[must_use]
+    pub const fn boot_id(&self) -> BootId {
+        self.identity.boot_id()
+    }
+
+    /// The outcome of the most recent `event.ack`, for tests and diagnostics.
+    #[must_use]
+    pub const fn last_ack_outcome(&self) -> Option<AckOutcome> {
+        self.last_ack_outcome
+    }
+
+    /// The sequence acknowledged through, if any.
+    #[must_use]
+    pub const fn acknowledged_through(&self) -> Option<u64> {
+        self.store.state().offline_events.pending_ack_through_seq
+    }
+
     /// Buffers a device event, giving it its one and only `event_id`.
     ///
     /// The id is drawn **here**, at buffering time, and every replay reuses it.
@@ -1144,6 +1234,29 @@ impl Device {
         }
     }
 
+    /// The highest `device_seq` this device has ever allocated.
+    ///
+    /// The ceiling an acknowledgement may not exceed (protocol §5.13).
+    #[must_use]
+    pub const fn highest_allocated_seq(&self) -> Option<u64> {
+        self.store.state().offline_events.highest_allocated_seq()
+    }
+
+    /// The ids a replay would carry, in order.
+    ///
+    /// These are fixed at buffering time and must be identical across replays;
+    /// that is what lets the edge deduplicate (SAFETY-016).
+    #[must_use]
+    pub fn buffered_event_ids(&self) -> Vec<EventId> {
+        self.store
+            .state()
+            .offline_events
+            .replay_events()
+            .iter()
+            .map(|e| e.event_id)
+            .collect()
+    }
+
     /// How many events are waiting to be replayed.
     #[must_use]
     pub fn buffered_events(&self) -> usize {
@@ -1151,13 +1264,16 @@ impl Device {
     }
 
     /// Discards history the edge has acknowledged.
-    pub fn acknowledge_events(&mut self, through_seq: u64) {
-        if let Err(e) = self
+    ///
+    /// The same path `event.ack` takes, minus the wire decode, so a test and the
+    /// protocol cannot diverge about what an acknowledgement does.
+    pub fn acknowledge_events(&mut self, through_seq: u64) -> AckOutcome {
+        let outcome = self
             .store
             .mutate(|state| state.offline_events.acknowledge(through_seq))
-        {
-            tracing::error!(error = %e, "could not record the acknowledgement");
-        }
+            .unwrap_or(AckOutcome::NotNewer { through_seq });
+        self.last_ack_outcome = Some(outcome);
+        outcome
     }
 
     /// Builds the replay publications for a reconnection.
@@ -1167,6 +1283,12 @@ impl Device {
     /// it sees that flag, so a device with nothing to say still has to say so
     /// (protocol §5.4, SAFETY-016).
     fn replay_publications(&mut self) -> Vec<Publication> {
+        // Seal any still-growing gap first: once a marker is sent its range can
+        // never change again, because the edge deduplicates on `event_id` and
+        // would keep the first version for ever.
+        if let Err(e) = self.store.mutate(|state| state.offline_events.seal_gap()) {
+            tracing::error!(error = %e, "could not seal the pending history gap");
+        }
         let batches = self
             .store
             .state()
@@ -1455,7 +1577,10 @@ mod tests {
                 "rhizo/v1/devices/plant-node-01/config",
                 "rhizo/v1/devices/plant-node-01/policy",
                 "rhizo/v1/devices/plant-node-01/time",
-                "rhizo/v1/devices/plant-node-01/commands/+",
+                "rhizo/v1/devices/plant-node-01/commands/water",
+                "rhizo/v1/devices/plant-node-01/commands/tare",
+                "rhizo/v1/devices/plant-node-01/commands/calibrate",
+                "rhizo/v1/devices/plant-node-01/events/ack",
             ]
             .map(String::from)
         );
@@ -1813,6 +1938,263 @@ mod tests {
                 last = sequence;
             }
         }
+    }
+
+    // ------------------------------------------------- event acknowledgement
+
+    fn ack_topic() -> Topic {
+        Topic::EventsAck(DeviceId::parse("plant-node-01").unwrap())
+    }
+
+    fn ack_payload(boot_id: BootId, through_device_seq: u64) -> Vec<u8> {
+        envelope_payload(
+            "plant-node-01",
+            "event.ack",
+            serde_json::json!({
+                "boot_id": boot_id,
+                "through_device_seq": through_device_seq,
+            }),
+        )
+    }
+
+    /// Buffers `n` audit events and returns the sequences they were given.
+    fn buffer_events(device: &mut Device, n: usize) -> Vec<u64> {
+        (0..n)
+            .map(|_| {
+                device
+                    .record_event(
+                        EventTier::Audit,
+                        EventKind::PolicyActivated,
+                        EventDetail::PolicyActivated { policy_version: 1 },
+                    )
+                    .device_seq()
+            })
+            .collect()
+    }
+
+    fn replayed_ids(device: &Device) -> Vec<EventId> {
+        device.buffered_event_ids()
+    }
+
+    /// A replay is a retransmission, not a handover: until the edge says it has
+    /// the events, the device keeps them and sends them again.
+    #[test]
+    fn a_replay_discards_nothing_until_an_acknowledgement_arrives() {
+        let mut device = connected(&[]);
+        buffer_events(&mut device, 5);
+
+        for _ in 0..3 {
+            device.on_disconnected();
+            let published = device.on_connected().unwrap();
+            let replayed: usize = published
+                .iter()
+                .filter(|p| matches!(p.topic, Topic::Events(_)))
+                .map(|p| {
+                    serde_json::from_str::<serde_json::Value>(&p.payload).unwrap()["data"]["events"]
+                        .as_array()
+                        .map_or(0, Vec::len)
+                })
+                .sum();
+            assert_eq!(replayed, 5, "every reconnection replays the whole buffer");
+            assert_eq!(device.buffered_events(), 5);
+        }
+        assert_eq!(device.acknowledged_through(), None);
+    }
+
+    #[test]
+    fn an_acknowledgement_discards_the_covered_prefix() {
+        let mut device = connected(&[]);
+        let seqs = buffer_events(&mut device, 6);
+        let boot = device.boot_id();
+
+        let published = device.on_message(&ack_topic(), &ack_payload(boot, seqs[2]));
+        assert!(
+            published.is_empty(),
+            "an acknowledgement is not itself acknowledged"
+        );
+        assert_eq!(
+            device.last_ack_outcome(),
+            Some(AckOutcome::Applied {
+                through_seq: seqs[2],
+                removed: 3,
+            })
+        );
+        assert_eq!(device.buffered_events(), 3);
+        assert_eq!(device.acknowledged_through(), Some(seqs[2]));
+    }
+
+    /// The edge published an acknowledgement, the device never saw it, and the
+    /// edge moved on. The device replays what it still holds; the edge
+    /// deduplicates on `event_id`. Losing an acknowledgement costs bandwidth,
+    /// never history.
+    #[test]
+    fn a_lost_acknowledgement_costs_a_replay_and_nothing_else() {
+        let mut device = connected(&[]);
+        let seqs = buffer_events(&mut device, 4);
+        let ids = replayed_ids(&device);
+
+        // The acknowledgement is dropped in flight — simply never delivered.
+        device.on_disconnected();
+        let _ = device.on_connected().unwrap();
+
+        assert_eq!(device.buffered_events(), 4);
+        assert_eq!(
+            replayed_ids(&device),
+            ids,
+            "the same events with the same ids, so the edge can deduplicate"
+        );
+        assert_eq!(device.acknowledged_through(), None);
+
+        // And the retry lands.
+        let boot = device.boot_id();
+        device.on_message(&ack_topic(), &ack_payload(boot, seqs[3]));
+        assert_eq!(device.buffered_events(), 0);
+    }
+
+    #[test]
+    fn a_duplicate_acknowledgement_changes_nothing() {
+        let mut device = connected(&[]);
+        let seqs = buffer_events(&mut device, 5);
+        let boot = device.boot_id();
+
+        device.on_message(&ack_topic(), &ack_payload(boot, seqs[1]));
+        let after_first = device.buffered_events();
+        for _ in 0..3 {
+            device.on_message(&ack_topic(), &ack_payload(boot, seqs[1]));
+            assert_eq!(
+                device.last_ack_outcome(),
+                Some(AckOutcome::NotNewer {
+                    through_seq: seqs[1]
+                })
+            );
+        }
+        assert_eq!(device.buffered_events(), after_first);
+    }
+
+    #[test]
+    fn an_older_acknowledgement_never_un_acknowledges_history() {
+        let mut device = connected(&[]);
+        let seqs = buffer_events(&mut device, 6);
+        let boot = device.boot_id();
+
+        device.on_message(&ack_topic(), &ack_payload(boot, seqs[4]));
+        assert_eq!(device.acknowledged_through(), Some(seqs[4]));
+        device.on_message(&ack_topic(), &ack_payload(boot, seqs[1]));
+        assert_eq!(
+            device.acknowledged_through(),
+            Some(seqs[4]),
+            "a delayed, lower acknowledgement is a no-op, not a rewind"
+        );
+        assert_eq!(device.buffered_events(), 1);
+    }
+
+    /// Fail-closed: an acknowledgement the device cannot match to anything it
+    /// issued deletes nothing at all.
+    #[test]
+    fn an_acknowledgement_beyond_known_state_deletes_nothing() {
+        let mut device = connected(&[]);
+        let seqs = buffer_events(&mut device, 3);
+        let boot = device.boot_id();
+        let highest = *seqs.last().unwrap();
+
+        for beyond in [highest + 1, u64::MAX] {
+            device.on_message(&ack_topic(), &ack_payload(boot, beyond));
+            assert_eq!(
+                device.last_ack_outcome(),
+                Some(AckOutcome::BeyondKnown {
+                    through_seq: beyond,
+                    highest,
+                })
+            );
+            assert_eq!(device.buffered_events(), 3, "nothing was deleted");
+            assert_eq!(device.acknowledged_through(), None);
+        }
+    }
+
+    /// An acknowledgement names a boot. One from a previous boot says nothing
+    /// about the history *this* boot holds — sequences continue across
+    /// restarts, so honouring a stale acknowledgement would delete events
+    /// buffered since it was sent.
+    #[test]
+    fn an_acknowledgement_for_another_boot_is_ignored() {
+        let mut device = connected(&[]);
+        buffer_events(&mut device, 4);
+        let stranger = BootId::from_uuid(Uuid::from_u128(0x0123_4567_89ab_cdef));
+
+        device.on_message(&ack_topic(), &ack_payload(stranger, 2));
+        assert_eq!(
+            device.last_ack_outcome(),
+            None,
+            "a mismatched boot is refused before the buffer is touched"
+        );
+        assert_eq!(device.buffered_events(), 4);
+        assert_eq!(device.acknowledged_through(), None);
+    }
+
+    /// The acknowledgement is persisted with the buffer it trimmed, so a
+    /// restart does not resurrect history the edge already has.
+    #[test]
+    fn an_acknowledgement_survives_a_restart() {
+        let state = crate::testutil::scratch_state_file();
+        let path = state.display().to_string();
+        let args = ["--state-file", path.as_str()];
+
+        let seqs = {
+            let mut device = connected(&args);
+            let seqs = buffer_events(&mut device, 6);
+            let boot = device.boot_id();
+            device.on_message(&ack_topic(), &ack_payload(boot, seqs[3]));
+            assert_eq!(device.buffered_events(), 2);
+            seqs
+        };
+
+        let restarted = connected(&args);
+        assert_eq!(
+            restarted.buffered_events(),
+            2,
+            "the trimmed buffer is what was persisted"
+        );
+        assert_eq!(restarted.acknowledged_through(), Some(seqs[3]));
+    }
+
+    /// A gap marker can only be acknowledged once the edge has actually been
+    /// told about the gap — which means after the marker has been sealed and
+    /// replayed. Nothing about a run of losses is discarded on the strength of
+    /// an acknowledgement that predates the device saying anything about it.
+    #[test]
+    fn a_gap_is_only_acknowledgeable_once_the_edge_has_been_told_about_it() {
+        let mut device = connected(&[]);
+        buffer_events(&mut device, crate::buffer::AUDIT_CAPACITY + 3);
+        let boot = device.boot_id();
+
+        // Acknowledge everything issued so far. The marker has never been sent,
+        // so it survives and is still replayed.
+        let highest = device.highest_allocated_seq().unwrap();
+        device.on_message(&ack_topic(), &ack_payload(boot, highest));
+
+        device.on_disconnected();
+        let published = device.on_connected().unwrap();
+        let markers: Vec<serde_json::Value> = published
+            .iter()
+            .filter(|p| matches!(p.topic, Topic::Events(_)))
+            .flat_map(|p| {
+                serde_json::from_str::<serde_json::Value>(&p.payload).unwrap()["data"]["events"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter(|e| e["kind"] == "history.gap")
+            .collect();
+        assert_eq!(
+            markers.len(),
+            1,
+            "the loss is reported even though the sweep covered its sequence"
+        );
+
+        // Now that it has been sent, it is acknowledgeable like anything else.
+        let marker_seq = markers[0]["device_seq"].as_u64().unwrap();
+        device.on_message(&ack_topic(), &ack_payload(boot, marker_seq));
+        assert_eq!(device.buffered_events(), 0);
     }
 
     #[test]

@@ -97,7 +97,7 @@ edge publishes command.water
 | F-090-11 | MQTT with `clean_session = true` and LWT configured **before** connect |
 | F-090-12 | Retained `status: online` on connect; heartbeat every `5 × telemetry_interval` |
 | F-090-13 | Wall clock synchronised from the Edge via `edge.time` over MQTT (no SNTP client); an `edge.time` **less than or equal to** the last applied one is ignored and does not refresh `synced_at_monotonic`; `clock_synced` reflects synchronisation **age** and is reported truthfully |
-| F-090-14 | Subscribes to own `config` and `commands/+` only |
+| F-090-14 | Subscribes to the seven exact topics of protocol §3 and to no wildcard; never to a topic it publishes |
 | F-090-15 | Telemetry buffered across a disconnect to at most 16 samples, then dropped |
 | F-090-16 | Command results retried up to 60 s, then persisted to NVS and republished after reboot |
 

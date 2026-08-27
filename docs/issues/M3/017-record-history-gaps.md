@@ -36,6 +36,14 @@ An audit-tier gap is more serious than a telemetry-tier gap — it means an
 autonomous action may be unrecorded — so carry the tier and let the UI and the
 severity reflect it.
 
+A gap marker is immutable once the device has sent it, and takes its
+`device_seq` at that moment (mqtt-v1.md §5.4). Two consequences for this issue:
+a marker is deduplicated on `event_id` like any other event, so a re-replayed
+marker must not create a second row; and a marker is acknowledged by sequence
+like any other event, so M3-016's cumulative `event.ack` needs no special case
+for gaps. A second, wider marker for the same device is a **new** loss, not a
+correction of the first — store both.
+
 ## Acceptance criteria
 
 - [ ] A `history.gap` event creates a `history_gaps` row with range, count, and tier.
@@ -43,6 +51,8 @@ severity reflect it.
 - [ ] An audit-tier gap is recorded at higher severity than a telemetry-tier gap.
 - [ ] The metric increments with the correct labels.
 - [ ] A duplicate gap event creates no second row.
+- [ ] Two distinct markers from the same device are stored as two gaps, not
+      merged: they describe different losses.
 
 ## Verification
 

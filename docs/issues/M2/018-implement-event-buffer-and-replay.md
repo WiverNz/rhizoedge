@@ -65,11 +65,19 @@ isolation overflows telemetry without touching audit, which is what
 `a_long_isolation_overflows_telemetry_but_not_audit` asserts directly.
 
 **Acknowledgement.** `Device::acknowledge_events(through_seq)` discards what the
-edge has confirmed; until it is called, events are retained and replayed again,
-so an edge that crashes mid-reconciliation loses nothing. Protocol §5.4 requires
-the acknowledgement but v1 defines **no acknowledgement topic** — recorded in
-mqtt-v1.md §5.4 and left for M6-020, which owns edge-side reconciliation. Until
-then the device simply retains and replays, which is the conservative side.
+edge has confirmed; until it arrives, events are retained and replayed again, so
+an edge that crashes mid-reconciliation loses nothing.
+
+*Amended after M2 by the protocol seam cleanup.* At the time this issue was
+written v1 defined no acknowledgement topic, and the gap was recorded and left
+for the milestone that would need it. That deferral was wrong in kind: a wire
+format is cheapest to define before there are two implementations of the thing
+it connects, and leaving it open meant the device's retain-until-acknowledged
+rule had no mechanism to be conformant to. `event.ack` on
+`rhizo/v1/devices/{id}/events/ack` is now normative in mqtt-v1.md §5.13, and
+`Device::on_event_ack` applies it. M3-016 publishes it after its ingest
+transaction commits; M6 still owns what the reconciled history *means* for a
+watering decision.
 
 **Negative control**, run and reverted: making `replay_events` regenerate
 `event_id` fails six tests across both suites — `safety_016_replaying_three_times_reuses_the_same_event_ids`,
@@ -86,9 +94,10 @@ then the device simply retains and replays, which is the conservative side.
 
 ## Documentation impact
 
-- `docs/protocol/mqtt-v1.md` §5.4: v1 defines no acknowledgement topic, so the
-  retain-until-acknowledged requirement has no mechanism yet. Recorded there and
-  assigned to M6-020.
+- `docs/protocol/mqtt-v1.md` §5.4 and §5.13: the acknowledgement mechanism,
+  added by the post-M2 protocol seam cleanup. Also §5.4's rule that a
+  `history.gap` marker is immutable once sent and takes its `device_seq` at
+  that moment.
 
 ## Files likely affected
 

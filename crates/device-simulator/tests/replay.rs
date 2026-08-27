@@ -320,7 +320,13 @@ fn a_long_isolation_overflows_telemetry_but_not_audit() {
         inject_telemetry(&mut device);
     }
 
-    let events = device.store().state().offline_events.replay_events();
+    // Reconnect to build the replay: a run of losses is sealed into its marker
+    // at that moment, which is the first time it can be sent and therefore the
+    // first time its content is fixed.
+    let events: Vec<_> = batches(&device.on_connected().unwrap())
+        .into_iter()
+        .flat_map(|b| b.events)
+        .collect();
     assert!(
         events.iter().any(|e| e.kind == EventKind::OfflineRefused),
         "the audit event survived four times the telemetry capacity"

@@ -18,7 +18,9 @@ may add a field the fixture omits (a `#[serde(default)]` such as `point`); it ma
 never lose or alter one the fixture states. That asymmetry is the whole point:
 renaming a wire field turns this suite red instead of silently breaking a fleet.
 
-Every message kind in protocol §3 must keep at least one example here.
+Every message kind in protocol §3 must keep at least one example here. There are
+currently **twelve** kinds and twelve or more valid fixtures; the count only ever
+grows, because the corpus is append-only.
 
 ## `invalid/`
 
@@ -38,6 +40,13 @@ A directory the test does not recognise is a **hard failure**, not a skip: an
 unclassified fixture proves nothing, so the suite refuses to ignore it.
 
 ## History
+
+`event-ack.json` and `event-ack-first.json` were added by the post-M2 protocol
+seam cleanup, which defined `event.ack` (§5.13). The second is not redundant:
+`through_device_seq: 0` is a legitimate acknowledgement of the very first event,
+and a decoder that treats zero as "absent" — an easy mistake behind a
+`#[serde(default)]` or a truthiness check — passes the first fixture and fails
+this one.
 
 The corpus was hardened before M2 began. The original M1 harness decoded valid
 fixtures only as `Envelope<serde_json::Value>`, so it verified the envelope and

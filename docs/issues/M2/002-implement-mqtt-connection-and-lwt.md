@@ -17,9 +17,8 @@ Connect to the broker correctly and stay connected across failures.
 - `rumqttc` client with `clean_session = true` and client id = `device_id`
 - LWT configured **before** connect, retained, QoS 1
 - Retained `status: online` published on connect
-- Subscribe only to `rhizo/v1/devices/{own_id}/config`,
-  `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and
-  `rhizo/v1/devices/{own_id}/commands/+`
+- Subscribe only to the exact topics of protocol §3, via
+  `Topic::device_subscriptions` — never a hand-built string and never a wildcard
 - Reconnect with M0-007 backoff, base 2 s cap 300 s, unlimited
 - Clean-disconnect status with `reason: "shutdown"`
 
@@ -51,11 +50,14 @@ Subscriptions are re-established on every reconnect, never assumed to survive.
 - [x] A clean shutdown publishes `offline` with `reason: "shutdown"`.
 - [x] A fresh subscriber receives the retained status.
 - [x] Stopping and restarting the broker reconnects and **re-subscribes**.
-- [x] Every reconnect restores exactly the four normative edge→device
-      subscriptions: `config`, `policy`, `time`, and `commands/+`.
-- [x] The simulator does not subscribe to `commands/result`. *(Amended: `commands/+`
-      necessarily matches it, so the device ignores what arrives there rather than
-      acting on it — see mqtt-v1.md §3.)*
+- [x] Every reconnect restores exactly the normative edge→device subscriptions
+      of protocol §3.
+- [x] The simulator does not subscribe to `commands/result`. *(Amended after M2
+      by the protocol seam cleanup: the subscription set is now seven **exact**
+      topics, so the broker cannot deliver the device its own results at all.
+      The original `commands/+` filter matched them, and the rule had to be
+      softened to "never act on it"; it is now a property of the subscription
+      set rather than of the dispatch code — see mqtt-v1.md §3.)*
 
 ## Verification
 
@@ -71,8 +73,8 @@ mosquitto_sub -h localhost -u rhizo-edge -P "$P" -t 'rhizo/v1/#' -v --retained-o
 
 ## Documentation impact
 
-- `docs/protocol/mqtt-v1.md` §3: `commands/+` unavoidably matches
-  `commands/result`; the normative rule is that a device never *acts* on it.
+- `docs/protocol/mqtt-v1.md` §3: the device subscribes to seven exact topics
+  and to no wildcard, so it is never delivered a topic it publishes.
 
 ## Files likely affected
 

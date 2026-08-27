@@ -45,6 +45,48 @@ pub const TELEMETRY_CAPACITY: usize = 256;
 /// on the only message ever sent.
 pub const REPLAY_BATCH: usize = 32;
 
+/// What an acknowledgement did.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AckOutcome {
+    /// Applied; the covered prefix was discarded.
+    Applied {
+        /// The sequence acknowledged through.
+        through_seq: u64,
+        /// How many buffered events were discarded.
+        removed: usize,
+    },
+    /// At or below one already applied, so a no-op.
+    NotNewer {
+        /// The sequence offered.
+        through_seq: u64,
+    },
+    /// Beyond any sequence this device ever allocated; nothing was deleted.
+    BeyondKnown {
+        /// The sequence offered.
+        through_seq: u64,
+        /// The highest sequence this device has allocated.
+        highest: u64,
+    },
+}
+
+impl AckOutcome {
+    /// Whether the buffer changed.
+    #[must_use]
+    pub const fn changed(self) -> bool {
+        matches!(self, Self::Applied { removed, .. } if removed > 0)
+    }
+
+    /// A stable label for logs.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::Applied { .. } => "applied",
+            Self::NotNewer { .. } => "not_newer",
+            Self::BeyondKnown { .. } => "beyond_known",
+        }
+    }
+}
+
 /// What a `push` did.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Buffered {
@@ -193,9 +235,10 @@ impl EventBufferState {
                 }
             }
             None => {
+                // No `device_seq` yet. A marker takes its sequence when it is
+                // sealed, not when the first loss happens — see `seal_gap`.
                 self.gap = Some(GapMetadata {
                     event_id: EventId::from_uuid(gap_id(lost_seq, monotonic_ms)),
-                    device_seq: self.next_seq,
                     monotonic_ms,
                     device_time_ms,
                     from_seq: lost_seq,
@@ -203,33 +246,82 @@ impl EventBufferState {
                     lost_count: 1,
                     lost_tier,
                 });
-                self.next_seq = self.next_seq.saturating_add(1);
             }
         }
     }
 
-    /// Everything to replay, oldest first, with any gap marker in sequence.
+    /// Seals the pending gap into a real buffered event, ready to replay.
+    ///
+    /// Called immediately before a replay is built, and this is the whole reason
+    /// a gap is accumulated as *metadata* first. While a run of losses is still
+    /// growing, nobody has seen it, so widening its range and raising its count
+    /// is free. Once it has been sent it must never change again: the edge
+    /// deduplicates on `event_id`, so a marker whose range grew after it was
+    /// published would leave the edge holding the *smaller* first version for
+    /// ever, silently under-reporting how much history was lost. Losses after a
+    /// seal therefore open a new marker rather than widening the sent one.
+    ///
+    /// # Why the sequence is allocated here and not at the first loss
+    ///
+    /// Because acknowledgement is cumulative. A marker that took its sequence
+    /// at the moment of the first loss would sit *below* events buffered
+    /// afterwards, so an acknowledgement covering those events would also cover
+    /// a marker the edge had never been sent — and, being cumulative, no later
+    /// acknowledgement could ever cover it again. The marker would be
+    /// undeletable, and the loss it describes would never reach the edge.
+    ///
+    /// Taking the sequence at seal time makes that impossible by construction:
+    /// a marker's sequence is always above every sequence the edge could have
+    /// acknowledged, because it did not exist when the edge spoke. The range of
+    /// the loss is carried by `from_seq`/`to_seq`, which is where it belongs —
+    /// the marker's own sequence only ever meant "where it sits in the replay".
+    ///
+    /// The push deliberately bypasses the tier capacity check. A marker is one
+    /// small event per replay, and evicting an audit event to make room for the
+    /// record of an eviction would be a loop with nothing to show for it. The
+    /// overshoot is corrected by the next ordinary `push`, which enforces the
+    /// capacity again.
+    pub fn seal_gap(&mut self) {
+        let Some(gap) = self.gap.take() else {
+            return;
+        };
+        let device_seq = self.next_seq;
+        self.next_seq = self.next_seq.saturating_add(1);
+        self.events.push(BufferedEvent {
+            event_id: gap.event_id,
+            device_seq,
+            tier: EventTier::Audit,
+            kind: EventKind::HistoryGap,
+            monotonic_ms: gap.monotonic_ms,
+            device_time_ms: gap.device_time_ms,
+            detail: EventDetail::Gap {
+                from_seq: gap.from_seq,
+                to_seq: gap.to_seq,
+                lost_count: gap.lost_count,
+                lost_tier: gap.lost_tier,
+            },
+        });
+        self.events.sort_by_key(|e| e.device_seq);
+    }
+
+    /// Everything sealed and waiting to be replayed, oldest first.
+    ///
+    /// A gap still accumulating is **not** included: it has no final range yet.
+    /// [`seal_gap`](Self::seal_gap) is what makes it replayable.
     #[must_use]
     pub fn replay_events(&self) -> Vec<BufferedEvent> {
         let mut events = self.events.clone();
-        if let Some(gap) = self.gap.as_ref() {
-            events.push(BufferedEvent {
-                event_id: gap.event_id,
-                device_seq: gap.device_seq,
-                tier: EventTier::Audit,
-                kind: EventKind::HistoryGap,
-                monotonic_ms: gap.monotonic_ms,
-                device_time_ms: gap.device_time_ms,
-                detail: EventDetail::Gap {
-                    from_seq: gap.from_seq,
-                    to_seq: gap.to_seq,
-                    lost_count: gap.lost_count,
-                    lost_tier: gap.lost_tier,
-                },
-            });
-        }
         events.sort_by_key(|e| e.device_seq);
         events
+    }
+
+    /// The highest sequence this device has ever allocated.
+    ///
+    /// The ceiling an acknowledgement may not exceed. `next_seq` is the sequence
+    /// the *next* event will take, so the highest allocated is one below it.
+    #[must_use]
+    pub const fn highest_allocated_seq(&self) -> Option<u64> {
+        self.next_seq.checked_sub(1)
     }
 
     /// Splits the buffered history into replay batches.
@@ -269,23 +361,62 @@ impl EventBufferState {
         self.replay_events().last().map(|e| e.device_seq)
     }
 
-    /// Discards everything the edge has acknowledged.
+    /// Whether a gap is still accumulating and has never been sent.
+    #[must_use]
+    pub const fn has_pending_gap(&self) -> bool {
+        self.gap.is_some()
+    }
+
+    /// Applies a cumulative acknowledgement, returning what it did.
     ///
-    /// Until this is called, events are retained and replayed again — so an
-    /// edge that crashes mid-reconciliation loses nothing; it simply replays.
-    pub fn acknowledge(&mut self, through_seq: u64) {
-        self.events.retain(|e| e.device_seq > through_seq);
-        if self
-            .gap
-            .as_ref()
-            .is_some_and(|gap| gap.device_seq <= through_seq)
-        {
-            self.gap = None;
+    /// Until an acknowledgement arrives, events are retained and replayed
+    /// again — so an edge that crashes mid-reconciliation loses nothing; it
+    /// simply replays.
+    ///
+    /// Three refusals, all fail-closed:
+    ///
+    /// - **Beyond what this device has allocated.** A sequence the device never
+    ///   issued cannot have been persisted by anyone. Honouring it would delete
+    ///   the entire buffer on a typo or a corrupted field, so the whole
+    ///   acknowledgement is refused and nothing is deleted.
+    /// - **Older than one already applied.** Cumulative acknowledgement only
+    ///   moves forward; a delayed, lower one is a no-op rather than a
+    ///   regression.
+    /// - Anything else is idempotent by construction: applying the same
+    ///   acknowledgement twice retains the same suffix.
+    ///
+    /// A pending, unsealed gap is never affected: it has not been sent, so it
+    /// cannot have been acknowledged.
+    pub fn acknowledge(&mut self, through_seq: u64) -> AckOutcome {
+        match self.highest_allocated_seq() {
+            Some(highest) if through_seq > highest => {
+                return AckOutcome::BeyondKnown {
+                    through_seq,
+                    highest,
+                };
+            }
+            // Nothing has ever been allocated, so nothing can be acknowledged.
+            None => {
+                return AckOutcome::BeyondKnown {
+                    through_seq,
+                    highest: 0,
+                };
+            }
+            Some(_) => {}
         }
-        self.pending_ack_through_seq = Some(
-            self.pending_ack_through_seq
-                .map_or(through_seq, |previous| previous.max(through_seq)),
-        );
+        if self
+            .pending_ack_through_seq
+            .is_some_and(|previous| through_seq <= previous)
+        {
+            return AckOutcome::NotNewer { through_seq };
+        }
+        let before = self.events.len();
+        self.events.retain(|e| e.device_seq > through_seq);
+        self.pending_ack_through_seq = Some(through_seq);
+        AckOutcome::Applied {
+            through_seq,
+            removed: before - self.events.len(),
+        }
     }
 }
 
@@ -471,7 +602,10 @@ mod tests {
         assert_eq!(gap.to_seq, overflow as u64 - 1);
         assert_eq!(gap.lost_tier, EventTier::Telemetry);
 
-        // ...and it appears in the replay as a `history.gap` audit event.
+        // ...and once sealed it appears in the replay as a `history.gap`
+        // audit event. Sealing is what turns the accumulator into an event; a
+        // gap still growing has no final range to report.
+        state.seal_gap();
         let replayed = state.replay_events();
         let marker = replayed
             .iter()
@@ -495,16 +629,13 @@ mod tests {
         for n in 0..(TELEMETRY_CAPACITY as u128 + 50) {
             push(&mut state, n, EventTier::Telemetry);
         }
+        state.seal_gap();
         let markers: Vec<_> = state
             .replay_events()
             .into_iter()
             .filter(|e| e.kind == EventKind::HistoryGap)
             .collect();
         assert_eq!(markers.len(), 1, "one marker spans the run of losses");
-        assert_eq!(
-            state.replay_events()[0].event_id,
-            state.replay_events()[0].event_id
-        );
 
         let id = markers[0].event_id;
         for _ in 0..3 {
@@ -515,6 +646,56 @@ mod tests {
                 .collect();
             assert_eq!(again[0].event_id, id, "the marker keeps its identity");
         }
+    }
+
+    /// Sealing is what makes a marker immutable, and it has to be, because the
+    /// edge deduplicates on `event_id`.
+    ///
+    /// If a sent marker could keep growing, the edge would hold the version it
+    /// saw first — the *smaller* one — for ever, and under-report the loss.
+    /// Losses after a seal therefore open a new marker with its own id, rather
+    /// than widening the one already on the wire.
+    #[test]
+    fn a_sealed_marker_never_widens_and_later_losses_open_a_new_one() {
+        let mut state = EventBufferState::default();
+        for n in 0..(TELEMETRY_CAPACITY as u128 + 5) {
+            push(&mut state, n, EventTier::Telemetry);
+        }
+        state.seal_gap();
+        let first = state
+            .replay_events()
+            .into_iter()
+            .find(|e| e.kind == EventKind::HistoryGap)
+            .expect("sealed");
+        assert!(!state.has_pending_gap(), "sealing consumes the accumulator");
+
+        for n in 0..7u128 {
+            push(&mut state, 90_000 + n, EventTier::Telemetry);
+        }
+        assert!(
+            state.has_pending_gap(),
+            "further losses open a fresh marker"
+        );
+        state.seal_gap();
+
+        let markers: Vec<_> = state
+            .replay_events()
+            .into_iter()
+            .filter(|e| e.kind == EventKind::HistoryGap)
+            .collect();
+        assert_eq!(markers.len(), 2, "two runs of loss, two markers");
+        let sealed_again = markers
+            .iter()
+            .find(|m| m.event_id == first.event_id)
+            .expect("the first marker is still there");
+        assert_eq!(
+            sealed_again.detail, first.detail,
+            "a marker that has been replayed must never change what it says"
+        );
+        assert_ne!(
+            markers[0].event_id, markers[1].event_id,
+            "the second run is a distinct event, not an edit of the first"
+        );
     }
 
     #[test]
@@ -543,8 +724,11 @@ mod tests {
         for n in 0..70 {
             push(&mut state, n, EventTier::Audit);
         }
+        // 70 pushes into a 64-slot tier evict 6, so the buffer holds 64 events
+        // plus, once sealed, the one marker describing the loss: 65 in all.
+        state.seal_gap();
         let batches = state.replay_batches(REPLAY_BATCH);
-        assert_eq!(batches.len(), 3, "70 events in batches of 32");
+        assert_eq!(batches.len(), 3, "65 events in batches of 32");
         assert!(batches.iter().all(|b| b.replay));
         assert!(
             batches[..2].iter().all(|b| !b.complete),
@@ -632,17 +816,190 @@ mod tests {
         );
     }
 
+    /// A gap can only be acknowledged once the edge could actually have seen
+    /// it — which means once it has been sealed and replayed.
+    ///
+    /// An acknowledgement is a statement about what the edge has durably
+    /// persisted. While a marker is still accumulating it has never left the
+    /// device, so no acknowledgement can cover it, however high the sequence:
+    /// the accumulator is untouched, and it is sealed and sent as usual.
     #[test]
-    fn a_gap_is_cleared_only_once_it_has_been_acknowledged() {
+    fn an_unsent_gap_survives_any_acknowledgement_and_is_still_replayed() {
         let mut state = EventBufferState::default();
         for n in 0..(TELEMETRY_CAPACITY as u128 + 3) {
             push(&mut state, n, EventTier::Telemetry);
         }
-        let gap_seq = state.gap().unwrap().device_seq;
+        assert!(state.has_pending_gap(), "losses recorded");
+
+        // Acknowledge everything the device has ever allocated.
+        let highest = state.highest_allocated_seq().unwrap();
+        assert!(state.acknowledge(highest).changed());
+        assert!(
+            state.has_pending_gap(),
+            "an unsent marker cannot have been persisted by the edge"
+        );
+
+        state.seal_gap();
+        let marker = state
+            .replay_events()
+            .into_iter()
+            .find(|e| e.kind == EventKind::HistoryGap)
+            .expect("the gap is still replayed after the sweeping ack");
+        assert!(
+            marker.device_seq > highest,
+            "a marker sealed after an acknowledgement must sit above it, or the \
+             cumulative acknowledgement that already passed would have buried it"
+        );
+
+        // And it is acknowledgeable now that the edge has actually seen it.
+        assert!(state.acknowledge(marker.device_seq).changed());
+        assert!(state.replay_events().is_empty());
+    }
+
+    /// Once sealed, a marker is acknowledged by sequence like any other event —
+    /// there is no special case, which is the point of sealing.
+    #[test]
+    fn a_sealed_gap_is_cleared_by_an_acknowledgement_that_covers_its_sequence() {
+        let mut state = EventBufferState::default();
+        for n in 0..(TELEMETRY_CAPACITY as u128 + 3) {
+            push(&mut state, n, EventTier::Telemetry);
+        }
+        state.seal_gap();
+        let gap_seq = state
+            .replay_events()
+            .into_iter()
+            .find(|e| e.kind == EventKind::HistoryGap)
+            .expect("sealed")
+            .device_seq;
+        let has_marker = |s: &EventBufferState| {
+            s.replay_events()
+                .iter()
+                .any(|e| e.kind == EventKind::HistoryGap)
+        };
+
         state.acknowledge(gap_seq - 1);
-        assert!(state.gap().is_some(), "not yet");
+        assert!(has_marker(&state), "not yet");
         state.acknowledge(gap_seq);
-        assert!(state.gap().is_none());
+        assert!(!has_marker(&state));
+    }
+
+    // ---------------------------------------------- acknowledgement rules
+
+    /// Nothing is discarded until an acknowledgement says the edge has it.
+    ///
+    /// This is the whole reason replay is idempotent: a replay that is built,
+    /// sent, and lost costs a retransmission, never a hole in the history.
+    #[test]
+    fn replay_alone_discards_nothing() {
+        let mut state = EventBufferState::default();
+        for n in 0..10 {
+            push(&mut state, n, EventTier::Audit);
+        }
+        let first = state.replay_events();
+        for _ in 0..3 {
+            let _ = state.replay_batches(REPLAY_BATCH);
+        }
+        assert_eq!(
+            state.replay_events(),
+            first,
+            "an unacknowledged replay leaves the buffer exactly as it was"
+        );
+        assert_eq!(state.pending_ack_through_seq, None);
+    }
+
+    #[test]
+    fn an_acknowledgement_discards_the_covered_prefix_and_only_that() {
+        let mut state = EventBufferState::default();
+        for n in 0..10 {
+            push(&mut state, n, EventTier::Audit);
+        }
+        let seqs: Vec<u64> = state.replay_events().iter().map(|e| e.device_seq).collect();
+        let outcome = state.acknowledge(seqs[3]);
+        assert_eq!(
+            outcome,
+            AckOutcome::Applied {
+                through_seq: seqs[3],
+                removed: 4,
+            }
+        );
+        assert_eq!(
+            state
+                .replay_events()
+                .iter()
+                .map(|e| e.device_seq)
+                .collect::<Vec<_>>(),
+            seqs[4..],
+            "everything after the acknowledged prefix is still held"
+        );
+    }
+
+    /// A retransmitted acknowledgement — the edge published it twice, or the
+    /// device's own ack of it was lost — must be a no-op, not a second deletion.
+    #[test]
+    fn a_duplicate_acknowledgement_is_idempotent() {
+        let mut state = EventBufferState::default();
+        for n in 0..10 {
+            push(&mut state, n, EventTier::Audit);
+        }
+        let seqs: Vec<u64> = state.replay_events().iter().map(|e| e.device_seq).collect();
+        state.acknowledge(seqs[5]);
+        let after_first = state.replay_events();
+
+        for _ in 0..3 {
+            assert_eq!(
+                state.acknowledge(seqs[5]),
+                AckOutcome::NotNewer {
+                    through_seq: seqs[5]
+                }
+            );
+        }
+        assert_eq!(state.replay_events(), after_first);
+    }
+
+    /// The fail-closed case: an acknowledgement for a sequence the device never
+    /// issued is refused whole, and deletes nothing.
+    ///
+    /// The alternative — clamping it to the highest known sequence — would turn
+    /// a corrupted or misaddressed field into "delete the entire buffer". The
+    /// device only ever discards history it can match to something it sent.
+    #[test]
+    fn an_acknowledgement_beyond_any_issued_sequence_deletes_nothing() {
+        let mut state = EventBufferState::default();
+        for n in 0..10 {
+            push(&mut state, n, EventTier::Audit);
+        }
+        let before = state.replay_events();
+        let highest = state.highest_allocated_seq().unwrap();
+
+        for beyond in [highest + 1, highest + 1_000, u64::MAX] {
+            assert_eq!(
+                state.acknowledge(beyond),
+                AckOutcome::BeyondKnown {
+                    through_seq: beyond,
+                    highest,
+                }
+            );
+            assert_eq!(state.replay_events(), before, "nothing was deleted");
+            assert_eq!(state.pending_ack_through_seq, None, "and nothing recorded");
+        }
+
+        // The boundary itself is fine: the highest issued sequence was issued.
+        assert!(state.acknowledge(highest).changed());
+    }
+
+    /// An empty device has issued nothing, so it can acknowledge nothing —
+    /// including sequence 0, which is a real sequence only once allocated.
+    #[test]
+    fn a_device_that_has_issued_nothing_refuses_every_acknowledgement() {
+        let mut state = EventBufferState::default();
+        assert_eq!(
+            state.acknowledge(0),
+            AckOutcome::BeyondKnown {
+                through_seq: 0,
+                highest: 0,
+            }
+        );
+        assert_eq!(state.pending_ack_through_seq, None);
     }
 
     #[test]

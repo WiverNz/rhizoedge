@@ -14,7 +14,7 @@ Handle commands with hardware-grade safety.
 
 ## Scope
 
-- Dispatch on `commands/+`
+- Dispatch on the three exact `commands/*` topics of protocol §3
 - **Every water command through `validate_water_command`**
 - 16-entry NVS dedup ring; a repeat republishes the stored result and does **not** actuate
 - `(command_id, started_at, requested_ml)` written to NVS **before** actuation
