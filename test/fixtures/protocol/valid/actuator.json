@@ -1,0 +1,1 @@
+{"v":1,"kind":"actuator.state","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a24","device_id":"plant-node-01","data":{"actuator_id":"pump-0","kind":"irrigation_pump","active":false,"last_run_ms":6120,"delivered_today_ml":90.0,"faulted":false}}

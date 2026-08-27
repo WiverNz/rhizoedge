@@ -40,10 +40,10 @@ and the breakage is invisible until M1-011 runs.
 
 ## Acceptance criteria
 
-- [ ] `cargo build -p rhizo-mqtt-contract` succeeds.
-- [ ] `cargo build -p rhizo-mqtt-contract --no-default-features` succeeds.
-- [ ] The crate depends on no workspace crate.
-- [ ] `grep -r 'use std::' crates/mqtt-contract/src` returns nothing outside `#[cfg(feature = "std")]`.
+- [x] `cargo build -p rhizo-mqtt-contract` succeeds.
+- [x] `cargo build -p rhizo-mqtt-contract --no-default-features` succeeds.
+- [x] The crate depends on no workspace crate.
+- [x] `grep -r 'use std::' crates/mqtt-contract/src` returns nothing outside `#[cfg(feature = "std")]`.
 
 ## Verification
 

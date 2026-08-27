@@ -47,15 +47,15 @@ tank-low, pump-unavailable, clamp-ml, daily-max, clamp-duration.
 
 ## Acceptance criteria
 
-- [ ] Every one of the twelve checks has a test asserting its exact verdict.
-- [ ] An expired **and** oversized command rejects as `Expired` (order proof).
-- [ ] `requested_ml = 10000` never yields an `Accept` above `FIRMWARE_MAX_ML_PER_RUN`.
-- [ ] `clock_synced = false` always rejects, whatever else is true.
-- [ ] `tank_percent = None` rejects with `TankUnknown`.
-- [ ] `leak = Unknown` rejects with `LeakUnknown`.
-- [ ] A `command_id` in the ring yields `AlreadyExecuted` and never `Accept`.
-- [ ] The function performs no heap allocation.
-- [ ] It compiles with `--no-default-features`.
+- [x] Every one of the twelve checks has a test asserting its exact verdict.
+- [x] An expired **and** oversized command rejects as `Expired` (order proof).
+- [x] `requested_ml = 10000` never yields an `Accept` above `FIRMWARE_MAX_ML_PER_RUN`.
+- [x] `clock_synced = false` always rejects, whatever else is true.
+- [x] `tank_percent = None` rejects with `TankUnknown`.
+- [x] `leak = Unknown` rejects with `LeakUnknown`.
+- [x] A `command_id` in the ring yields `AlreadyExecuted` and never `Accept`.
+- [x] The function performs no heap allocation.
+- [x] It compiles with `--no-default-features`.
 
 ## Verification
 

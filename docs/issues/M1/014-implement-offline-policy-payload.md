@@ -48,14 +48,14 @@ that needed one would be unusable in exactly the mode it exists for
 
 ## Acceptance criteria
 
-- [ ] `OfflinePolicySet` and `OfflinePolicy` round-trip through JSON.
-- [ ] An omitted `enabled` deserialises to `false`.
-- [ ] Each validation rule rejects with its own distinct error variant.
-- [ ] `dose_ml` above `FIRMWARE_MAX_ML_PER_RUN` is **rejected**, never clamped.
-- [ ] `resume_above <= trigger_below` is rejected.
-- [ ] A policy containing an unrecognised field decodes successfully and ignores it.
-- [ ] A policy containing `max_ml_per_run` has no representable effect on limits.
-- [ ] No `chrono` type appears in the policy types.
+- [x] `OfflinePolicySet` and `OfflinePolicy` round-trip through JSON.
+- [x] An omitted `enabled` deserialises to `false`.
+- [x] Each validation rule rejects with its own distinct error variant.
+- [x] `dose_ml` above `FIRMWARE_MAX_ML_PER_RUN` is **rejected**, never clamped.
+- [x] `resume_above <= trigger_below` is rejected.
+- [x] A policy containing an unrecognised field decodes successfully and ignores it.
+- [x] A policy containing `max_ml_per_run` has no representable effect on limits.
+- [x] No `chrono` type appears in the policy types.
 
 ## Verification
 

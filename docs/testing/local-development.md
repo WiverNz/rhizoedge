@@ -297,12 +297,13 @@ cargo run -p rhizo-docscheck
 docker compose -f deploy/docker-compose.yml config >/dev/null
 ```
 
-If the change touches the MQTT contract, also:
+If the change touches either firmware-shared crate, also:
 
 ```bash
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 ```
 
-That last command is what stops a `std`-only dependency from silently breaking
-the firmware build, which the default CI job does not exercise
+Those commands stop a `std`-only dependency from silently breaking the firmware
+build, which ordinary host tests do not exercise
 ([ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md)).

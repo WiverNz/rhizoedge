@@ -15,7 +15,7 @@ Create the canonical valid and invalid message fixtures and the tests that run t
 
 ## Scope
 
-- `test/fixtures/protocol/valid/` — one per message kind plus a partial-optional-fields case
+- `test/fixtures/protocol/valid/` — one per message kind plus partial/forward-compatible cases
 - `test/fixtures/protocol/invalid/` — unknown version, device mismatch, out-of-range, missing field, topic injection
 - A fixture test in the contract crate that decodes and re-encodes every valid file
 - A test asserting every invalid file fails with its documented variant
@@ -45,12 +45,12 @@ edit it, which would silently break compatibility.
 
 ## Acceptance criteria
 
-- [ ] At least ten valid fixtures covering all ten message kinds.
-- [ ] At least five invalid fixtures.
-- [ ] Every valid fixture decodes and re-encodes equivalently.
-- [ ] Every invalid fixture fails with its documented variant.
-- [ ] The README states the append-only rule.
-- [ ] The test discovers files automatically — adding a fixture needs no code change.
+- [x] At least eleven valid fixtures covering all eleven message kinds.
+- [x] At least five invalid fixtures.
+- [x] Every valid fixture decodes and re-encodes equivalently.
+- [x] Every invalid fixture fails with its documented variant.
+- [x] The README states the append-only rule.
+- [x] The test discovers files automatically — adding a fixture needs no code change.
 
 ## Verification
 

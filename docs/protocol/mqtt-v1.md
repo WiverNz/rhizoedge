@@ -984,7 +984,7 @@ writes per minute per device.
 An implementation is conformant when:
 
 - [ ] `clean_session = true`; LWT configured before connect
-- [ ] retained on `status` and `config` only; never on `commands/*` or telemetry
+- [ ] retained on `status`, `config`, and `policy` only; never on `commands/*`, telemetry, events, actuator, or time
 - [ ] QoS 1 everywhere
 - [ ] envelope complete and `device_id` consistent with the topic
 - [ ] `message_id` is UUIDv7 when the clock is synced

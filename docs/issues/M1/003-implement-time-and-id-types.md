@@ -42,16 +42,17 @@ safety-relevant path.
 
 ## Acceptance criteria
 
-- [ ] `UtcMillis` serialises to and from a bare integer.
-- [ ] Negative values (pre-1970) round-trip without panicking.
-- [ ] `chrono` conversions exist only under the `std` feature.
-- [ ] UUIDv7 values from increasing timestamps sort in that order.
-- [ ] The four id newtypes are not interchangeable (a type mismatch is a compile error).
+- [x] `UtcMillis` serialises to and from a bare integer.
+- [x] Negative values (pre-1970) round-trip without panicking.
+- [x] `chrono` conversions exist only under the `std` feature.
+- [x] UUIDv7 values from increasing timestamps sort in that order.
+- [x] The four id newtypes are not interchangeable (a type mismatch is a compile error).
 
 ## Verification
 
 ```bash
-cargo test -p rhizo-mqtt-contract time:: ids::
+cargo test -p rhizo-mqtt-contract time::
+cargo test -p rhizo-mqtt-contract ids::
 cargo build -p rhizo-mqtt-contract --no-default-features
 ```
 

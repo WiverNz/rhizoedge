@@ -1,0 +1,1 @@
+{"v":1,"kind":"command.result","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a33","device_id":"plant-node-01","data":{"command_id":"018fd7b1-4c2e-7f10-a3b8-9d1e2f304050","status":"completed","requested_ml":40.0,"delivered_ml":40.0,"duration_ms":4878,"clamped":false,"reason":null,"delivered_today_ml":130.0,"origin":"edge_command"}}

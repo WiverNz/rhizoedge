@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+rhizo-domain = { path = "../domain" }
 
 [lints]
 workspace = true

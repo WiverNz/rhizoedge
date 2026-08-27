@@ -89,6 +89,14 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-features
 
+      - name: Install bare-metal verification target
+        run: rustup target add thumbv7em-none-eabi
+
+      - name: no_std shared crates
+        run: |
+          cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+          cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
+
   compose:
     name: compose config
     runs-on: ubuntu-latest

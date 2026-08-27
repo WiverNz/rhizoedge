@@ -38,10 +38,10 @@ is introduced by edits to these crates rather than to the firmware.
 
 ## Acceptance criteria
 
-- [ ] CI builds `rhizo-policy` for the bare-metal target.
-- [ ] Adding a `std`-only dependency to `rhizo-policy` fails CI.
-- [ ] The command is documented for local use.
-- [ ] The check adds under a minute to the run.
+- [x] CI builds `rhizo-policy` for the bare-metal target.
+- [x] Adding a `std`-only dependency to `rhizo-policy` fails CI.
+- [x] The command is documented for local use.
+- [x] The check adds under a minute to the run.
 
 ## Verification
 

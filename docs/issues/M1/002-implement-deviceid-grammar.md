@@ -43,11 +43,11 @@ invalid id and bypasses the grammar entirely.
 
 ## Acceptance criteria
 
-- [ ] `plant-node-01`, `abc`, and a 32-char id parse successfully.
-- [ ] `x/#`, `+`, `#`, `Plant-01`, `ab`, a 33-char id, `-abc`, `abc-`, and `plant node` all fail.
-- [ ] There is no public constructor that skips validation.
-- [ ] `serde_json::from_str::<DeviceId>("\"x/#\"")` fails.
-- [ ] Round-trip through serde preserves the value.
+- [x] `plant-node-01`, `abc`, and a 32-char id parse successfully.
+- [x] `x/#`, `+`, `#`, `Plant-01`, `ab`, a 33-char id, `-abc`, `abc-`, and `plant node` all fail.
+- [x] There is no public constructor that skips validation.
+- [x] `serde_json::from_str::<DeviceId>("\"x/#\"")` fails.
+- [x] Round-trip through serde preserves the value.
 
 ## Verification
 

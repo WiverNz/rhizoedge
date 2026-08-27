@@ -38,10 +38,10 @@ is introduced by contract-crate edits.
 
 ## Acceptance criteria
 
-- [ ] CI builds the contract crate for the bare-metal target.
-- [ ] Adding a `std`-only dependency to the contract crate fails CI.
-- [ ] The check adds under a minute to the run.
-- [ ] The command is documented for local use.
+- [x] CI builds the contract crate for the bare-metal target.
+- [x] Adding a `std`-only dependency to the contract crate fails CI.
+- [x] The check adds under a minute to the run.
+- [x] The command is documented for local use.
 
 ## Verification
 

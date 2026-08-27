@@ -56,14 +56,14 @@ most likely to be implemented approximately.
 
 ## Acceptance criteria
 
-- [ ] All gate commands pass.
-- [ ] The no_std build passes.
-- [ ] Every fixture behaves as documented.
-- [ ] Every clause of mqtt-v1.md sections 2-10 is implemented or explicitly noted.
-- [ ] `validate_water_command` order matches section 5.8 exactly.
-- [ ] `cargo test safety_` passes for the SAFETY-002 and SAFETY-007 tests that exist at this stage.
-- [ ] ROADMAP.md M1 status updated.
-- [ ] Milestone report recorded.
+- [x] All gate commands pass.
+- [x] The no_std build passes.
+- [x] Every fixture behaves as documented.
+- [x] Every clause of mqtt-v1.md sections 2-10 is implemented or explicitly noted.
+- [x] `validate_water_command` order matches section 5.8 exactly.
+- [x] `cargo test safety_` passes for the SAFETY-002 and SAFETY-007 tests that exist at this stage.
+- [x] ROADMAP.md M1 status updated.
+- [x] Milestone report recorded.
 
 ## Verification
 

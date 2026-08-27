@@ -44,12 +44,12 @@ not treat the absence as an error.
 
 ## Acceptance criteria
 
-- [ ] Every new payload kind has at least one valid fixture.
-- [ ] An unknown measurement kind decodes successfully and is marked advisory.
-- [ ] A status with no actuators parses cleanly.
-- [ ] Each invalid fixture fails with its documented error variant.
-- [ ] The corpus is discovered automatically — adding a file needs no code change.
-- [ ] The README states the append-only rule.
+- [x] Every new payload kind has at least one valid fixture.
+- [x] An unknown measurement kind decodes successfully and is marked advisory.
+- [x] A status with no actuators parses cleanly.
+- [x] Each invalid fixture fails with its documented error variant.
+- [x] The corpus is discovered automatically — adding a file needs no code change.
+- [x] The README states the append-only rule.
 
 ## Verification
 

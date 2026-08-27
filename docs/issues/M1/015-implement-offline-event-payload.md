@@ -48,12 +48,12 @@ autonomous dose it has not yet read.
 
 ## Acceptance criteria
 
-- [ ] All event kinds round-trip with their typed detail.
-- [ ] `monotonic_ms` is required; `device_time_ms` is `Option` and `null` decodes to `None`.
-- [ ] `history.gap` detail carries `from_seq`, `to_seq`, `lost_count`, `lost_tier`.
-- [ ] An unrecognised event kind decodes to a conservative `Unknown` variant rather than failing.
-- [ ] `complete` defaults to `false` when absent.
-- [ ] `detail` is a typed enum, not a free-form map.
+- [x] All event kinds round-trip with their typed detail.
+- [x] `monotonic_ms` is required; `device_time_ms` is `Option` and `null` decodes to `None`.
+- [x] `history.gap` detail carries `from_seq`, `to_seq`, `lost_count`, `lost_tier`.
+- [x] An unrecognised event kind decodes to a conservative `Unknown` variant rather than failing.
+- [x] `complete` defaults to `false` when absent.
+- [x] `detail` is a typed enum, not a free-form map.
 
 ## Verification
 

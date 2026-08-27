@@ -1,0 +1,1 @@
+{"v":1,"kind":"command.calibrate","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a32","device_id":"plant-node-01","data":{"command_id":"018fd7b1-4c2e-7f10-a3b8-9d1e2f304052","run_seconds":10.0,"issued_at_ms":1756121500000,"expires_at_ms":1756121620000}}

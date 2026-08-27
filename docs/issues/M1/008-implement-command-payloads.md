@@ -42,11 +42,11 @@ daily budget.
 
 ## Acceptance criteria
 
-- [ ] All command payloads and the result round-trip.
-- [ ] `requested_ml: 0`, negative, and `NaN` are rejected.
-- [ ] `expires_at <= issued_at` is rejected.
-- [ ] An unknown `reason` string decodes to `Unknown` rather than failing.
-- [ ] `delivered_ml` is `Option` and `null` decodes to `None`, not `Some(0.0)`.
+- [x] All command payloads and the result round-trip.
+- [x] `requested_ml: 0`, negative, and `NaN` are rejected.
+- [x] `expires_at <= issued_at` is rejected.
+- [x] An unknown `reason` string decodes to `Unknown` rather than failing.
+- [x] `delivered_ml` is `Option` and `null` decodes to `None`, not `Some(0.0)`.
 
 ## Verification
 

@@ -8,6 +8,7 @@
 resolver = "2"
 members = [
     "crates/mqtt-contract",
+    "crates/policy",
     "crates/domain",
     "crates/storage",
     "crates/telemetry",
@@ -51,14 +52,14 @@ prometheus = { version = "0.14.0", default-features = false }
 rand = "0.9.5"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls-tls"] }
 rumqttc = "0.25.1"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-uuid = { version = "1.25.0", features = ["v4", "serde"] }
+uuid = { version = "1.25.0", default-features = false, features = ["serde"] }
 
 # Workspace lint policy (ADR-014, PRD 000 F-000-04).
 #

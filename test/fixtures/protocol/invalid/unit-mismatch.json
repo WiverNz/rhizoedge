@@ -1,0 +1,1 @@
+{"v":1,"kind":"telemetry.batch","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a38","device_id":"plant-node-01","data":{"batch_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a39","samples":[{"kind":"soil_moisture","value":20.0,"unit":"celsius","quality":"ok"}]}}

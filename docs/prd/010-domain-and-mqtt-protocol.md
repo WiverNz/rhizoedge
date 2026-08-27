@@ -1,6 +1,6 @@
 # PRD 010 — Domain Model and MQTT Protocol
 
-**Milestone:** M1 · **Status:** PLANNED · **Depends on:** M0
+**Milestone:** M1 · **Status:** IMPLEMENTED · **Depends on:** M0
 
 > **Revised 2026-08-26, before implementation.** Scope grew to cover the typed
 > `MeasurementKind` model and batched telemetry
@@ -77,9 +77,9 @@ guard a command  → validate_water_command(&cmd, &guard_state) → Verdict
 | F-010-01 | `#![no_std]` with `extern crate alloc`; a `std` feature adds only `std::error::Error` impls |
 | F-010-02 | No `chrono` dependency; time is `UtcMillis(i64)` |
 | F-010-03 | `DeviceId` newtype with the §2 grammar; no constructor bypasses validation |
-| F-010-04 | `Topic` enum with `to_string` and `parse` covering all ten topics |
+| F-010-04 | `Topic` enum with `to_string` and `parse` covering all eleven topic forms |
 | F-010-05 | `Envelope<T>` with all envelope fields per protocol §4 |
-| F-010-06 | Payload types for all ten message kinds |
+| F-010-06 | Payload types for all eleven message kinds |
 | F-010-07 | Range constants and per-field validation returning which field failed |
 | F-010-13 | `EdgeTime` payload (`edge_time_ms`) plus `TIME_SYNC_INTERVAL_SECONDS` and `TIME_SYNC_MAX_AGE_SECONDS` constants |
 | F-010-08 | Inbound types use `#[serde(default)]`; unknown fields ignored |
@@ -122,8 +122,8 @@ impl DeviceId { pub fn parse(s: &str) -> Result<Self, DeviceIdError>; }
 
 pub struct UtcMillis(pub i64);
 
-pub enum MessageKind { TelemetrySoil, TelemetryWeight, TelemetryTank,
-                       TelemetryPump, DeviceStatus, DeviceConfig,
+pub enum MessageKind { TelemetryBatch, ActuatorState, DeviceEvents,
+                       DeviceStatus, DeviceConfig, DevicePolicy, EdgeTime,
                        CommandWater, CommandTare, CommandCalibrate,
                        CommandResult }
 
@@ -220,15 +220,15 @@ expectation) for the caller to log usefully.
 
 ## Acceptance criteria
 
-- [ ] All ten topics build and parse round-trip.
-- [ ] All ten message kinds encode and decode round-trip.
-- [ ] `DeviceId::parse("x/#")` and `DeviceId::parse("Plant-01")` both fail.
-- [ ] Every ordered check in protocol §5.8 has a test asserting its reason.
-- [ ] `validate_water_command(requested_ml = 10000)` never returns an `Accept`
+- [x] All eleven topic forms build and parse round-trip.
+- [x] All eleven message kinds encode and decode round-trip.
+- [x] `DeviceId::parse("x/#")` and `DeviceId::parse("Plant-01")` both fail.
+- [x] Every ordered check in protocol §5.8 has a test asserting its reason.
+- [x] `validate_water_command(requested_ml = 10000)` never returns an `Accept`
       whose `effective_ml` exceeds `FIRMWARE_MAX_ML_PER_RUN`.
-- [ ] The contract crate compiles for a `no_std` target with default features off.
-- [ ] `Utc::now()` inside `rhizo-domain` fails clippy.
-- [ ] Every fixture in `test/fixtures/protocol/` behaves as documented.
+- [x] The contract crate compiles for a `no_std` target with default features off.
+- [x] `Utc::now()` inside `rhizo-domain` fails clippy.
+- [x] Every fixture in `test/fixtures/protocol/` behaves as documented.
 
 ## Dependencies
 

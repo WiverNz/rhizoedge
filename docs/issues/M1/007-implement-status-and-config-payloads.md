@@ -57,23 +57,24 @@ receiving a newer Edge timestamp. A rejected value must update nothing at all.
 
 ## Acceptance criteria
 
-- [ ] Status, LWT, config, and `edge.time` payloads round-trip.
-- [ ] `EdgeTime` carries exactly one field; there is no round-trip or offset field to misuse.
-- [ ] `TimeSyncState::apply` accepts a **strictly** newer `edge_time_ms` and returns true.
-- [ ] It rejects an older value **and an equal value**, returning false and leaving
+- [x] Status, LWT, config, and `edge.time` payloads round-trip.
+- [x] `EdgeTime` carries exactly one field; there is no round-trip or offset field to misuse.
+- [x] `TimeSyncState::apply` accepts a **strictly** newer `edge_time_ms` and returns true.
+- [x] It rejects an older value **and an equal value**, returning false and leaving
       `synced_at_monotonic` untouched.
-- [ ] `is_synced` is false once `TIME_SYNC_MAX_AGE_SECONDS` has elapsed on the
+- [x] `is_synced` is false once `TIME_SYNC_MAX_AGE_SECONDS` has elapsed on the
       monotonic clock, regardless of how many messages were rejected meanwhile.
-- [ ] The config type has **no** time-server field, and one in the JSON is ignored.
-- [ ] Config values outside their ranges are rejected.
-- [ ] A config containing `max_ml_per_run` decodes successfully and the field is **absent** from the resulting type.
-- [ ] `status` accepts only `online` and `offline`.
-- [ ] The sensors map handles absent sensors.
+- [x] The config type has **no** time-server field, and one in the JSON is ignored.
+- [x] Config values outside their ranges are rejected.
+- [x] A config containing `max_ml_per_run` decodes successfully and the field is **absent** from the resulting type.
+- [x] `status` accepts only `online` and `offline`.
+- [x] The sensors map handles absent sensors.
 
 ## Verification
 
 ```bash
-cargo test -p rhizo-mqtt-contract payload::status payload::config
+cargo test -p rhizo-mqtt-contract payload::status
+cargo test -p rhizo-mqtt-contract payload::time
 ```
 
 ## Tests required

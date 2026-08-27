@@ -6,15 +6,15 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 is implemented and green. M1 has not started.**
+**Planning is complete. M0 and M1 are implemented and green. M2 has not started.**
 
 | | State |
 |---|---|
 | Planning artefacts | ✅ complete; revised by the 2026-08-26 architecture pass |
 | M0 milestone | ✅ **DONE** — implemented, verified, committed (`8fba4e7`) |
 | Architecture pass | ✅ done — offline autonomy, per-plant policy, extensible measurements (see §11) |
-| M1-001 | ⬜ **next** — create the `no_std` mqtt-contract crate skeleton |
-| M1 | 19 issues, none started |
+| M2-001 | ⬜ **next** — create the device-simulator binary skeleton |
+| M1 | 19 issues, **DONE** |
 
 **This section goes stale fastest. Verify it before trusting it:**
 

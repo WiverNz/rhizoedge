@@ -7,6 +7,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{DateTime, Duration, Utc};
+use rhizo_domain::Clock;
 
 /// A clock whose time only moves when a test moves it.
 ///
@@ -94,6 +95,12 @@ impl TestClock {
         self.now
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl Clock for TestClock {
+    fn now(&self) -> DateTime<Utc> {
+        TestClock::now(self)
     }
 }
 

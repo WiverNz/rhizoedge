@@ -32,7 +32,7 @@ pin may move forward deliberately
 | ID | Name | Objective | Depends on | Issues | Status |
 |---|---|---|---|---|---|
 | M0 | Foundation and Engineering Baseline | A clean Rust repository whose tooling, lint, test, container, and observability baseline every later milestone inherits | — | 13 | **DONE** |
-| M1 | Domain Model and MQTT Protocol | The shared wire contract, typed measurement kinds, capability and offline-policy payloads, and the pure domain and policy crates | M0 | 19 | **READY** |
+| M1 | Domain Model and MQTT Protocol | The shared wire contract, typed measurement kinds, capability and offline-policy payloads, and the pure domain and policy crates | M0 | 19 | **DONE** |
 | M2 | Device Simulator | A host device indistinguishable from firmware at the protocol level, including **offline autonomy**, event buffering, fault injection, and virtual time | M1 | 19 | **READY** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **READY** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **READY** |
@@ -62,7 +62,7 @@ pin may move forward deliberately
 **M0 is `DONE`** — implemented, verified, and committed. It was not reopened by
 the 2026-08-26 architecture pass; the new requirements land in M1 and later.
 
-M1–M8 are `READY`: they are pure software, need no hardware, and every
+M2–M8 are `READY`: they are pure software, need no hardware, and every
 prerequisite is a preceding milestone. M9–M11 are `PLANNED` because they depend
 on physical hardware and on ADR-007's toolchain being executed on a real machine
 (M9-001). M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
@@ -99,7 +99,7 @@ shared contract crate) and SAFETY-012 (fail-fast posture, deny-unwrap).
 
 ---
 
-### M1 — Domain Model and MQTT Protocol · READY
+### M1 — Domain Model and MQTT Protocol · DONE
 
 **Objective.** Define the contract that cannot be changed cheaply once devices
 exist in pots.
@@ -741,14 +741,14 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0 is `DONE`.** The next unstarted issue is:
+**M0 and M1 are `DONE`.** The next unstarted issue is:
 
 ```text
-M1-001 — Create the no_std mqtt-contract crate skeleton
+M2-001 — Create the device-simulator binary skeleton
 ```
 
-It depends only on M0, which is complete, so it is executable now. See
-[docs/issues/M1/001-add-mqtt-contract-crate-skeleton.md](docs/issues/M1/001-add-mqtt-contract-crate-skeleton.md)
+It depends on M1-019 and M0-006, which are complete, so it is executable now. See
+[docs/issues/M2/001-add-simulator-skeleton.md](docs/issues/M2/001-add-simulator-skeleton.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md)
 for where M1 can be widened into parallel work.
 

@@ -48,12 +48,12 @@ both pick up one version.
 
 ## Acceptance criteria
 
-- [ ] `cargo build -p rhizo-policy --no-default-features` succeeds.
-- [ ] The crate depends only on `rhizo-mqtt-contract` within the workspace.
-- [ ] `grep` finds no `Utc::now`, `SystemTime`, or `Instant` in the crate.
-- [ ] Every absent-able field in `OfflineInputs` is `Option` or a tri-state.
-- [ ] `RefuseReason` has a variant for every gate step in offline-autonomy.md §4.
-- [ ] `rhizo-domain` links it and compiles.
+- [x] `cargo build -p rhizo-policy --no-default-features` succeeds.
+- [x] The crate depends only on `rhizo-mqtt-contract` within the workspace.
+- [x] `grep` finds no `Utc::now`, `SystemTime`, or `Instant` in the crate.
+- [x] Every absent-able field in `OfflineInputs` is `Option` or a tri-state.
+- [x] `RefuseReason` has a variant for every gate step in offline-autonomy.md §4.
+- [x] `rhizo-domain` links it and compiles.
 
 ## Verification
 

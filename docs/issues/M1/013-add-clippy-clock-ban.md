@@ -39,10 +39,10 @@ moment they need it — make it say what to use instead.
 
 ## Acceptance criteria
 
-- [ ] `Utc::now()` in `rhizo-domain` fails `cargo clippy -- -D warnings`.
-- [ ] The same call in `edge-controller` does not fail.
-- [ ] The failure message names the `Clock` trait and ADR-013.
-- [ ] CI enforces it.
+- [x] `Utc::now()` in `rhizo-domain` fails `cargo clippy -- -D warnings`.
+- [x] The same call in `edge-controller` does not fail.
+- [x] The failure message names the `Clock` trait and ADR-013.
+- [x] CI enforces it.
 
 ## Verification
 

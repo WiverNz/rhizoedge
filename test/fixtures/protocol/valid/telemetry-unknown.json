@@ -1,0 +1,1 @@
+{"v":1,"kind":"telemetry.batch","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a22","device_id":"plant-node-01","data":{"batch_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a23","samples":[{"kind":"future_kind","value":1.0,"unit":"lux","quality":"ok"}]}}

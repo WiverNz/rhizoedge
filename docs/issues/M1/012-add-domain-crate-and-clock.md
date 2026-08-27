@@ -45,11 +45,11 @@ rather than defining a second clock.
 
 ## Acceptance criteria
 
-- [ ] The crate depends only on `rhizo-mqtt-contract`.
-- [ ] `grep -r 'Utc::now\|SystemTime::now' crates/domain/src` returns nothing.
-- [ ] `TestClock` implements `Clock`.
-- [ ] All state enums serialise to stable snake_case strings.
-- [ ] `is_stale` is a pure function of its parameters.
+- [x] The crate depends only on `rhizo-mqtt-contract`.
+- [x] `grep -r 'Utc::now\|SystemTime::now' crates/domain/src` returns nothing.
+- [x] `TestClock` implements `Clock`.
+- [x] All state enums serialise to stable snake_case strings.
+- [x] `is_stale` is a pure function of its parameters.
 
 ## Verification
 

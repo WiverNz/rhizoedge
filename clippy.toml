@@ -4,4 +4,7 @@
 # direct clock accessors that `rhizo-domain` must never call
 # (ADR-001 §Risks, ADR-013) — that ban cannot be written until the domain crate
 # has content to defend.
-disallowed-methods = []
+disallowed-methods = [
+  { path = "chrono::Utc::now", reason = "rhizo-domain must use the Clock trait; see ADR-013" },
+  { path = "std::time::SystemTime::now", reason = "rhizo-domain must use the Clock trait; see ADR-013" },
+]

@@ -46,13 +46,13 @@ written twice.
 
 ## Acceptance criteria
 
-- [ ] A full envelope round-trips.
-- [ ] An envelope with an unknown extra field decodes successfully.
-- [ ] `v: 2` fails with `UnsupportedVersion`.
-- [ ] A payload `device_id` differing from the topic fails with `DeviceMismatch`.
-- [ ] A `kind` inconsistent with the topic fails with `KindMismatch`.
-- [ ] A missing required field fails with `Envelope`.
-- [ ] Every `DecodeError` variant has a distinct metric reason label.
+- [x] A full envelope round-trips.
+- [x] An envelope with an unknown extra field decodes successfully.
+- [x] `v: 2` fails with `UnsupportedVersion`.
+- [x] A payload `device_id` differing from the topic fails with `DeviceMismatch`.
+- [x] A `kind` inconsistent with the topic fails with `KindMismatch`.
+- [x] A missing required field fails with `Envelope`.
+- [x] Every `DecodeError` variant has a distinct metric reason label.
 
 ## Verification
 
