@@ -77,8 +77,8 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 |---|---|
 | F-020-01 | LWT configured before connect; `clean_session = true` |
 | F-020-02 | Retained `status: online` on connect; `offline` LWT on unclean disconnect |
-| F-020-03 | Subscribes to own `config` and `commands/+` only |
-| F-020-04 | Publishes soil/tank/weight/pump telemetry per `--sensors` |
+| F-020-03 | Subscribes only to `rhizo/v1/devices/{own_id}/config`, `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and `rhizo/v1/devices/{own_id}/commands/+` |
+| F-020-04 | Publishes one `telemetry.batch` payload on `rhizo/v1/devices/{id}/telemetry` per sampling cycle, containing all `MeasurementSample` values taken in that cycle; publishes a separate `actuator.state` payload on `rhizo/v1/devices/{id}/actuator` when actuator state changes |
 | F-020-05 | `boot_id` fresh each start; `sequence` monotonic within a boot |
 | F-020-06 | `message_id` is UUIDv7 when the clock is synced |
 | F-020-07 | Applies retained config; ignores `config_version` ≤ applied; echoes `applied_config_version` |
@@ -101,6 +101,7 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 | F-020-23 | On restart with an unfinished dose, publishes `status: "interrupted"`, `delivered_ml: null` |
 | F-020-24 | Tracks `delivered_today_ml` and enforces `FIRMWARE_MAX_DAILY_ML` |
 | F-020-25 | Reports compile-time `limits` in status |
+| F-020-26 | Corrupt safety-critical persisted state is observable and disables actuation; corruption never restores budget, clears cooldown, or substitutes an enabled policy |
 
 ### Physical model
 
@@ -148,7 +149,8 @@ GET  /sim/scale
 ## Data model
 
 A small JSON state file (`--state-file`, default alongside the binary) holding
-what NVS holds on real hardware:
+what NVS holds on real hardware. The following is a conceptual inventory, not a
+frozen serialization schema:
 
 ```json
 {
@@ -156,14 +158,36 @@ what NVS holds on real hardware:
   "applied_config_version": 7,
   "delivered_today_ml": 130.0,
   "delivered_day_epoch": 20325,
-  "command_ring": [ { "command_id": "018f…", "outcome": { } } ],
+  "command_ring": [ { "command_id": "018f…", "outcome": {} } ],
   "in_flight_dose": null,
-  "pending_results": []
+  "pending_results": [],
+  "policy_active": {
+    "payload": {},
+    "checksum": "sha256:…",
+    "versions": { "monstera-01": 7 }
+  },
+  "policy_staging": null,
+  "applied_policy_versions": { "monstera-01": 7 },
+  "offline_runtime": {
+    "budget_window": { "elapsed_ms": 1800000, "delivered_ml": 70.0 },
+    "cooldown_remaining_ms": 14400000,
+    "confirmation_elapsed_ms": 45000,
+    "dose_count": 2
+  },
+  "offline_events": {
+    "events": [],
+    "pending_ack_through_seq": null,
+    "gap": { "from_seq": 4100, "to_seq": 4380, "lost_count": 281, "lost_tier": "telemetry" }
+  },
+  "persistent_state_fault": null
 }
 ```
 
 Mirroring NVS deliberately: it makes `--fault restart-mid-dose` reproduce
-SAFETY-011 behaviour faithfully rather than approximately.
+SAFETY-011 behaviour faithfully rather than approximately. The daily fields
+remain because `validate_water_command` enforces the compile-time daily hard
+limit; the rolling `offline_runtime.budget_window` is distinct policy state and
+does not replace that hard-limit accounting.
 
 ## State model
 
@@ -186,7 +210,8 @@ The pump model never re-enters `Running` for a `command_id` already in the ring.
 | Broker unavailable | reconnect with full jitter, unlimited |
 | Command with unknown fields | ignored, command still processed |
 | Command failing validation | rejected with the exact reason; no state change |
-| State file corrupt | start fresh with a new `boot_id`, log WARN — a corrupt file must not prevent startup, but it also must not be trusted |
+| Safety-critical state file corrupt | Start in diagnostic/monitoring mode with an explicit persistent-state fault; disable pump/actuation, refuse commands that require persisted safety state, refuse/inactivate offline policy, and preserve the most restrictive budget/cooldown interpretation. Never replenish a budget, shorten a cooldown, clear dedup/in-flight uncertainty, or substitute defaults. |
+| Non-safety physical-model state corrupt | May reset only the separable physical-model state; the persistent-state fault and actuation lockout remain until safety-critical state is explicitly recovered. |
 | Result publish fails | retry 60 s, then persist and republish next boot |
 | Control API request during a dose | accepted; faults may be injected mid-dose (that is the point) |
 
@@ -201,6 +226,9 @@ hardware exists:
   `requested_ml: 10000` directly to the broker, bypassing the edge, and asserts
   the hard limit holds.
 - **SAFETY-011** — restart mid-dose reports `interrupted`.
+- **SAFETY-001, SAFETY-012, SAFETY-015** — corrupt persistent state cannot
+  erase deduplication uncertainty, grant actuation permission, replenish a
+  budget, or shorten a cooldown.
 
 F-020-20 is the requirement everything else rests on. If the simulator ever
 becomes more permissive than firmware, the M6 safety suite silently stops

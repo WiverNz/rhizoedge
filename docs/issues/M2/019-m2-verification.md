@@ -16,7 +16,9 @@ Verify every PRD 020 acceptance criterion, especially the permissiveness parity 
 - Full gate plus simulator integration tests
 - Verify the single-call-site property for `validate_water_command`
 - Verify the simulator contains no offline evaluator or autonomous-dose scheduler
-- Verify no retained messages on command topics
+- Verify the normative MQTT retention rules through M2-010: `status`, `config`,
+  and `policy` retained; `time`, `telemetry`, `actuator`, `events`, and all
+  `commands/*` never retained
 - Verify ACL isolation
 - Update ROADMAP.md and record the report
 
@@ -64,7 +66,9 @@ autonomous scheduling activate together in M6-019 through the shared crate.
 - [ ] Exactly one call site of `validate_water_command`.
 - [ ] No `evaluate_offline` implementation/call site and no autonomous-dose scheduler exists in M2.
 - [ ] Isolation continues sampling and buffering while an enabled policy remains non-actuating.
-- [ ] No retained messages on command or telemetry topics.
+- [ ] The complete mqtt-v1 retention matrix passes: `status`, `config`, and
+      `policy` retained; `time`, `telemetry`, `actuator`, `events`, and every
+      `commands/*` topic not retained. The `time` assertion is non-vacuous.
 - [ ] ACL isolation holds.
 - [ ] A full cycle completes in under 10 s at scale 600.
 - [ ] `--fault restart-mid-dose` yields `interrupted` with `delivered_ml: null`.
@@ -75,14 +79,16 @@ autonomous scheduling activate together in M6-019 through the shared crate.
 ```bash
 cargo test --workspace --all-features
 cargo test safety_
+cargo test -p device-simulator safety_007_simulator_refuses_like_hardware
+cargo test -p device-simulator --test integration retained_topics
 docker compose up -d mosquitto device-simulator
-mosquitto_pub -h localhost -u rhizo-edge -P "$P" -t 'rhizo/v1/devices/plant-node-01/commands/water' -q 1 -m '{...requested_ml:10000...}'
-# assert the simulator clamps or rejects
 ```
 
 ## Tests required
 
-- Full suite plus the manual oversized-command check.
+- Full suite; the automated oversized-command integration test is normative.
+- An optional manual broker check may publish the checked-in oversized-command
+  fixture, if one exists by M2-019; abbreviated pseudo-JSON is not acceptable.
 
 ## Documentation impact
 

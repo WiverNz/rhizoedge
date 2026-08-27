@@ -20,9 +20,10 @@ Make the mistake impossible to commit unnoticed.
 ## Scope
 
 - An integration test running a full command cycle, then subscribing fresh
-- Assert retained messages exist on `status`, `config` and `policy` only
-- Assert **no** retained message on any `commands/*`, `telemetry/*`, `events` or
-  `time` topic
+- Assert retained messages exist on `status` and `config`; M2-016 adds the
+  retained-policy assertion once policy handling exists
+- Assert **no** retained message on `telemetry`, `actuator`, `events`, any
+  `commands/*`, or `time`, following the normative MQTT retention table
 
 ## Non-goals
 
@@ -44,9 +45,9 @@ This is SCEN-015.
 ## Acceptance criteria
 
 - [ ] The test runs a command cycle and then subscribes fresh.
-- [ ] Retained `status`, `config` and `policy` are received.
+- [ ] Retained `status` and `config` are received.
 - [ ] Nothing is received on `commands/*`.
-- [ ] Nothing is received on `telemetry/*`.
+- [ ] Nothing is received on `telemetry` or `actuator`.
 - [ ] Nothing is received on `events`.
 - [ ] Nothing is received on `time`, after at least one `edge.time` has been
       published in the cycle — so the assertion cannot pass vacuously.
@@ -56,7 +57,7 @@ This is SCEN-015.
 ## Verification
 
 ```bash
-cargo test --test integration retained_topics
+cargo test -p device-simulator --test integration retained_topics
 ```
 
 ## Tests required

@@ -167,7 +167,7 @@ M1-019 + M0-006 ──→ M2-001 (skeleton)
                             M2-006 + M2-007 ──────┴────────────┴──→ M2-008
                                                               (command handling)
                                                                      │
-                          M2-008 ──→ M2-010 (no retained on commands)│
+                          M2-008 ──→ M2-010 (retention guards)  │
              M2-008 + M2-009 ──→ M2-013 (fault injection) ◄──────────┘
              M2-004 + M2-009 ──→ M2-014 (virtual time)
              M2-006 + M1-010 ──→ M2-011 (fixture drift check)

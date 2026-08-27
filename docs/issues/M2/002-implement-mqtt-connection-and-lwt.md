@@ -17,7 +17,9 @@ Connect to the broker correctly and stay connected across failures.
 - `rumqttc` client with `clean_session = true` and client id = `device_id`
 - LWT configured **before** connect, retained, QoS 1
 - Retained `status: online` published on connect
-- Subscribe to own `config` and `commands/+` only
+- Subscribe only to `rhizo/v1/devices/{own_id}/config`,
+  `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and
+  `rhizo/v1/devices/{own_id}/commands/+`
 - Reconnect with M0-007 backoff, base 2 s cap 300 s, unlimited
 - Clean-disconnect status with `reason: "shutdown"`
 
@@ -49,6 +51,8 @@ Subscriptions are re-established on every reconnect, never assumed to survive.
 - [ ] A clean shutdown publishes `offline` with `reason: "shutdown"`.
 - [ ] A fresh subscriber receives the retained status.
 - [ ] Stopping and restarting the broker reconnects and **re-subscribes**.
+- [ ] Every reconnect restores exactly the four normative edge→device
+      subscriptions: `config`, `policy`, `time`, and `commands/+`.
 - [ ] The simulator does not subscribe to `commands/result`.
 
 ## Verification

@@ -57,7 +57,8 @@ virtual time.
 
 ```bash
 cargo test -p device-simulator buffer::
-cargo test safety_016 safety_020
+cargo test safety_016
+cargo test safety_020
 ```
 
 ## Tests required

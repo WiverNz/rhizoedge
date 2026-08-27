@@ -10,16 +10,22 @@ dangerous stale reading.
 
 ## Goal
 
-Publish the four telemetry kinds on schedule with correct envelopes.
+Publish one typed measurement batch per sampling cycle and separate actuator
+state changes with correct envelopes.
 
 ## Scope
 
-- Soil, weight, tank, and pump telemetry per `--sensors`
+- One `telemetry.batch` on `rhizo/v1/devices/{id}/telemetry` per sampling cycle,
+  containing every `MeasurementSample` taken in that cycle
+- A separate `actuator.state` publication on
+  `rhizo/v1/devices/{id}/actuator` when actuator state changes
+- `--sensors` controls which typed measurement samples are present in the batch
 - Envelope with UUIDv7 `message_id`, fresh `boot_id`, monotonic `sequence`
 - QoS 1, **retain false**
 - Publication on the configured interval in virtual time
 - A 16-sample ring across disconnects; older samples dropped
-- Immediate publication on a leak state change
+- A leak state change triggers an immediate sampling cycle and therefore one
+  complete batch, never a separate measurement topic
 
 ## Non-goals
 
@@ -32,7 +38,7 @@ Publish the four telemetry kinds on schedule with correct envelopes.
 
 ## Implementation notes
 
-`--sensors` controls which topics are published at all, so the
+`--sensors` controls which samples appear in the batch, so the
 missing-sensor lockout paths (SAFETY-004, SAFETY-005) can be exercised by
 omission rather than by an injected fault. This is how SCEN-043 works.
 
@@ -43,11 +49,15 @@ Leak changes bypass the schedule — an hour-late leak notification is useless.
 
 ## Acceptance criteria
 
-- [ ] All four telemetry kinds publish with valid envelopes.
+- [ ] Each sampling cycle produces exactly one valid `telemetry.batch` envelope.
+- [ ] The batch contains all and only the typed `MeasurementSample` values
+      produced by enabled sensors in that cycle.
+- [ ] Actuator changes publish a separate valid `actuator.state` envelope.
 - [ ] `retain` is false on every telemetry publish.
 - [ ] `sequence` increases monotonically within a boot.
 - [ ] `boot_id` changes on restart.
-- [ ] `--sensors soil` publishes only soil telemetry.
+- [ ] `--sensors soil` produces a batch containing soil samples and no samples
+      from disabled sensors.
 - [ ] After a 10-minute disconnect, at most 16 buffered samples are sent.
 - [ ] A leak change publishes immediately.
 
@@ -60,7 +70,8 @@ cargo test -p device-simulator telemetry::
 
 ## Tests required
 
-- Envelope validity per kind.
+- Literal batch shape and envelope validity.
+- Actuator-state shape and publication-on-change.
 - Sequence monotonicity.
 - Ring cap after a disconnect.
 - Integration: no retained telemetry.

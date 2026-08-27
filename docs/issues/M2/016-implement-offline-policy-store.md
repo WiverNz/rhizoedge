@@ -50,12 +50,15 @@ interruptible.
 - [ ] Interruption at every step leaves **exactly one** valid active policy.
 - [ ] A corrupt stored policy is refused at load and no default is substituted.
 - [ ] A policy naming an undeclared actuator is rejected.
+- [ ] A fresh subscriber receives the policy retained, completing the mqtt-v1
+      positive-retention set with M2-010's `status` and `config` assertions.
 
 ## Verification
 
 ```bash
 cargo test -p device-simulator policy::
 cargo test safety_019
+cargo test -p device-simulator --test integration retained_policy
 ```
 
 ## Tests required
