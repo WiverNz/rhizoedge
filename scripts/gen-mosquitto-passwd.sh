@@ -103,7 +103,25 @@ if [ -n "$device_ids" ]; then
     done
 fi
 
-chmod 600 "$out_file" 2>/dev/null || true
+# `mosquitto_passwd` creates the file 0600 owned by whoever ran it. In the
+# Docker path that is root inside the container, and the broker runs as
+# `mosquitto` (uid 1883) — so the file it just wrote would be one it cannot
+# read: "Error: Unable to open pwfile". Handing it to `mosquitto` is therefore
+# part of generating it, and has to happen inside the container, because the
+# host user does not own a root-owned file.
+#
+# Both operations are allowed to fail. On a Windows or macOS bind mount the
+# filesystem does not carry Unix ownership at all; the chown is a no-op there
+# and the broker can read the file regardless.
+if [ -n "${MOSQUITTO_PASSWD:-}" ]; then
+    chmod 600 "$out_file" 2>/dev/null || true
+else
+    docker run --rm \
+        -v "$config_dir:/config" \
+        "$image" sh -c \
+        'chown mosquitto:mosquitto /config/passwd 2>/dev/null || true
+         chmod 600 /config/passwd 2>/dev/null || true'
+fi
 
 echo "wrote $out_file"
 echo
