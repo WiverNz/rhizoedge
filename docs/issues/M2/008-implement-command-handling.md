@@ -46,21 +46,35 @@ daily total.
 
 ## Acceptance criteria
 
-- [ ] A valid command runs the pump model and reports `completed`.
-- [ ] The same `command_id` twice actuates **once** and republishes the stored result.
-- [ ] An expired command is rejected with `expired`.
-- [ ] `requested_ml: 10000` is clamped or rejected, never delivered.
-- [ ] A leak or low tank rejects with the correct reason.
-- [ ] `clock_synced: false` rejects everything.
-- [ ] A result is published for every command, rejections included.
-- [ ] `grep -c validate_water_command` shows exactly one call site.
+- [x] A valid command runs the pump model and reports `completed`.
+- [x] The same `command_id` twice actuates **once** and republishes the stored result.
+- [x] An expired command is rejected with `expired`.
+- [x] `requested_ml: 10000` is clamped or rejected, never delivered.
+- [x] A leak or low tank rejects with the correct reason.
+- [x] `clock_synced: false` rejects everything.
+- [x] A result is published for every command, rejections included.
+- [x] `grep -c validate_water_command` shows exactly one call site. *(Checked by
+      `tests/single_actuation_path.rs`, which counts **call expressions** and
+      ignores comments — see the Verification note below.)*
 
 ## Verification
 
 ```bash
 cargo test -p device-simulator command::
 cargo test safety_007_simulator_refuses_like_hardware
-grep -rn 'validate_water_command' crates/device-simulator/src | wc -l   # expect 1
+cargo test -p device-simulator --test single_actuation_path
+```
+
+The bare `grep … | wc -l` counts the `use` statement and every doc comment that
+names the function, so it reports more than one against a codebase that
+documents itself. The property is "one **call site**", which
+`tests/single_actuation_path.rs` checks directly — it counts call expressions,
+skips comment lines, asserts the single call is in `command.rs`, and additionally
+asserts that no `force_water`/`debug_water`/`raw_pump`/`test_bypass` shortcut
+exists. To inspect by hand:
+
+```bash
+grep -rn 'validate_water_command(' crates/device-simulator/src | grep -v '^\s*//'
 ```
 
 ## Tests required
@@ -73,7 +87,10 @@ grep -rn 'validate_water_command' crates/device-simulator/src | wc -l   # expect
 
 ## Documentation impact
 
-- None.
+- `docs/protocol/mqtt-v1.md` §5.9: `command.calibrate` goes through the **full**
+  §5.8 gate, not "steps 1–9 and 12". A subset of the checks would require the
+  second validation path §5.8 forbids; the full gate is stricter and never more
+  permissive.
 
 ## Files likely affected
 

@@ -6,15 +6,17 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 and M1 are implemented and green. M2 has not started.**
+**Planning is complete. M0, M1 and M2 are implemented and green. M3 has not
+started.**
 
 | | State |
 |---|---|
 | Planning artefacts | ✅ complete; revised by the 2026-08-26 architecture pass |
 | M0 milestone | ✅ **DONE** — implemented, verified, committed (`8fba4e7`) |
 | Architecture pass | ✅ done — offline autonomy, per-plant policy, extensible measurements (see §11) |
-| M2-001 | ⬜ **next** — create the device-simulator binary skeleton |
 | M1 | 19 issues, **DONE** |
+| M2 | 19 issues, **DONE** — report in [docs/reports/M2.md](docs/reports/M2.md) |
+| M3-001 | ⬜ **next** — create the edge-controller binary and task supervisor |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -24,6 +26,17 @@ git status --short
 ls Cargo.toml rust-toolchain.toml clippy.toml rustfmt.toml
 cargo build --workspace
 ```
+
+The broker-backed simulator tests need Mosquitto and a `.env`:
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d mosquitto
+RHIZO_REQUIRE_BROKER=1 cargo test --workspace --all-features
+```
+
+Without `RHIZO_REQUIRE_BROKER` they print a loud skip and pass, so a fresh clone
+is green. **With** it — as CI sets — a missing broker is a failure, because a
+suite that can silently skip its own subject eventually proves nothing.
 
 Then **update this table in the same change** that moves the project on. A
 CLAUDE.md that lies about the current position is worse than none.
@@ -238,6 +251,25 @@ unconditionally.
 
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug.
+
+**The simulator never waters by itself, and that is M2's boundary, not a bug.**
+An enabled, valid, activated offline policy on a bone-dry isolated plant is
+completely inert until M6-019 adds the one shared
+`rhizo_policy::evaluate_offline` and the simulator's single call site.
+`tests/single_actuation_path.rs` fails if an evaluator, a decision type, or a
+dose scheduler appears in `crates/device-simulator/src` before then.
+
+**Two documented greps in the M2 issues count documentation, not code.**
+`grep -c validate_water_command` matches a `use` statement and five doc
+comments; `grep 'evaluate_offline'` matches six comments explaining the M2/M6
+boundary. The call-expression forms are what the criteria mean, and
+`tests/single_actuation_path.rs` checks them as tests. Both issues record the
+correction.
+
+**A device with no leak sensor cannot water at all.** The shared gate refuses
+`LeakState::Unknown` (protocol §5.8 step 6), so `--sensors soil,tank` produces a
+device that refuses every dose with `leak_unknown`. Fail-closed by design, and
+the first thing to check when a simulated dose is refused.
 
 **A protocol fixture's directory is part of its assertion.** Under
 `test/fixtures/protocol/invalid/`, the directory name *is* the expected typed

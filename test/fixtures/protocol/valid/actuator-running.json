@@ -1,0 +1,1 @@
+{"v":1,"kind":"actuator.state","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a26","device_id":"plant-node-01","boot_id":"018fd6b0-1122-4000-8000-aabbccddeeff","sequence":81274,"device_time_ms":1756121506120,"clock_synced":true,"data":{"actuator_id":"pump-0","kind":"irrigation_pump","active":true,"last_run_ms":4878,"delivered_today_ml":130.0,"faulted":false}}

@@ -8,7 +8,43 @@ rust-version.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+name = "device_simulator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "device-simulator"
+path = "src/main.rs"
+
+[features]
+# Exposes `Device::store_mut_for_test`, which seeds persisted state so a test
+# can start from a device that has already been running for a day. Enabled by
+# this crate's own test binaries and by nothing else; it reaches the store, not
+# the pump, so it cannot make the device more permissive.
+test-hooks = []
+
 [dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+rand = { workspace = true }
+rhizo-mqtt-contract = { path = "../mqtt-contract" }
+rhizo-policy = { path = "../policy" }
+rhizo-telemetry = { path = "../telemetry" }
+rumqttc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+# This crate depends on itself with `test-hooks` on, so `cargo test` enables the
+# hook for the integration tests without the shipped binary ever carrying it.
+device-simulator = { path = ".", features = ["test-hooks"] }
+proptest = { workspace = true }
+tower = { workspace = true }
 
 [lints]
 workspace = true

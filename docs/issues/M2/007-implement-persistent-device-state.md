@@ -49,16 +49,16 @@ exercises the corrupt-file path instead of the interrupted-dose path.
 
 ## Acceptance criteria
 
-- [ ] State survives a restart.
-- [ ] The command ring persists and deduplicates across restarts.
-- [ ] `delivered_today_ml` persists and resets on a day boundary.
-- [ ] Corrupt safety-critical state raises an observable persistent-state fault,
+- [x] State survives a restart.
+- [x] The command ring persists and deduplicates across restarts.
+- [x] `delivered_today_ml` persists and resets on a day boundary.
+- [x] Corrupt safety-critical state raises an observable persistent-state fault,
       permits monitoring/diagnostics, and disables all pump actuation.
-- [ ] Corruption cannot clear dedup/in-flight uncertainty, activate a policy,
+- [x] Corruption cannot clear dedup/in-flight uncertainty, activate a policy,
       replenish a budget, shorten a cooldown, or restore actuation permission.
-- [ ] Commands requiring persisted safety state are refused while faulted.
-- [ ] Writes are atomic — a kill during a write leaves a valid file.
-- [ ] The ring evicts at 16 entries.
+- [x] Commands requiring persisted safety state are refused while faulted.
+- [x] Writes are atomic — a kill during a write leaves a valid file.
+- [x] The ring evicts at 16 entries.
 
 ## Verification
 
@@ -78,7 +78,10 @@ cargo test -p device-simulator state::
 
 ## Documentation impact
 
-- None.
+- PRD 020 §Data model: the state file carries a **whole-file checksum**, not only
+  a checksum on the policy blob. A property test showed that one flipped digit
+  in `delivered_today_ml` is still valid JSON and would otherwise be applied
+  silently.
 
 ## Files likely affected
 

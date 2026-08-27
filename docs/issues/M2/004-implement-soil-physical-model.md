@@ -45,13 +45,13 @@ Noise defaults on. A controller that only works on clean signals does not work.
 
 ## Acceptance criteria
 
-- [ ] Moisture decreases monotonically (modulo noise) with no water added.
-- [ ] Drying is faster at higher temperature.
-- [ ] Moisture never falls below `VWC_floor`.
-- [ ] A dose raises moisture gradually, not instantly.
-- [ ] Overshoot appears and decays.
-- [ ] Water beyond field capacity does not raise measured VWC proportionally.
-- [ ] With noise disabled, the model is deterministic for a given dt sequence.
+- [x] Moisture decreases monotonically (modulo noise) with no water added.
+- [x] Drying is faster at higher temperature.
+- [x] Moisture never falls below `VWC_floor`.
+- [x] A dose raises moisture gradually, not instantly.
+- [x] Overshoot appears and decays.
+- [x] Water beyond field capacity does not raise measured VWC proportionally.
+- [x] With noise disabled, the model is deterministic for a given dt sequence.
 
 ## Verification
 

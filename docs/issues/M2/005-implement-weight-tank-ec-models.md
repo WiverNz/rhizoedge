@@ -42,13 +42,13 @@ as water leaves, which is the real relationship.
 
 ## Acceptance criteria
 
-- [ ] Weight rises immediately on delivery while VWC still lags.
-- [ ] Weight decreases over time through evapotranspiration.
-- [ ] Tank depletes by exactly the delivered volume.
-- [ ] Tank never goes negative.
-- [ ] EC rises as moisture falls.
-- [ ] A fertilisation event steps EC up and then decays.
-- [ ] The `stable` flag is false briefly after a change.
+- [x] Weight rises immediately on delivery while VWC still lags.
+- [x] Weight decreases over time through evapotranspiration.
+- [x] Tank depletes by exactly the delivered volume.
+- [x] Tank never goes negative.
+- [x] EC rises as moisture falls.
+- [x] A fertilisation event steps EC up and then decays.
+- [x] The `stable` flag is false briefly after a change.
 
 ## Verification
 

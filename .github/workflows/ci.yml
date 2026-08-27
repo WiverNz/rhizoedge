@@ -86,6 +86,10 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # Includes the fixture-drift check (M2-011): it captures what the
+      # simulator really publishes and fails if the corpus no longer describes
+      # it. Implemented as a Rust test rather than a script so it needs no
+      # second toolchain here and cannot drift from the code it checks.
       - name: cargo test
         run: cargo test --workspace --all-features
 
@@ -96,6 +100,72 @@ jobs:
         run: |
           cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
           cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
+
+  # Broker-backed conformance. The properties these tests check — retention,
+  # the will, redelivery, ACL isolation — are *broker* behaviour, so testing
+  # them against a mock would be testing a model of MQTT (PRD 020 §Problem).
+  #
+  # `RHIZO_REQUIRE_BROKER=1` turns the suite's local-development skip into a
+  # failure: on a developer's machine a missing broker prints a loud skip so a
+  # fresh clone is green, but a CI run that silently skipped its own subject
+  # would be a gate that proves nothing.
+  broker:
+    name: integration (broker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: >-
+            ${{ runner.os }}-broker-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-broker-${{ hashFiles('rust-toolchain.toml') }}-
+
+      # Throwaway credentials for a throwaway broker on a throwaway runner.
+      # `.env` is gitignored, so CI generates one exactly as first-run setup
+      # tells a developer to — which also keeps that path exercised.
+      # Throwaway credentials for a throwaway broker on a throwaway runner.
+      # `.env` is gitignored, so CI generates one exactly as first-run setup
+      # tells a developer to — which also keeps that path exercised.
+      - name: Generate credentials and start Mosquitto
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          set_secret() {
+            local key="$1" secret
+            secret="$(head -c 24 /dev/urandom | base64 | tr -d '=+/')"
+            sed -i "s|^${key}=.*|${key}=${secret}|" .env
+            echo "$secret"
+          }
+          edge_password="$(set_secret MQTT_PASSWORD)"
+          set_secret RHIZO_DEVICE_PLANT_NODE_01_PASSWORD > /dev/null
+          set_secret RHIZO_DEVICE_PLANT_NODE_02_PASSWORD > /dev/null
+          # The edge account has two spellings that must agree: one is the
+          # broker credential, the other is the edge's own configuration layer.
+          sed -i "s|^RHIZO_EDGE__MQTT__PASSWORD=.*|RHIZO_EDGE__MQTT__PASSWORD=${edge_password}|" .env
+          ./scripts/gen-mosquitto-passwd.sh
+          docker compose -f deploy/docker-compose.yml up -d --wait mosquitto
+
+      - name: Broker-backed tests
+        env:
+          RHIZO_REQUIRE_BROKER: "1"
+        run: |
+          cargo test -p device-simulator --test integration
+          cargo test -p device-simulator --test safety_007
+
+      - name: Broker logs on failure
+        if: failure()
+        run: docker compose -f deploy/docker-compose.yml logs mosquitto
 
   compose:
     name: compose config
@@ -116,7 +186,6 @@ jobs:
   #   no_std contract build    M1-011  cargo build -p rhizo-mqtt-contract
   #                                      --no-default-features
   #                                      --target thumbv7em-none-eabi
-  #   integration (broker)     M3
   #   end-to-end               M8-014
   #   firmware                 M9-002
   #   UI                       M12

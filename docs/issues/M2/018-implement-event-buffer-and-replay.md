@@ -45,21 +45,39 @@ virtual time.
 
 ## Acceptance criteria
 
-- [ ] Events buffer while disconnected and replay on reconnect.
-- [ ] `event_id` is byte-identical across repeated replays.
-- [ ] Audit events survive a telemetry flood.
-- [ ] Overflow emits a `history.gap` with correct range and count.
-- [ ] The final batch sets `complete: true`.
-- [ ] Unacknowledged events are retained and replayed again.
-- [ ] Replaying three times produces one logical event per `event_id`.
+- [x] Events buffer while disconnected and replay on reconnect.
+- [x] `event_id` is byte-identical across repeated replays.
+- [x] Audit events survive a telemetry flood.
+- [x] Overflow emits a `history.gap` with correct range and count.
+- [x] The final batch sets `complete: true`.
+- [x] Unacknowledged events are retained and replayed again.
+- [x] Replaying three times produces one logical event per `event_id`.
 
 ## Verification
 
 ```bash
-cargo test -p device-simulator buffer::
-cargo test safety_016
-cargo test safety_020
+cargo test -p device-simulator --lib buffer::
+cargo test -p device-simulator --test replay
 ```
+
+Capacities: 64 audit, 256 telemetry, 32 events per replay batch. A realistic
+isolation overflows telemetry without touching audit, which is what
+`a_long_isolation_overflows_telemetry_but_not_audit` asserts directly.
+
+**Acknowledgement.** `Device::acknowledge_events(through_seq)` discards what the
+edge has confirmed; until it is called, events are retained and replayed again,
+so an edge that crashes mid-reconciliation loses nothing. Protocol §5.4 requires
+the acknowledgement but v1 defines **no acknowledgement topic** — recorded in
+mqtt-v1.md §5.4 and left for M6-020, which owns edge-side reconciliation. Until
+then the device simply retains and replays, which is the conservative side.
+
+**Negative control**, run and reverted: making `replay_events` regenerate
+`event_id` fails six tests across both suites — `safety_016_replaying_three_times_reuses_the_same_event_ids`,
+`event_ids_survive_a_restart_unchanged`,
+`unacknowledged_events_are_replayed_again_and_acknowledged_ones_are_not`,
+`safety_020_a_telemetry_flood_evicts_telemetry_and_reports_a_gap`,
+`replaying_three_times_yields_one_logical_event_per_id`, and
+`a_run_of_losses_is_one_marker_with_a_stable_id_not_a_flood_of_them`.
 
 ## Tests required
 
@@ -68,7 +86,9 @@ cargo test safety_020
 
 ## Documentation impact
 
-- None.
+- `docs/protocol/mqtt-v1.md` §5.4: v1 defines no acknowledgement topic, so the
+  retain-until-acknowledged requirement has no mechanism yet. Recorded there and
+  assigned to M6-020.
 
 ## Files likely affected
 

@@ -91,6 +91,11 @@ idempotency, every network hiccup is an over-watering event.
 between publish and result; device reboot between receipt and result publish.
 
 **Planned tests.**
+- `safety_001_duplicate_command_single_actuation` — **green since M2**
+  (`device-simulator`, unit) plus
+  `safety_001_the_same_command_published_three_times_actuates_once`
+  (`tests/safety_007.rs`, real broker): three publications, three results, one
+  actuation, confirmed against the reservoir. The edge half remains M6.
 - `safety_001_duplicate_command_single_actuation` (integration, M6): publish the
   same command twice, assert exactly one `watering_event` and one pump run.
 - `safety_001_repeat_result_is_idempotent` (unit, M6).
@@ -132,7 +137,8 @@ timestamp**; synchronisation ageing out while connected; commands arriving in th
 window after reconnect but before re-synchronisation.
 
 **Planned tests.**
-- `safety_002_expired_command_rejected` (unit, contract crate).
+- `safety_002_expired_command_rejected` (unit, contract crate; and **green
+  since M2** at device level in `device-simulator`).
 - `safety_002_offline_device_rejects_queued_commands` (integration, M6).
 - `safety_002_unsynced_clock_rejects_command` (unit, M9 shared logic).
 - `safety_002_stale_time_sync_never_applied` (unit): an `edge.time` older than
@@ -300,6 +306,11 @@ compromised cloud; an operator typo; edge software regression.
 **Planned tests.**
 - `safety_007_oversized_command_rejected` (unit, contract crate — the shared
   `validate_water_command` both simulator and firmware call).
+- `safety_007_simulator_refuses_like_hardware` — **green since M2**
+  (`crates/device-simulator/tests/safety_007.rs`), earlier than planned because
+  the simulator exists: it publishes `requested_ml: 10000` straight to the
+  broker and asserts on the reservoir as well as the reported number.
+- `safety_007_oversized_command_clamped_not_delivered` (unit, M2).
 - `safety_007_simulator_refuses_like_hardware` (integration, M6) — the simulator
   must be no more permissive than firmware.
 - M11: hardware-in-the-loop test with a measuring cup.
@@ -414,6 +425,11 @@ edge re-evaluate with fresh soil data.
   to `Recheck` rather than assuming success or failure.
 
 **Planned tests.**
+- `safety_011_interrupted_dose_reported` — **green since M2**
+  (`device-simulator`, unit): a restart mid-dose reports `interrupted` with
+  `delivered_ml: null`, credits the full requested volume, and deduplicates the
+  command afterwards. `restart_mid_dose_kills_the_device_after_the_state_write_and_reports_interrupted`
+  covers the fault path.
 - `safety_011_boot_state_pump_off` (unit, firmware host tests).
 - `safety_011_interrupted_dose_reported` (integration, M9 with simulator
   restart; M11 with real hardware).
@@ -442,6 +458,10 @@ a permissive branch. A new input added without a gate arm must fail to compile.
 types, partially migrated databases, profile fields added later, corrupt rows.
 
 **Planned tests.**
+- `safety_012_corruption_never_makes_the_device_more_permissive` — **green since
+  M2** (`device-simulator`, `tests/state_fails_closed.rs`): arbitrary corruption
+  of persisted state can never restore actuation permission, replenish a budget,
+  shorten a cooldown, or substitute a policy.
 - `safety_012_missing_input_never_waters` — property test that generates
   `IrrigationInputs` with random fields set to `None` and asserts the decision is
   never `IssueDose` when any safety-relevant input is `None`.
@@ -555,6 +575,10 @@ late `edge.time` is applied on reconnect; repeated power cycling; overflow of th
 monotonic counter.
 
 **Planned tests.**
+- `safety_015_reboot_does_not_replenish_budget_or_shorten_cooldown` — **green
+  since M2** (`device-simulator`, `tests/isolation.rs`): ten consecutive reboots
+  leave the stored cooldown and budget untouched, and observed time is the only
+  thing that moves them.
 - `safety_015_reboot_does_not_replenish_budget` (property): random reboot points
   in a dosing sequence; assert total delivered never exceeds the window cap.
 - `safety_015_reboot_does_not_shorten_cooldown` (unit).
@@ -593,6 +617,11 @@ crashes mid-reconciliation; broker redelivers a replay batch; device reboots
 after replay but before acknowledgement; two reconnections racing.
 
 **Planned tests.**
+- `safety_016_replay_is_idempotent` — **green since M2**
+  (`device-simulator`, `tests/replay.rs`), with
+  `safety_016_event_id_is_stable_across_every_replay` (unit) and
+  `event_ids_survive_a_restart_unchanged`. The device half is complete; the edge
+  half remains M6.
 - `safety_016_replay_is_idempotent` (property): replay a buffered set an
   arbitrary number of times in arbitrary order; assert one `watering_event` per
   distinct `event_id`.
@@ -702,6 +731,12 @@ policy exceeding a firmware hard limit; policy naming an undeclared capability;
 rollback); repeated redelivery of the same policy.
 
 **Planned tests.**
+- `safety_019_interrupted_activation_leaves_one_valid_policy` — **green since
+  M2** (`device-simulator`, `tests/policy.rs`): the process is killed after each
+  of the five steps and a reload from disk finds exactly one valid active policy
+  whose checksum matches and whose version equals the acknowledged one.
+  `safety_019_invalid_policy_keeps_previous` and
+  `safety_019_lower_version_ignored` are green there too.
 - `safety_019_invalid_policy_keeps_previous` (unit, one case per rejection reason).
 - `safety_019_interrupted_activation_leaves_one_valid_policy` (property):
   interrupt at every step index; assert exactly one valid active policy after.
@@ -736,6 +771,10 @@ the ring; an audit-event storm (repeated refusals); reboot with a partially full
 ring; overflow during replay.
 
 **Planned tests.**
+- `safety_020_telemetry_never_evicts_audit` and
+  `safety_020_overflow_emits_gap_marker` — **green since M2**
+  (`device-simulator`): audit survives ten times the telemetry capacity, and the
+  gap carries its range, count, and tier. The edge and UI halves remain M6/M12.
 - `safety_020_telemetry_never_evicts_audit` (property): fill with mixed events;
   assert audit-tier survival.
 - `safety_020_overflow_emits_gap_marker` (unit): assert range and count.

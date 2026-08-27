@@ -39,14 +39,21 @@ time scale.
 Consider feature-gating it out of release builds — the simulator is never
 deployed, so this is tidiness rather than security. Decide and note the choice.
 
+**Decided: not feature-gated.** `--no-control-api` disables it at runtime
+instead. A feature gate would produce two builds of the component whose whole
+job is to be the reference device, and a scenario suite run against the
+gated-out build would lose fault injection silently — a green suite testing less
+than it claims. Loopback-only binding is the containment that matters, and it is
+unconditional. Recorded in the module documentation.
+
 ## Acceptance criteria
 
-- [ ] Faults can be enabled and disabled at runtime.
-- [ ] State can be set (e.g. moisture) and read back.
-- [ ] `POST /sim/restart` restarts with a new `boot_id`.
-- [ ] `GET /sim/scale` reports the configured factor.
-- [ ] The server binds to loopback only.
-- [ ] The module documents that it is simulator-only.
+- [x] Faults can be enabled and disabled at runtime.
+- [x] State can be set (e.g. moisture) and read back.
+- [x] `POST /sim/restart` restarts with a new `boot_id`.
+- [x] `GET /sim/scale` reports the configured factor.
+- [x] The server binds to loopback only.
+- [x] The module documents that it is simulator-only.
 
 ## Verification
 

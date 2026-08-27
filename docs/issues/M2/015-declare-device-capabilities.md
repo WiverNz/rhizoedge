@@ -42,17 +42,25 @@ sampling rather than hard-coding it.
 
 ## Acceptance criteria
 
-- [ ] Declared capabilities match the sampled kinds exactly.
-- [ ] `--actuators ''` produces a device with an empty `actuators` array that still runs.
-- [ ] `sensor_id` values are stable across restarts.
-- [ ] An uncalibrated sensor declares `calibrated: false` and publishes matching `quality`.
-- [ ] `applied_policy_versions` is present and empty before any policy arrives.
+- [x] Declared capabilities match the sampled kinds exactly.
+- [x] `--actuators ''` produces a device with an empty `actuators` array that still runs.
+- [x] `sensor_id` values are stable across restarts.
+- [x] An uncalibrated sensor declares `calibrated: false` and publishes matching `quality`.
+- [x] `applied_policy_versions` is present and empty before any policy arrives.
 
 ## Verification
 
 ```bash
-cargo test -p device-simulator capabilities::
+cargo test -p device-simulator --lib capabilities::
+cargo test -p device-simulator --test capabilities
 ```
+
+`connectivity.isolated_ms` is reported both ways: while isolated it is how long
+the current isolation has run, and while connected it is how long the **most
+recent** one lasted. The second is the only way the edge can ever learn it — a
+device cannot publish while it is isolated — and it is kept stable rather than
+reported once, so a lost status does not lose the fact that a plant ran alone
+for six hours. `mode` distinguishes the two readings.
 
 ## Tests required
 

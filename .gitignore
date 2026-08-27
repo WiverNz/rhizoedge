@@ -10,6 +10,14 @@
 /data/
 /deploy/**/data/
 
+# The device simulator's NVS-equivalent state file, and the copies its
+# fail-closed path sets aside. Runtime state, like the database above: it
+# records what a particular device did, and committing one would hand every
+# clone another device's deduplication ring and spent budget.
+*.state.json
+*.state.json.corrupt
+*.state.json.tmp
+
 # Environment / secrets
 .env
 .env.*

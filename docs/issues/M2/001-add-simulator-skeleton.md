@@ -39,10 +39,10 @@ running, unlabelled logs are unusable.
 
 ## Acceptance criteria
 
-- [ ] `cargo run -p device-simulator -- --help` lists every documented flag.
-- [ ] The binary starts and shuts down cleanly on SIGTERM.
-- [ ] Logs carry `device_id` as a structured field.
-- [ ] Invalid arguments exit non-zero with a useful message.
+- [x] `cargo run -p device-simulator -- --help` lists every documented flag.
+- [x] The binary starts and shuts down cleanly on SIGTERM.
+- [x] Logs carry `device_id` as a structured field.
+- [x] Invalid arguments exit non-zero with a useful message.
 
 ## Verification
 

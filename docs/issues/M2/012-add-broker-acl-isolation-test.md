@@ -40,17 +40,33 @@ This is SCEN-016.
 
 ## Acceptance criteria
 
-- [ ] `plant-node-01` publishes successfully to its own topic.
-- [ ] A message published by `plant-node-01` to `plant-node-02`'s topic is **never received** by a subscriber.
-- [ ] Anonymous connection is refused.
-- [ ] The `rhizo-edge` account subscribes to `rhizo/v1/devices/+/#` successfully.
-- [ ] The test fails if the ACL file is emptied.
+- [x] `plant-node-01` publishes successfully to its own topic.
+- [x] A message published by `plant-node-01` to `plant-node-02`'s topic is **never received** by a subscriber.
+- [x] Anonymous connection is refused.
+- [x] The `rhizo-edge` account subscribes to `rhizo/v1/devices/+/#` successfully.
+- [x] The test fails if the ACL file is emptied.
 
 ## Verification
 
 ```bash
-cargo test --test integration acl_isolation
+cargo test -p device-simulator --test integration -- acl_isolation_between_devices a_device_cannot_subscribe
 ```
+
+Two negative controls were run and reverted:
+
+- **ACL file emptied** — both tests fail. Mosquitto with no rules denies
+  everything, so they fail on the *positive* assertions ("a device must be able
+  to publish into its own subtree").
+- **ACL pattern widened to `rhizo/v1/#`** — the sharper control, and the
+  misconfiguration ADR-002 actually warns about. Here the positives pass and the
+  isolation assertions fail precisely: *"a device published into another
+  device's subtree and it was delivered"* and *"plant-node-01 received
+  plant-node-02's traffic"*.
+
+`.github/workflows/ci.yml` gains a `broker` job that generates throwaway
+credentials, starts Mosquitto, and runs the broker-backed suites with
+`RHIZO_REQUIRE_BROKER=1` — which turns the local-development skip into a
+failure, so CI cannot pass by skipping its own subject.
 
 ## Tests required
 
@@ -59,7 +75,8 @@ cargo test --test integration acl_isolation
 
 ## Documentation impact
 
-- None.
+- `.github/workflows/ci.yml`: a `broker` job, so the broker-backed tests run
+  rather than skip.
 
 ## Files likely affected
 

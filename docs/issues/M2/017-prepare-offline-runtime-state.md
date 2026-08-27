@@ -55,23 +55,41 @@ when the shared evaluator and its integration arrive together.
 
 ## Acceptance criteria
 
-- [ ] Network isolation leaves the process, sampling, physical model, and local buffering running.
-- [ ] Reconnection is detected and reported without resetting persisted policy state.
-- [ ] Offline runtime state round-trips through the simulator state file.
-- [ ] Reboot never shortens a stored cooldown or replenishes stored budget.
-- [ ] The active policy and version are available through the M6 integration seam.
-- [ ] No `evaluate_offline` implementation or simulator-specific equivalent exists.
-- [ ] M2 schedules no autonomous dose, including with an enabled valid policy.
-- [ ] Commanded actuation still has exactly one `validate_water_command` call site.
+- [x] Network isolation leaves the process, sampling, physical model, and local buffering running.
+- [x] Reconnection is detected and reported without resetting persisted policy state.
+- [x] Offline runtime state round-trips through the simulator state file.
+- [x] Reboot never shortens a stored cooldown or replenishes stored budget.
+- [x] The active policy and version are available through the M6 integration seam.
+- [x] No `evaluate_offline` implementation or simulator-specific equivalent exists.
+- [x] M2 schedules no autonomous dose, including with an enabled valid policy.
+- [x] Commanded actuation still has exactly one `validate_water_command` call site.
 
 ## Verification
 
 ```bash
-cargo test -p device-simulator isolation::
-cargo test -p device-simulator offline_state::
-grep -rn 'evaluate_offline' crates/device-simulator/src && exit 1 || true
-grep -rn 'validate_water_command' crates/device-simulator/src
+cargo test -p device-simulator --test isolation
+cargo test -p device-simulator --lib isolation::
+cargo test -p device-simulator --lib offline_state::
+cargo test -p device-simulator --test single_actuation_path
+grep -rn 'evaluate_offline(' crates/device-simulator/src | grep -v '^\s*//'
+grep -rn 'validate_water_command(' crates/device-simulator/src | grep -v '^\s*//'
 ```
+
+The bare `grep -rn 'evaluate_offline'` matches **documentation**: six doc
+comments explain that M2 does not evaluate and that M6-019 adds the one call.
+Exiting non-zero on those would mean a codebase that cannot describe its own
+boundary. The corrected greps above look for call expressions and skip comment
+lines — `evaluate_offline(` returns nothing, `validate_water_command(` returns
+exactly one line — and
+`tests/single_actuation_path.rs::no_offline_evaluator_and_no_autonomous_dose_scheduler_exists`
+checks the same property as a test, along with the absence of `OfflineDecision`,
+`RefuseReason`, and any dose scheduler, and the *presence* of the `offline_seam`
+M6-019 connects.
+
+The seam is `Device::offline_seam(plant_id)`, whose return value is exactly the
+four arguments `rhizo_policy::evaluate_offline` takes — policy, persisted state,
+gathered inputs, monotonic elapsed. M6-019's change here is one call added at one
+call site.
 
 ## Tests required
 
@@ -83,6 +101,9 @@ grep -rn 'validate_water_command' crates/device-simulator/src
 ## Documentation impact
 
 - M6-019 owns evaluator implementation and simulator activation.
+- The issue's `grep 'evaluate_offline'` check is corrected above: it matched the
+  doc comments that describe the boundary. The call-site form and the structural
+  test are the checks that mean what the criterion says.
 
 ## Files likely affected
 

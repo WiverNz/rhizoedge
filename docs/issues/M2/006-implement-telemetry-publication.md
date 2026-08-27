@@ -49,17 +49,17 @@ Leak changes bypass the schedule — an hour-late leak notification is useless.
 
 ## Acceptance criteria
 
-- [ ] Each sampling cycle produces exactly one valid `telemetry.batch` envelope.
-- [ ] The batch contains all and only the typed `MeasurementSample` values
+- [x] Each sampling cycle produces exactly one valid `telemetry.batch` envelope.
+- [x] The batch contains all and only the typed `MeasurementSample` values
       produced by enabled sensors in that cycle.
-- [ ] Actuator changes publish a separate valid `actuator.state` envelope.
-- [ ] `retain` is false on every telemetry publish.
-- [ ] `sequence` increases monotonically within a boot.
-- [ ] `boot_id` changes on restart.
-- [ ] `--sensors soil` produces a batch containing soil samples and no samples
+- [x] Actuator changes publish a separate valid `actuator.state` envelope.
+- [x] `retain` is false on every telemetry publish.
+- [x] `sequence` increases monotonically within a boot.
+- [x] `boot_id` changes on restart.
+- [x] `--sensors soil` produces a batch containing soil samples and no samples
       from disabled sensors.
-- [ ] After a 10-minute disconnect, at most 16 buffered samples are sent.
-- [ ] A leak change publishes immediately.
+- [x] After a 10-minute disconnect, at most 16 buffered samples are sent.
+- [x] A leak change publishes immediately.
 
 ## Verification
 

@@ -43,6 +43,29 @@ pub enum TopicError {
 impl Topic {
     /// Edge wildcard subscription.
     pub const EDGE_SUBSCRIPTION: &'static str = "rhizo/v1/devices/+/#";
+    /// Wildcard filter covering the three edge→device command topics.
+    ///
+    /// A subscription *filter*, not a topic, so it is a string rather than a
+    /// [`Topic`] variant — but it is still topic grammar, so it is built here
+    /// and nowhere else. A device assembling `commands/+` from its own string
+    /// concatenation would be a second grammar to keep in step with this one.
+    pub fn device_command_filter(device_id: &DeviceId) -> String {
+        alloc::format!("rhizo/v1/devices/{device_id}/commands/+")
+    }
+    /// The four subscriptions a device MUST establish, in protocol §3 order.
+    ///
+    /// `commands/result`, `telemetry`, `actuator`, and `events` are absent
+    /// deliberately: a device publishes those and MUST NOT subscribe to them.
+    /// Returning the complete set as one value is what lets a reconnect restore
+    /// *exactly* these, rather than whichever subset a call site remembered.
+    pub fn device_subscriptions(device_id: &DeviceId) -> [String; 4] {
+        [
+            Self::Config(device_id.clone()).as_string(),
+            Self::Policy(device_id.clone()).as_string(),
+            Self::Time(device_id.clone()).as_string(),
+            Self::device_command_filter(device_id),
+        ]
+    }
     /// Builds the exact wire topic.
     pub fn as_string(&self) -> String {
         let (id, suffix) = match self {
@@ -167,6 +190,35 @@ mod tests {
             );
         }
     }
+    /// Protocol §3 "Subscriptions": exactly four, and never `commands/result`.
+    #[test]
+    fn device_subscribes_to_exactly_the_four_normative_filters() {
+        let id = DeviceId::parse("node-01").unwrap();
+        let subs = Topic::device_subscriptions(&id);
+        assert_eq!(
+            subs,
+            [
+                "rhizo/v1/devices/node-01/config",
+                "rhizo/v1/devices/node-01/policy",
+                "rhizo/v1/devices/node-01/time",
+                "rhizo/v1/devices/node-01/commands/+",
+            ]
+            .map(String::from)
+        );
+        for published_by_the_device in [
+            Topic::CommandResult(id.clone()),
+            Topic::Telemetry(id.clone()),
+            Topic::Actuator(id.clone()),
+            Topic::Events(id.clone()),
+            Topic::Status(id),
+        ] {
+            assert!(
+                !subs.contains(&published_by_the_device.as_string()),
+                "a device must not subscribe to {published_by_the_device}"
+            );
+        }
+    }
+
     #[test]
     fn malformed_rejected() {
         for s in [

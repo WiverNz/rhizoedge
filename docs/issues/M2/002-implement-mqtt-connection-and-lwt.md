@@ -46,14 +46,16 @@ Subscriptions are re-established on every reconnect, never assumed to survive.
 
 ## Acceptance criteria
 
-- [ ] The simulator connects with valid credentials and is refused with invalid ones.
-- [ ] Killing it produces the retained LWT within the keepalive window.
-- [ ] A clean shutdown publishes `offline` with `reason: "shutdown"`.
-- [ ] A fresh subscriber receives the retained status.
-- [ ] Stopping and restarting the broker reconnects and **re-subscribes**.
-- [ ] Every reconnect restores exactly the four normative edge→device
+- [x] The simulator connects with valid credentials and is refused with invalid ones.
+- [x] Killing it produces the retained LWT within the keepalive window.
+- [x] A clean shutdown publishes `offline` with `reason: "shutdown"`.
+- [x] A fresh subscriber receives the retained status.
+- [x] Stopping and restarting the broker reconnects and **re-subscribes**.
+- [x] Every reconnect restores exactly the four normative edge→device
       subscriptions: `config`, `policy`, `time`, and `commands/+`.
-- [ ] The simulator does not subscribe to `commands/result`.
+- [x] The simulator does not subscribe to `commands/result`. *(Amended: `commands/+`
+      necessarily matches it, so the device ignores what arrives there rather than
+      acting on it — see mqtt-v1.md §3.)*
 
 ## Verification
 
@@ -69,7 +71,8 @@ mosquitto_sub -h localhost -u rhizo-edge -P "$P" -t 'rhizo/v1/#' -v --retained-o
 
 ## Documentation impact
 
-- None.
+- `docs/protocol/mqtt-v1.md` §3: `commands/+` unavoidably matches
+  `commands/result`; the normative rule is that a device never *acts* on it.
 
 ## Files likely affected
 

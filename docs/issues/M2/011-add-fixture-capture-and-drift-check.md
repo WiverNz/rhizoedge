@@ -37,18 +37,31 @@ them.
 
 ## Acceptance criteria
 
-- [ ] `--capture-fixtures` produces one file per published kind.
-- [ ] The drift check passes against the current corpus.
-- [ ] Adding a field to a payload without updating the corpus fails the check.
-- [ ] The check ignores ids, timestamps, and float noise.
-- [ ] It runs in CI.
+- [x] `--capture-fixtures` produces one file per published kind.
+- [x] The drift check passes against the current corpus.
+- [x] Adding a field to a payload without updating the corpus fails the check.
+- [x] The check ignores ids, timestamps, and float noise.
+- [x] It runs in CI.
 
 ## Verification
 
 ```bash
 cargo run -p device-simulator -- --device-id plant-node-01 --capture-fixtures /tmp/cap --duration 60
-python tools/check_fixture_drift.py /tmp/cap test/fixtures/protocol/valid
+cargo test -p device-simulator --test fixture_drift
 ```
+
+**Deviation, deliberate.** The drift check is `crates/device-simulator/tests/fixture_drift.rs`
+rather than `tools/check_fixture_drift.py`, for the same reason `rhizo-docscheck`
+is Rust: it runs inside `cargo test` with no second toolchain in CI, it cannot
+drift from the capture code it checks, and it needs no broker. `--capture-fixtures`
+is unchanged and writes the same files — it is how a person inspects a drift once
+the test reports one.
+
+Running it found a real corpus gap: `actuator.json` and `command-result.json`
+described device→edge messages without `boot_id`, `sequence`, `device_time_ms`,
+or `clock_synced`, which protocol §4 requires. Two fixtures were **added** —
+`actuator-running.json` and `command-result-interrupted.json` — rather than the
+existing ones edited, because the corpus is append-only.
 
 ## Tests required
 
@@ -62,6 +75,8 @@ python tools/check_fixture_drift.py /tmp/cap test/fixtures/protocol/valid
 
 ```text
 crates/device-simulator/src/capture.rs
-tools/check_fixture_drift.py
+crates/device-simulator/tests/fixture_drift.rs
+test/fixtures/protocol/valid/actuator-running.json
+test/fixtures/protocol/valid/command-result-interrupted.json
 .github/workflows/ci.yml
 ```

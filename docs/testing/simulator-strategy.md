@@ -108,6 +108,20 @@ virtual_now = anchor_real + (real_now - anchor_real) * scale
 `--time-scale 600` runs 10 simulated minutes per real second: a full multi-dose
 cycle with two 15-minute absorption waits completes in about six seconds.
 
+The scaled quantity is the device's **monotonic** clock; its wall clock is the
+last applied `edge.time` plus that monotonic elapsed time, so published
+timestamps stay plausible UTC values anchored to a real Edge instant while
+running fast. There is no separate wall-clock anchor, because after the
+2026-08-26 pass a device has no wall time of its own to anchor
+([ADR-013](../adr/013-clock-and-time-semantics.md)).
+
+A tick's worth of virtual time is applied to the models in bounded steps of at
+most one virtual second, so the drying curve, the absorption pool, and the
+overshoot decay evolve identically at every scale. Applying a whole minute of
+virtual time as a single step would make each of them resolve to one jump, and
+an accelerated test would then be exercising something other than the system it
+claims to.
+
 The edge and simulator MUST run at the same scale in a test topology, from one
 compose variable ([ADR-013](../adr/013-clock-and-time-semantics.md)). M8-004
 asserts both report the same scale at startup.

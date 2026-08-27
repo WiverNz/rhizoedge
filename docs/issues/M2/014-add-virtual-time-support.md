@@ -41,19 +41,31 @@ At `--time-scale 600`, ten simulated minutes pass per real second.
 
 ## Acceptance criteria
 
-- [ ] `--time-scale 600` makes a 15-minute absorption wait take ~1.5 s.
-- [ ] Published timestamps are plausible UTC values.
-- [ ] `--time-scale 1` behaves as real time.
-- [ ] `GET /sim/scale` reports the factor.
-- [ ] `grep -rn 'Utc::now' crates/device-simulator/src` returns only the clock implementation.
-- [ ] A full dose/absorption/recheck sequence completes in under 10 s at scale 600.
+- [x] `--time-scale 600` makes a 15-minute absorption wait take ~1.5 s.
+- [x] Published timestamps are plausible UTC values.
+- [x] `--time-scale 1` behaves as real time.
+- [x] `GET /sim/scale` reports the factor.
+- [x] `grep -rn 'Utc::now' crates/device-simulator/src` returns only the clock implementation.
+- [x] A full dose/absorption/recheck sequence completes in under 10 s at scale 600.
 
 ## Verification
 
 ```bash
-cargo test -p device-simulator clock::
-time cargo run -p device-simulator -- --device-id plant-node-01 --time-scale 600 --duration 10
+cargo test -p device-simulator --lib clock::
+cargo test -p device-simulator --test integration a_full_cycle_completes_in_under_ten_seconds_at_scale_six_hundred
+cargo test -p device-simulator --test single_actuation_path nothing_outside_the_clock_module_reads_a_clock
 ```
+
+`grep -rn 'Utc::now' crates/device-simulator/src` returns **nothing at all**,
+which is stronger than "only the clock implementation": the device's wall clock
+comes solely from `edge.time`, so the simulator has no wall-clock dependency to
+call. The structural test asserts that, and additionally that the only
+`Instant::now` outside `clock.rs` is the MQTT shutdown drain — a *network*
+timeout that must stay in real time, since a 5 s drain scaled by 600 would be
+8 ms and would turn a clean stop back into a will.
+
+The broker-backed cycle test measures wall time directly: dose, absorption, and
+recheck complete in about **1.4 s** at `--time-scale 600`.
 
 ## Tests required
 
@@ -63,7 +75,11 @@ time cargo run -p device-simulator -- --device-id plant-node-01 --time-scale 600
 
 ## Documentation impact
 
-- None.
+- `docs/testing/simulator-strategy.md` §4: the scaled quantity is the device's
+  *monotonic* clock, with wall time derived from the last `edge.time` — after
+  the 2026-08-26 pass a device has no wall clock of its own to anchor. Also
+  records that a tick is applied in bounded sub-steps so the physical model
+  behaves identically at every scale.
 
 ## Files likely affected
 

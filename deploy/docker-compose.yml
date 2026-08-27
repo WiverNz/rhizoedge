@@ -95,11 +95,63 @@ services:
   #   ports:
   #     - "8080:8080"
   #
-  # device-simulator — M2 (the simulator), M8-002 (topology)
-  #   Scalable: one instance per device id.
+  # The reference device (M2). PRD 020: `docker compose up mosquitto
+  # device-simulator` runs standalone, with telemetry visible on the broker.
   #
+  # `profiles` keeps it out of a bare `docker compose up`: the broker is the
+  # thing a developer usually wants running all day, while a simulated device is
+  # started for a scenario and stopped after it. Start it explicitly:
+  #
+  #     docker compose -f deploy/docker-compose.yml --profile devices up -d device-simulator
+  device-simulator:
+    build:
+      context: ..
+      dockerfile: deploy/device-simulator.Dockerfile
+    container_name: rhizo-device-simulator
+    profiles: ["devices"]
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    # The username the broker authenticates IS the device id (ADR-012), so the
+    # id here and the account in `deploy/mosquitto/passwd` must be the same
+    # string. `--time-scale 60` makes a five-minute sampling interval arrive
+    # every five seconds, which is what makes the container useful to watch.
+    command:
+      - "--device-id"
+      - "plant-node-01"
+      - "--broker"
+      - "mqtt://mosquitto:1883"
+      - "--telemetry-interval"
+      - "300"
+      - "--time-scale"
+      - "60"
+      - "--state-file"
+      - "/var/lib/rhizo/plant-node-01.state.json"
+      - "--log-format"
+      - "json"
+    volumes:
+      # The NVS-equivalent state file. It must outlive the container, or every
+      # restart would look like a first boot and the deduplication ring, the
+      # daily total, and any interrupted dose would be forgotten — which is
+      # precisely what SAFETY-011 and SAFETY-015 are about.
+      - device-simulator-state:/var/lib/rhizo
+    networks:
+      - rhizo
+    env_file:
+      # Supplies `RHIZO_DEVICE_PLANT_NODE_01_PASSWORD`, which the simulator finds
+      # by the convention `.env.example` documents. Interpolating it into an
+      # `environment:` entry instead would not work: Compose resolves `${...}`
+      # against the *project directory* — `deploy/` — where there is no `.env`,
+      # so the variable would silently become empty and the broker would refuse
+      # the connection with `NotAuthorized`.
+      #
+      # `required: false` so `docker compose config` is green on a fresh clone.
+      - path: ../.env
+        required: false
+    # The control API binds to loopback (M2-009) and is deliberately **not**
+    # published: it is a test affordance, and reaching it means `docker exec`.
+
   # cloud-api — M7 (the service), M8-002 (topology)
-  #
   # postgres — M7-002. Not started before there is a schema to put in it.
 
 networks:
@@ -110,3 +162,5 @@ volumes:
   # Broker persistence, so a QoS 1 message queued for a sleeping device
   # survives a broker restart (ADR-002). Survives `down`; removed by `down -v`.
   mosquitto-data:
+  # The simulator's persisted device state, for the same reason.
+  device-simulator-state:

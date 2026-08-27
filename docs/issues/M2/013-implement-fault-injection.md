@@ -43,20 +43,29 @@ different message and would not test deduplication at all.
 
 ## Acceptance criteria
 
-- [ ] Every fault in the catalogue is implemented.
-- [ ] Each is settable at startup and at runtime.
-- [ ] `duplicate` republishes with an identical `message_id`.
-- [ ] `restart-mid-dose` terminates during actuation after the state write.
-- [ ] `clock-unsync` causes every water command to be refused.
-- [ ] `pump-no-delivery` runs the pump without changing moisture or weight.
-- [ ] Faults compose.
+- [x] Every fault in the catalogue is implemented.
+- [x] Each is settable at startup and at runtime.
+- [x] `duplicate` republishes with an identical `message_id`.
+- [x] `restart-mid-dose` terminates during actuation after the state write.
+- [x] `clock-unsync` causes every water command to be refused.
+- [x] `pump-no-delivery` runs the pump without changing moisture or weight.
+- [x] Faults compose.
 
 ## Verification
 
 ```bash
-cargo test -p device-simulator fault::
+cargo test -p device-simulator --test faults
+cargo test -p device-simulator --lib fault::
 cargo run -p device-simulator -- --device-id plant-node-01 --fault leak
 ```
+
+`tests/faults.rs` has one test per fault asserting its **observable effect**, a
+composition test, and two structural ones: `no_fault_can_cause_a_dose` (no
+injected fault can start the pump or move water) and
+`every_fault_in_the_catalogue_has_a_test_here` (the catalogue and the test file
+cannot drift apart). The two transport faults, `duplicate` and `reorder`, are
+tested as a pure pipeline in `fault::pipeline_tests`; `policy-interrupt` lands
+with policy activation in M2-016.
 
 ## Tests required
 
@@ -66,7 +75,8 @@ cargo run -p device-simulator -- --device-id plant-node-01 --fault leak
 
 ## Documentation impact
 
-- docs/testing/simulator-strategy.md section 6 verified accurate.
+- docs/testing/simulator-strategy.md §6 verified accurate: all thirteen faults
+  behave as described, and `policy-interrupt` is the one addition (M2-016).
 
 ## Files likely affected
 

@@ -56,6 +56,9 @@ serde = { version = "1.0.229", default-features = false, features = ["alloc", "d
 serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 thiserror = "2.0.20"
+# Only a dev-dependency: `ServiceExt::oneshot` drives an axum router in a unit
+# test without binding a socket, so the control API is testable without a port.
+tower = { version = "0.5.3", features = ["util"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

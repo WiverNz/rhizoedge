@@ -1,6 +1,6 @@
 # PRD 020 — Device Simulator
 
-**Milestone:** M2 · **Status:** PLANNED · **Depends on:** M1
+**Milestone:** M2 · **Status:** DELIVERED · **Depends on:** M1
 
 > **Boundary clarified 2026-08-27.** M2 models every device-side mechanic needed
 > for later offline autonomy: capabilities, atomic policy persistence,
@@ -183,6 +183,16 @@ frozen serialization schema:
 }
 ```
 
+The file carries a **checksum over its whole contents**, not only over the
+policy blob. ADR-015 §7's CRC on the policy is necessary but not sufficient:
+JSON with one flipped digit is still valid JSON, so `delivered_today_ml: 460.0`
+silently becoming `60.0` would decode cleanly and hand the device four hundred
+millilitres of budget it had already spent. A checksum mismatch is corruption
+and fails closed exactly like an unparseable file. The checksum covers the
+*decoded* state rather than the raw bytes, so a field a future build adds is
+still ignored rather than treated as damage (§9's forward-compatibility rule,
+applied to storage).
+
 Mirroring NVS deliberately: it makes `--fault restart-mid-dose` reproduce
 SAFETY-011 behaviour faithfully rather than approximately. The daily fields
 remain because `validate_water_command` enforces the compile-time daily hard
@@ -262,24 +272,24 @@ asserted directly by tests rather than sampled.
 
 ## Acceptance criteria
 
-- [ ] `docker compose up mosquitto device-simulator` runs standalone; telemetry
+- [x] `docker compose up mosquitto device-simulator` runs standalone; telemetry
       visible via `mosquitto_sub`.
-- [ ] A subscriber sees retained `status` and `config` and **nothing** on
+- [x] A subscriber sees retained `status` and `config` and **nothing** on
       `commands/*`.
-- [ ] Killing the simulator produces the LWT within the keepalive window.
-- [ ] The same `command_id` published three times causes one actuation and three
+- [x] Killing the simulator produces the LWT within the keepalive window.
+- [x] The same `command_id` published three times causes one actuation and three
       results.
-- [ ] `requested_ml: 10000` never delivers more than `FIRMWARE_MAX_ML_PER_RUN`.
-- [ ] `--fault restart-mid-dose` produces `status: "interrupted"` with
+- [x] `requested_ml: 10000` never delivers more than `FIRMWARE_MAX_ML_PER_RUN`.
+- [x] `--fault restart-mid-dose` produces `status: "interrupted"` with
       `delivered_ml: null`.
-- [ ] At `--time-scale 600`, a dose-plus-absorption-plus-recheck sequence
+- [x] At `--time-scale 600`, a dose-plus-absorption-plus-recheck sequence
       completes in under 10 seconds of wall time.
-- [ ] Two simulators with different credentials cannot publish into each other's
+- [x] Two simulators with different credentials cannot publish into each other's
       topics.
-- [ ] Isolation keeps sampling and bounded buffering active without autonomous
+- [x] Isolation keeps sampling and bounded buffering active without autonomous
       actuation.
-- [ ] Policy activation, version acknowledgement, and replay mechanics survive restart.
-- [ ] The simulator contains no offline-policy decision implementation.
+- [x] Policy activation, version acknowledgement, and replay mechanics survive restart.
+- [x] The simulator contains no offline-policy decision implementation.
 
 ## Dependencies
 

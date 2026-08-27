@@ -44,21 +44,31 @@ This is SCEN-015.
 
 ## Acceptance criteria
 
-- [ ] The test runs a command cycle and then subscribes fresh.
-- [ ] Retained `status` and `config` are received.
-- [ ] Nothing is received on `commands/*`.
-- [ ] Nothing is received on `telemetry` or `actuator`.
-- [ ] Nothing is received on `events`.
-- [ ] Nothing is received on `time`, after at least one `edge.time` has been
+- [x] The test runs a command cycle and then subscribes fresh.
+- [x] Retained `status` and `config` are received.
+- [x] Nothing is received on `commands/*`.
+- [x] Nothing is received on `telemetry` or `actuator`.
+- [x] Nothing is received on `events`.
+- [x] Nothing is received on `time`, after at least one `edge.time` has been
       published in the cycle — so the assertion cannot pass vacuously.
-- [ ] Deliberately setting retain on a command publish fails the test.
-- [ ] Deliberately setting retain on an `edge.time` publish fails the test.
+- [x] Deliberately setting retain on a command publish fails the test.
+- [x] Deliberately setting retain on an `edge.time` publish fails the test.
 
 ## Verification
 
 ```bash
 cargo test -p device-simulator --test integration retained_topics
 ```
+
+Both negative controls were run and reverted: publishing the water command with
+`retain: true` fails with *"commands/water was retained"*, and publishing
+`edge.time` with `retain: true` fails with *"time was retained"*.
+
+The second control also showed why the rule matters operationally: a retained
+`edge.time` **persists in the broker** and poisoned every later run until it was
+explicitly deleted. `support::clear_device_retained` now clears every
+edge→device topic before a retention-sensitive test, so a single bad run cannot
+leave the suite permanently red.
 
 ## Tests required
 

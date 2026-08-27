@@ -44,22 +44,33 @@ interruptible.
 
 ## Acceptance criteria
 
-- [ ] A valid policy is staged, verified, activated, and acknowledged.
-- [ ] An invalid policy is rejected and the previous policy stays active.
-- [ ] A policy with a lower or equal version is ignored.
-- [ ] Interruption at every step leaves **exactly one** valid active policy.
-- [ ] A corrupt stored policy is refused at load and no default is substituted.
-- [ ] A policy naming an undeclared actuator is rejected.
-- [ ] A fresh subscriber receives the policy retained, completing the mqtt-v1
+- [x] A valid policy is staged, verified, activated, and acknowledged.
+- [x] An invalid policy is rejected and the previous policy stays active.
+- [x] A policy with a lower or equal version is ignored.
+- [x] Interruption at every step leaves **exactly one** valid active policy.
+- [x] A corrupt stored policy is refused at load and no default is substituted.
+- [x] A policy naming an undeclared actuator is rejected.
+- [x] A fresh subscriber receives the policy retained, completing the mqtt-v1
       positive-retention set with M2-010's `status` and `config` assertions.
 
 ## Verification
 
 ```bash
-cargo test -p device-simulator policy::
-cargo test safety_019
+cargo test -p device-simulator --test policy
+cargo test -p device-simulator --test policy safety_019
 cargo test -p device-simulator --test integration retained_policy
 ```
+
+Two implementation decisions worth recording:
+
+- **One bad plant rejects the whole message.** ADR-015 §7 step 2 says a
+  validation failure keeps the active policy and stops; applying the good plants
+  from a message containing a bad one would be a half-applied set, which is the
+  failure the sequence exists to prevent.
+- **The read-back is from disk.** Verifying the copy still held in memory would
+  prove only that the struct is intact, and would say nothing about what
+  actually reached storage — the thing that has to survive a power cut.
+  `StateStore::read_back` re-reads and re-checks the file's own checksum.
 
 ## Tests required
 

@@ -122,7 +122,17 @@ stated twice: here, and in the retention rules below.
 - Device subscribes to `rhizo/v1/devices/{own_id}/config`,
   `rhizo/v1/devices/{own_id}/policy`, `rhizo/v1/devices/{own_id}/time`, and
   `rhizo/v1/devices/{own_id}/commands/+` — and MUST NOT subscribe to
-  `commands/result`, `telemetry`, `actuator`, or `events`, which it publishes.
+  `telemetry`, `actuator`, or `events`, which it publishes.
+
+**`commands/+` also matches `commands/result`, and a device MUST ignore what
+arrives there.** MQTT has no way to subtract a child from a wildcard, so a device
+holding the normative `commands/+` filter is necessarily delivered its own
+`command.result` publications back. This is not a licence to act on them: a
+device MUST NOT treat any message on `commands/result` as input, whatever its
+contents. The rule is "never act on it", not "never receive it", because the
+latter is not expressible. Subscribing to the three concrete command topics
+instead is **not** conformant — a future command kind added under `commands/`
+would then be silently unreceived, which is the failure the wildcard prevents.
 
 ### QoS
 
@@ -348,6 +358,16 @@ Normative behaviour:
   deduplication and would create duplicate history (SAFETY-016).
 - A device MUST retain replayed events until the edge acknowledges them, so an
   edge crash mid-reconciliation loses nothing.
+
+  **v1 defines no acknowledgement topic.** The requirement above has no wire
+  mechanism yet: QoS 1 gives the device the *broker's* acknowledgement, not the
+  edge's, and the two are different facts — the broker acks a message the edge
+  may never have committed. Until a mechanism exists, a device retains buffered
+  events across every reconnection and replays them again, which is the
+  conservative side of the requirement: the edge deduplicates on `event_id`, so
+  repeated replay costs bandwidth and nothing else, while premature discard
+  would lose history permanently. **M6-020 owns the mechanism**, alongside the
+  edge-side reconciliation that will drive it.
 - A `history.gap` event MUST be emitted whenever eviction loses events, carrying
   the lost `device_seq` range and count (SAFETY-020).
 - The edge MUST NOT issue a water command to a plant whose replay has not
@@ -611,8 +631,23 @@ firmware call. There MUST NOT be a second implementation
 ```
 
 `command.calibrate` runs the pump for a fixed duration so the operator can
-measure the delivered volume. It is subject to steps 1–9 and 12 above, and its
-delivered volume counts toward `FIRMWARE_MAX_DAILY_ML`.
+measure the delivered volume, and its delivered volume counts toward
+`FIRMWARE_MAX_DAILY_ML`.
+
+**Calibration goes through the full §5.8 gate, not a subset.** An earlier
+wording said "steps 1–9 and 12", which is not implementable: applying some of
+the checks and not others requires a *second* validation path, and §5.8 forbids
+a second implementation of the rules for exactly the reason ADR-008 gives. A
+device therefore converts the request to the volume it would deliver —
+`run_seconds × pump.ml_per_second` — and puts that through
+`validate_water_command` unchanged. The consequence is that steps 10 and 11
+apply as well: a calibration that would exceed `FIRMWARE_MAX_ML_PER_RUN` is
+clamped and reports `clamped: true`, and one that would exceed the daily total
+is refused with `over_daily_max`. That is stricter than the earlier wording and
+never more permissive, which is the direction this protocol always errs in. An
+operator wanting a full-length run reduces `run_seconds` until the implied
+volume is inside the limit; the clamped result reports the duration that
+actually ran, which is the number a calibration needs.
 
 ### 5.10 `command.result` → `commands/result` (device → edge)
 
@@ -1004,6 +1039,8 @@ writes per minute per device.
 An implementation is conformant when:
 
 - [ ] `clean_session = true`; LWT configured before connect
+- [ ] the four device subscriptions are established on **every** connect
+- [ ] messages arriving on `commands/result` are ignored, never acted on
 - [ ] retained on `status`, `config`, and `policy` only; never on `commands/*`, telemetry, events, actuator, or time
 - [ ] QoS 1 everywhere
 - [ ] envelope complete and `device_id` consistent with the topic

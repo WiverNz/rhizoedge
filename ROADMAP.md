@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0 and M1 complete; M2 next.
+**Planning status:** complete. **Implementation status:** M0, M1 and M2 complete; M3 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -33,7 +33,7 @@ pin may move forward deliberately
 |---|---|---|---|---|---|
 | M0 | Foundation and Engineering Baseline | A clean Rust repository whose tooling, lint, test, container, and observability baseline every later milestone inherits | — | 13 | **DONE** |
 | M1 | Domain Model and MQTT Protocol | The shared wire contract, typed measurement kinds, capability and offline-policy payloads, and the pure domain and policy crates | M0 | 19 | **DONE** |
-| M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **READY** |
+| M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **DONE** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **READY** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **READY** |
 | M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 17 | **READY** |
@@ -132,7 +132,7 @@ enforcement tested in M6.
 
 ---
 
-### M2 — Device Simulator · READY
+### M2 — Device Simulator · DONE
 
 **Objective.** A reference device that makes M3–M8 achievable without hardware —
 and that is **never more permissive than firmware**.
@@ -151,18 +151,26 @@ decision or autonomous dosing until M6-019 installs the single shared
 ordered replay and explicit gap reporting** · control API · thirteen injectable
 faults · accelerated virtual time.
 
-**Exit criteria.** Runs standalone against a bare broker. Exactly one call site
-of `validate_water_command` and **no offline evaluator or autonomous-dose
-call site yet**.
-`requested_ml: 10000` published directly to the broker never delivers above the
-hard limit. No retained messages on command, telemetry, event, or `time` topics.
+**Exit criteria — met, with evidence in
+[docs/reports/M2.md](docs/reports/M2.md).** Runs standalone against a bare broker
+(`docker compose --profile devices up mosquitto device-simulator`; telemetry read
+back with `mosquitto_sub`). Exactly one call site of `validate_water_command` and
+**no offline evaluator or autonomous-dose call site yet**, both checked
+structurally rather than asserted.
+`requested_ml: 10000` published directly to the broker delivers 80 ml — the
+compile-time limit — and the reservoir confirms it. No retained messages on
+command, telemetry, event, or `time` topics, verified after a full command cycle
+by a fresh subscriber, with both negative controls run and reverted.
 A replayed `edge.time` never extends `clock_synced`. An isolated simulator keeps
-sampling and buffering but never autonomously actuates in M2. ACL isolation holds. A full commanded cycle completes in under
-10 s at scale 600.
+sampling and buffering through two simulated days on a bone-dry plant with an
+enabled policy and never actuates. ACL isolation holds, and an over-permissive
+ACL pattern fails the test. A full commanded cycle completes in **1.4 s** at
+scale 600.
 
 **Invariants.** Makes SAFETY-002, SAFETY-007, SAFETY-011, policy activation, and
-buffer/replay mechanics testable before hardware exists. M6-019/M6-021 provide
-the first executable autonomous-device evaluation for SAFETY-013…017.
+buffer/replay mechanics testable before hardware exists — each now with a green
+test in `crates/device-simulator`. M6-019/M6-021 provide the first executable
+autonomous-device evaluation for SAFETY-013…017.
 
 **PRD.** [020](docs/prd/020-device-simulator.md)
 
@@ -746,16 +754,16 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0 and M1 are `DONE`.** The next unstarted issue is:
+**M0, M1 and M2 are `DONE`.** The next unstarted issue is:
 
 ```text
-M2-001 — Create the device-simulator binary skeleton
+M3-001 — Create the edge-controller binary and task supervisor
 ```
 
-It depends on M1-019 and M0-006, which are complete, so it is executable now. See
-[docs/issues/M2/001-add-simulator-skeleton.md](docs/issues/M2/001-add-simulator-skeleton.md)
+It depends on M0-013 and M1-019, which are complete, so it is executable now. See
+[docs/issues/M3/001-add-edge-controller-skeleton.md](docs/issues/M3/001-add-edge-controller-skeleton.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md)
-for where M1 can be widened into parallel work.
+for where M3 can be widened into parallel work.
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails
 the build if it names an issue from a milestone already marked `DONE`.

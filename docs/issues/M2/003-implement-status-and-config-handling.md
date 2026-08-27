@@ -47,17 +47,17 @@ a rollback republishes an old retained config and the device silently regresses.
 
 ## Acceptance criteria
 
-- [ ] Status is published on connect and on the heartbeat schedule.
-- [ ] An `edge.time` sets the clock and makes `clock_synced` true.
-- [ ] An `edge.time` **older** than the last applied one is ignored — the clock never moves backwards.
-- [ ] An `edge.time` **equal** to the last applied one is ignored and does **not** refresh `synced_at_monotonic`.
-- [ ] `clock_synced` becomes false once the last sync is older than `TIME_SYNC_MAX_AGE_SECONDS`.
-- [ ] While unsynchronised, status is republished at a bounded rate.
-- [ ] `applied_config_version` echoes an applied config.
-- [ ] A valid config is applied and reflected in behaviour (e.g. telemetry interval changes).
-- [ ] An invalid config is rejected and the previous one retained.
-- [ ] A config with a lower `config_version` is ignored.
-- [ ] A config containing `max_ml_per_run` has no effect on the reported limits.
+- [x] Status is published on connect and on the heartbeat schedule.
+- [x] An `edge.time` sets the clock and makes `clock_synced` true.
+- [x] An `edge.time` **older** than the last applied one is ignored — the clock never moves backwards.
+- [x] An `edge.time` **equal** to the last applied one is ignored and does **not** refresh `synced_at_monotonic`.
+- [x] `clock_synced` becomes false once the last sync is older than `TIME_SYNC_MAX_AGE_SECONDS`.
+- [x] While unsynchronised, status is republished at a bounded rate.
+- [x] `applied_config_version` echoes an applied config.
+- [x] A valid config is applied and reflected in behaviour (e.g. telemetry interval changes).
+- [x] An invalid config is rejected and the previous one retained.
+- [x] A config with a lower `config_version` is ignored.
+- [x] A config containing `max_ml_per_run` has no effect on the reported limits.
 
 ## Verification
 
