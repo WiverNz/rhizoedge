@@ -212,6 +212,7 @@ mod tests {
             rssi_dbm: None,
             applied_policy_versions: BTreeMap::new(),
             connectivity: None,
+            power: None,
             capabilities: Default::default(),
             limits: None,
         }

@@ -1,6 +1,6 @@
 # Issue M6-022 — Implement durable pending command intents for sleeping devices
 
-**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M6-008, M6-009, M6-011, M6-016, M5-020
+**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M6-008, M6-009, M6-011, M6-016, M4-013
 
 ## Context
 
@@ -60,7 +60,7 @@ actually awake.
 - M6-009
 - M6-011
 - M6-016
-- M5-020
+- M4-013 (including its dated battery-compatibility report correction)
 
 ## Implementation notes
 

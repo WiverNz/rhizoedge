@@ -256,9 +256,9 @@ M5-005 ──┬──→ M5-006 (dry duration) ──┐
 M5-014 ──→ M5-017 (preset catalogue — pure, embedded, offline)
    M5-017 + M5-014 + M5-016 ──→ M5-018 (apply preset to plant)
 
-M1-019 ──→ M5-019 (power-mode + battery contract — pure, additive within v1)
-   M5-019 + M4-012 + M4-004 ──→ M5-020 (sleep-aware liveness — SAFETY-021)
-   M5-020 + M2-017 ─────────→ M5-021 (simulator battery mode)
+M4-013 ──→ post-M4 battery correction (minimal status contract + liveness)
+M1-019 ──→ M5-019 (remaining battery measurement/config contract)
+   M5-019 + M4-013 + M2-017 ──→ M5-021 (simulator battery mode)
                                                        all ──→ M5-022 (verification)
 ```
 
@@ -312,7 +312,7 @@ M5-022 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
         M3-016 + M6-019 ───────────→ M6-020 (offline reconciliation)
         M6-019 + M6-020 ───────────→ M6-021 (offline safety properties)
 
-  M6-008 + M6-009 + M6-011 + M6-016 + M5-020 ──→ M6-022 (pending command intents)
+  M6-008 + M6-009 + M6-011 + M6-016 + M4-013 ──→ M6-022 (pending command intents)
                             M6-022 + M6-018 ──→ M6-023 (intent API + properties)
                                 all ──→ M6-024 (verification)
 ```
@@ -606,7 +606,8 @@ M13 016 battery fleet operations
 M14 009 solar + field power planning
 ```
 
-**The chain that matters most** runs `M5-019` (the contract, once) → `M5-020`
+**The chain that matters most** runs the post-M4 status/liveness correction →
+`M5-019` (the remaining contract)
 (the Edge's bounded wake window, which is SAFETY-021) → `M5-021` (a producer, so
 the state is testable) → `M6-022` (commands held as intents) → `M9-019` (the
 firmware that actually sleeps). Everything downstream — the UI, the fleet views,
@@ -675,9 +676,9 @@ most easily missed, because the milestone table alone does not show them.
 | M13-014 | M13-013 | the MSRV matrix sits alongside release CI |
 | M13-012 | M12-019 | extends the completed UI |
 | M5-019 | M1-019 | additive contract change; needs the whole M1 wire surface |
-| M5-020 | M4-012, M4-004 | extends the derived connectivity enum and the liveness timer — the M4 registry model, in the first milestone still open |
+| M5-020 | M4-012, M4-004 | superseded by the dated post-M4 battery-compatibility correction |
 | M5-021 | M2-017 | the simulator's isolation/runtime state is where a sleep cycle attaches |
-| M6-022 | M5-020 | routing depends on whether the device is `sleeping` |
+| M6-022 | M4-013 | routing depends on the corrected M4 `sleeping` state |
 | M9-019 | M5-021, M9-018 | the simulator's battery mode is the behavioural spec; the monotonic budget is what must survive sleep |
 | M12-018 | M12-015, M12-006, M12-005 | extends the connectivity views and the watering action with a fourth device condition |
 | M8-017 | M6-023, M5-021 | needs the intent lifecycle to assert on and a simulator that sleeps |

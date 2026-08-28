@@ -226,6 +226,71 @@ async fn retained_status() {
 }
 
 #[tokio::test]
+async fn intentional_sleep_and_duplicate_each_receive_edge_time() {
+    use rhizo_mqtt_contract::payload::{DeviceStatus, DeviceStatusValue, PowerMode, PowerStatus};
+    let Some(b) = support::broker("intentional_sleep_time").await else {
+        return;
+    };
+    let edge = EdgeHarness::start(&b).await;
+    let mut device = support::Subscriber::connect(
+        &b,
+        &format!("sleep-publisher-{}", uuid::Uuid::new_v4()),
+        "plant-node-01",
+        &b.device_password("plant-node-01"),
+        "rhizo/v1/devices/plant-node-01/time",
+    )
+    .await;
+    let mut status: rhizo_mqtt_contract::Envelope<DeviceStatus> =
+        rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+            "../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+        ))
+        .unwrap();
+    status.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+    status.sequence = Some(status.sequence.unwrap() + 1);
+    status.data.status = DeviceStatusValue::Offline;
+    status.data.reason = Some("sleeping".into());
+    status.data.power = Some(Box::new(PowerStatus {
+        mode: PowerMode::Battery,
+        wake_interval_seconds: Some(900),
+        expected_wake_ms: Some(u64::MAX),
+        wake_reason: Some("timer".into()),
+        battery_mv: None,
+        awake_ms: None,
+    }));
+    let payload = status.to_json().unwrap();
+    for _ in 0..2 {
+        device
+            .client()
+            .publish(
+                "rhizo/v1/devices/plant-node-01/status",
+                QoS::AtLeastOnce,
+                true,
+                payload.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            device
+                .next_matching(Duration::from_secs(3), |m| m.topic.ends_with("/time"))
+                .await
+                .is_some(),
+            "every valid status receipt, including a duplicate, needs edge.time"
+        );
+    }
+    let row = sqlx::query("SELECT connectivity_mode,last_seen_at,expected_wake_at FROM devices")
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap();
+    use sqlx::Row as _;
+    assert_eq!(row.get::<String, _>("connectivity_mode"), "sleeping");
+    assert_eq!(row.get::<Option<i64>, _>("last_seen_at"), None);
+    assert_eq!(
+        row.get::<Option<i64>, _>("expected_wake_at"),
+        Some(1_900_000_900_000)
+    );
+}
+
+#[tokio::test]
 async fn auto_registration_creates_no_plant() {
     let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
     db.migrate().await.unwrap();

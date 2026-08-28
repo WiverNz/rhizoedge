@@ -42,6 +42,12 @@ async fn one(
     let now = Utc::now().timestamp_millis();
     let last_seen: Option<i64> = row.get("last_seen_at");
     let interval: i64 = row.get("telemetry_interval_seconds");
+    let effective_interval = if row.get::<String, _>("power_mode") == "battery" {
+        row.get::<Option<i64>, _>("wake_interval_seconds")
+            .unwrap_or(interval)
+    } else {
+        interval
+    };
     let desired: i64 = row.get("desired_config_version");
     let applied: Option<i64> = row.get("applied_config_version");
     let drift_since: Option<i64> = row.get("drift_since");
@@ -54,16 +60,22 @@ async fn one(
     let capabilities = sqlx::query("SELECT capability_id,class,kinds_json,point FROM device_capabilities WHERE device_id=? ORDER BY class,capability_id").bind(id).fetch_all(db.pool()).await?
         .into_iter().map(|r| serde_json::json!({"id":r.get::<String,_>("capability_id"),"class":r.get::<String,_>("class"),"kinds":serde_json::from_str::<serde_json::Value>(r.get::<&str,_>("kinds_json")).unwrap_or_else(|_|serde_json::json!([])),"point":r.get::<Option<String>,_>("point")})).collect::<Vec<_>>();
     let mode: String = row.get("connectivity_mode");
+    let expected_wake_at: Option<i64> = row.get("expected_wake_at");
+    let connectivity = crate::device::connectivity::from_projection(&mode, expected_wake_at);
     Ok(Some(serde_json::json!({
         "device_id": row.get::<String,_>("device_id"), "name": row.get::<Option<String>,_>("name"),
         "status": row.get::<String,_>("status"), "firmware_version": row.get::<Option<String>,_>("firmware_version"),
         "protocol_version": row.get::<Option<i64>,_>("protocol_version"), "clock_synced": row.get::<i64,_>("clock_synced") != 0,
         "last_seen_at": timestamp(last_seen), "sample_age_seconds": last_seen.map(|seen| crate::device::health::sample_age_seconds(now, seen)),
-        "stale": last_seen.is_some_and(|seen| crate::device::health::sample_age_seconds(now, seen) >= crate::device::health::stale_after_seconds(interval)),
+        "stale": last_seen.is_some_and(|seen| crate::device::health::sample_age_seconds(now, seen) >= crate::device::health::stale_after_seconds(effective_interval)),
         "config":{"desired_version":desired,"applied_version":applied,"drift":applied != Some(desired) && drift_since.is_some_and(|since| now.saturating_sub(since) >= interval.saturating_mul(2000))},
         "sensors": sensors, "capabilities": capabilities,
         "limits": status_snapshot.get("limits").cloned().unwrap_or(serde_json::Value::Null),
-        "connectivity": if row.get::<String,_>("status") == "online" { mode } else { "reconciling".to_owned() },
+        "connectivity": connectivity.api_name(),
+        "expected_wake_at": timestamp(expected_wake_at),
+        "power_mode": row.get::<String,_>("power_mode"),
+        "wake_interval_seconds": row.get::<Option<i64>,_>("wake_interval_seconds"),
+        "missed_wake_count": row.get::<i64,_>("missed_wake_count"),
         "plant_id": serde_json::Value::Null
     })))
 }
@@ -173,5 +185,38 @@ mod tests {
     #[test]
     fn rfc3339_is_utc() {
         assert!(super::timestamp(Some(0)).unwrap().ends_with('Z'));
+    }
+    #[tokio::test]
+    async fn battery_state_exposes_expected_wake_without_device_time() {
+        use rhizo_mqtt_contract::payload::{
+            DeviceStatus, DeviceStatusValue, PowerMode, PowerStatus,
+        };
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let mut status: rhizo_mqtt_contract::Envelope<DeviceStatus> =
+            rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+                "../../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+            ))
+            .unwrap();
+        status.sequence = Some(status.sequence.unwrap() + 1);
+        status.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+        status.data.status = DeviceStatusValue::Offline;
+        status.data.reason = Some("sleeping".into());
+        status.data.power = Some(Box::new(PowerStatus {
+            mode: PowerMode::Battery,
+            wake_interval_seconds: Some(60),
+            expected_wake_ms: Some(u64::MAX),
+            wake_reason: None,
+            battery_mv: None,
+            awake_ms: None,
+        }));
+        rhizo_storage::repo::ingest::persist_status(&db, &status, 1_000)
+            .await
+            .unwrap();
+        let value = super::one(&db, "plant-node-01").await.unwrap().unwrap();
+        assert_eq!(value["connectivity"], "sleeping");
+        assert_eq!(value["power_mode"], "battery");
+        assert_eq!(value["wake_interval_seconds"], 60);
+        assert_eq!(value["expected_wake_at"], "1970-01-01T00:01:01.000Z");
     }
 }

@@ -1,10 +1,10 @@
 # Issue M5-021 — Add simulator battery power mode with announced sleep
 
-**Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M5-019, M5-020, M2-017
+**Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M5-019, M4-013, M2-017
 
 ## Context
 
-M5-020 teaches the edge to tell an announced sleep from a device that stopped
+The post-M4 battery correction teaches the edge to tell an announced sleep from a device that stopped
 waking. Nothing can currently produce either, so none of it is testable — and
 the firmware that would produce it is four milestones away.
 
@@ -51,8 +51,8 @@ A simulator that sleeps, wakes, and announces both, at accelerated virtual time.
 
 ## Dependencies
 
-- M5-019
-- M5-020
+- M4-013 (including its dated battery-compatibility report correction)
+- M5-019 (remaining measurement/config contract scope)
 - M2-017
 
 ## Implementation notes

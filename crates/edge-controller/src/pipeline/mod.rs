@@ -328,6 +328,9 @@ fn decode_status(
     if envelope.data.boot_generation == 0 {
         return Err(rhizo_mqtt_contract::DecodeError::Payload);
     }
+    if envelope.data.validate().is_err() {
+        return Err(rhizo_mqtt_contract::DecodeError::Payload);
+    }
     Ok(envelope)
 }
 enum Msg {

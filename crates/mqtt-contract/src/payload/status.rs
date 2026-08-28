@@ -1,6 +1,6 @@
 //! Device status, capabilities, LWT, and configuration.
 use super::{ActuatorKind, MeasurementKind, MeasurementPoint, SensorId};
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 /// Online state. Unknown states fail decoding rather than imply health.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -8,6 +8,49 @@ use serde::{Deserialize, Serialize};
 pub enum DeviceStatusValue {
     Online,
     Offline,
+}
+/// Device-declared power mode. Unknown values resolve conservatively to always-on.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerMode {
+    /// The device is expected to remain reachable.
+    #[default]
+    AlwaysOn,
+    /// The device intentionally sleeps between wake cycles.
+    Battery,
+    /// A future mode, treated as [`PowerMode::AlwaysOn`].
+    #[serde(other)]
+    Unknown,
+}
+impl PowerMode {
+    /// Resolves an unknown declaration toward continued reachability.
+    pub const fn effective(self) -> Self {
+        match self {
+            Self::Battery => Self::Battery,
+            Self::AlwaysOn | Self::Unknown => Self::AlwaysOn,
+        }
+    }
+}
+/// Advisory power information reported with status.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PowerStatus {
+    /// Actually applied mode.
+    pub mode: PowerMode,
+    /// Relative interval until the next wake. Edge receipt time remains authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_interval_seconds: Option<u32>,
+    /// Device-clock diagnostic only; never a liveness or clock source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_wake_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Reset/wake diagnostic.
+    pub wake_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Supply voltage where measurable.
+    pub battery_mv: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Elapsed awake time in this cycle.
+    pub awake_ms: Option<u64>,
 }
 /// Connectivity as seen by the device.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -109,12 +152,39 @@ pub struct DeviceStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /** Device connectivity. */
     pub connectivity: Option<Connectivity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /** Advisory power declaration. Absence and unknown modes mean always-on. */
+    pub power: Option<Box<PowerStatus>>,
     #[serde(default)]
     /** Declared capabilities. */
     pub capabilities: DeviceCapabilities,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /** Read-only hard limits. */
     pub limits: Option<ReportedLimits>,
+}
+/// Semantic status validation failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StatusError {
+    /// An announced sleep did not carry a valid relative wake interval.
+    SleepWakeInterval,
+}
+impl DeviceStatus {
+    /// Validates the bounded sleep announcement without consulting device time.
+    pub fn validate(&self) -> Result<(), StatusError> {
+        if self.status == DeviceStatusValue::Offline
+            && matches!(self.reason.as_deref(), Some("sleeping"))
+        {
+            match self.power.as_deref() {
+                Some(PowerStatus {
+                    mode: PowerMode::Battery,
+                    wake_interval_seconds: Some(60..=86_400),
+                    ..
+                }) => {}
+                _ => return Err(StatusError::SleepWakeInterval),
+            }
+        }
+        Ok(())
+    }
 }
 /// Pump tuning, never safety limits.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -216,6 +286,7 @@ mod tests {
             rssi_dbm: None,
             applied_policy_versions: BTreeMap::new(),
             connectivity: None,
+            power: None,
             capabilities: DeviceCapabilities::default(),
             limits: None,
         };
@@ -227,5 +298,39 @@ mod tests {
                 .actuators
                 .is_empty()
         );
+    }
+    #[test]
+    fn power_mode_unknown_is_always_on_and_sleep_is_bounded() {
+        let mode: PowerMode = serde_json::from_str("\"future_mode\"").unwrap();
+        assert_eq!(mode.effective(), PowerMode::AlwaysOn);
+        let power = PowerStatus {
+            mode: PowerMode::Battery,
+            wake_interval_seconds: Some(900),
+            expected_wake_ms: Some(u64::MAX),
+            wake_reason: Some("timer".into()),
+            battery_mv: Some(3_280),
+            awake_ms: Some(4_120),
+        };
+        let mut status = DeviceStatus {
+            boot_generation: 1,
+            status: DeviceStatusValue::Offline,
+            reason: Some("sleeping".into()),
+            firmware_version: None,
+            protocol_version: Some(1),
+            applied_config_version: None,
+            uptime_ms: None,
+            free_heap_bytes: None,
+            rssi_dbm: None,
+            applied_policy_versions: BTreeMap::new(),
+            connectivity: None,
+            power: Some(Box::new(power)),
+            capabilities: DeviceCapabilities::default(),
+            limits: None,
+        };
+        assert_eq!(status.validate(), Ok(()));
+        status.power.as_mut().unwrap().wake_interval_seconds = Some(59);
+        assert_eq!(status.validate(), Err(StatusError::SleepWakeInterval));
+        status.power = None;
+        assert_eq!(status.validate(), Err(StatusError::SleepWakeInterval));
     }
 }

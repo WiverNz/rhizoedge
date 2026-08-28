@@ -26,8 +26,10 @@ pin may move forward deliberately
 > **14 issues were added** across M5, M6, M8, M9, M10, M12, M13, and M14, and each
 > affected milestone's verification issue was renumbered to stay last.
 > **SAFETY-021** was appended; the first twenty are unchanged and were never
-> renumbered. **M4 was not reopened** — its registry model is extended in M5-020,
-> the first milestone still open, exactly as M0 was left alone in August.
+> renumbered. A subsequent focused correction on the same date made the completed
+> M4 registry battery-compatible before M5: the scope originally planned as
+> M5-019 and M5-020 is recorded as superseded, while M5-021 still owns simulator
+> sleep behaviour. The dated correction is documented in the M4 report.
 >
 > The change is additive on the wire and needed **no protocol version bump**: two
 > measurement kinds, optional `power` blocks, one offline `reason`. Holding a
@@ -265,8 +267,9 @@ detection · rule-based recommendation with typed reasons · plant state
 derivation · EC trend and warning · evaluation tick and endpoints ·
 **a versioned, embedded, curated species preset catalogue with per-value
 provenance, and its application into ordinary per-plant policies** ·
-**the battery-device wire surface, sleep-aware liveness, and a simulator that
-sleeps** (M5-019…M5-021).
+**the remaining battery measurement/config wire surface and a simulator that
+sleeps** (M5-019, M5-021); the minimal sleep-status wire surface and sleep-aware
+liveness are already delivered by the dated post-M4 correction.
 
 **Exit criteria.** Drying produces `WaterRecommended` with a non-empty reason
 list and **zero MQTT commands published**. A plant with no `ActuatorBinding`

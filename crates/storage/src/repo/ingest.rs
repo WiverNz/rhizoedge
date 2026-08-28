@@ -697,8 +697,7 @@ pub async fn persist_status(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
-    let prior =
-        sqlx::query("SELECT status,boot_id,connectivity_mode FROM devices WHERE device_id=?")
+    let prior = sqlx::query("SELECT status,boot_id,connectivity_mode,expected_wake_at,power_mode FROM devices WHERE device_id=?")
             .bind(&dev)
             .fetch_optional(&mut *tx)
             .await
@@ -711,6 +710,9 @@ pub async fn persist_status(
     let prior_connectivity = prior
         .as_ref()
         .map(|r| r.get::<String, _>("connectivity_mode"));
+    let prior_expected_wake = prior
+        .as_ref()
+        .and_then(|r| r.get::<Option<i64>, _>("expected_wake_at"));
     if prior.is_none() {
         sqlx::query("INSERT INTO devices(device_id,created_at) VALUES(?,?)")
             .bind(&dev)
@@ -742,9 +744,34 @@ pub async fn persist_status(
     let sensors_json = serde_json::to_string(&e.data.capabilities.sensors)
         .map_err(|x| StorageError::Serialization(x.to_string()))?;
     let status = json_name(&e.data.status)?;
-    let connectivity = match e.data.connectivity.map(|c| c.mode) {
-        Some(rhizo_mqtt_contract::payload::ConnectivityMode::Isolated) => "isolated",
-        _ => "connected",
+    let declared_battery = e.data.power.as_ref().is_some_and(|power| {
+        power.mode.effective() == rhizo_mqtt_contract::payload::PowerMode::Battery
+    });
+    let wake_interval = e
+        .data
+        .power
+        .as_ref()
+        .and_then(|power| power.wake_interval_seconds)
+        .filter(|seconds| (60..=86_400).contains(seconds));
+    let announced_sleep = e.data.status == DeviceStatusValue::Offline
+        && e.data.reason.as_deref() == Some("sleeping")
+        && declared_battery
+        && wake_interval.is_some();
+    let preserve_expected_sleep = is_lwt
+        && prior_connectivity.as_deref() == Some("sleeping")
+        && prior_expected_wake.is_some();
+    let connectivity = if announced_sleep || preserve_expected_sleep {
+        "sleeping"
+    } else if e.data.status == DeviceStatusValue::Offline {
+        match e.data.reason.as_deref() {
+            Some("shutdown") => "reconciling",
+            _ => "isolated",
+        }
+    } else {
+        match e.data.connectivity.map(|c| c.mode) {
+            Some(rhizo_mqtt_contract::payload::ConnectivityMode::Isolated) => "isolated",
+            _ => "connected",
+        }
     };
     let boot = e.boot_id.as_ref().map(ToString::to_string);
     let seq = e.sequence.map(|v| v as i64);
@@ -760,15 +787,37 @@ pub async fn persist_status(
     } else {
         Some(sequence)
     };
-    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=?,status=?,firmware_version=?,protocol_version=?,boot_id=?,last_sequence=?,clock_synced=?,last_seen_at=COALESCE(?,last_seen_at),applied_config_version=?,uptime_ms=?,free_heap_bytes=?,rssi_dbm=?,sensors_json=?,connectivity_mode=? WHERE device_id=?")
+    let interval_ms = wake_interval.map(|seconds| i64::from(seconds).saturating_mul(1_000));
+    let expected_wake_at = interval_ms.map(|duration| at.saturating_add(duration));
+    let overdue_at = wake_interval.map(|seconds| {
+        expected_wake_at
+            .unwrap_or(at)
+            .saturating_add(i64::from(seconds.max(300)).saturating_mul(1_000))
+    });
+    let power_mode = if declared_battery {
+        "battery"
+    } else {
+        "always_on"
+    };
+    let waking = e.data.status == DeviceStatusValue::Online && prior_expected_wake.is_some();
+    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=?,status=?,firmware_version=?,protocol_version=?,boot_id=?,last_sequence=?,clock_synced=?,last_seen_at=COALESCE(?,last_seen_at),applied_config_version=?,uptime_ms=?,free_heap_bytes=?,rssi_dbm=?,sensors_json=?,connectivity_mode=?,power_mode=CASE WHEN ? THEN ? ELSE power_mode END,wake_interval_seconds=CASE WHEN ? THEN ? ELSE wake_interval_seconds END,sleep_received_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE sleep_received_at END,expected_wake_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE expected_wake_at END,overdue_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE overdue_at END,missed_wake_count=CASE WHEN ? THEN 0 ELSE missed_wake_count END WHERE device_id=?")
     .bind(status_json).bind(generation).bind(stored_sequence).bind(lwt_id)
     .bind(&status).bind(firmware).bind(protocol).bind(&boot).bind(seq)
     .bind(e.clock_synced.unwrap_or(false)).bind(last_seen).bind(applied).bind(uptime)
-    .bind(heap).bind(rssi).bind(sensors_json).bind(connectivity).bind(&dev)
+    .bind(heap).bind(rssi).bind(sensors_json).bind(connectivity)
+    .bind(declared_battery).bind(power_mode)
+    .bind(announced_sleep).bind(wake_interval.map(i64::from))
+    .bind(announced_sleep).bind(at).bind(waking)
+    .bind(announced_sleep).bind(expected_wake_at).bind(waking)
+    .bind(announced_sleep).bind(overdue_at).bind(waking)
+    .bind(waking).bind(&dev)
     .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    if prior_status.as_deref() != Some(status.as_str()) {
+    if prior_status.as_deref() != Some(status.as_str())
+        && !preserve_expected_sleep
+        && !announced_sleep
+    {
         let severity = if e.data.reason.as_deref() == Some("connection_lost") {
             "warning"
         } else {
@@ -784,11 +833,20 @@ pub async fn persist_status(
         )
         .await?;
     }
+    if announced_sleep && prior_connectivity.as_deref() != Some("sleeping") {
+        insert_edge_event(&mut tx, &dev, "device_slept", "info", None, at).await?;
+    } else if waking {
+        insert_edge_event(&mut tx, &dev, "device_woke", "info", None, at).await?;
+    }
     if prior_boot.is_some() && prior_boot != boot {
         insert_edge_event(&mut tx, &dev, "device_restart", "info", None, at).await?;
     }
     replace_capabilities(&mut tx, &dev, &e.data.capabilities, at, prior_boot != boot).await?;
-    if prior_connectivity.as_deref() != Some(connectivity) {
+    if prior_connectivity.as_deref() != Some(connectivity)
+        && (connectivity == "isolated" || prior_connectivity.as_deref() == Some("isolated"))
+        && connectivity != "sleeping"
+        && prior_connectivity.as_deref() != Some("sleeping")
+    {
         let reported_isolated_ms = e.data.connectivity.map_or(0, |value| value.isolated_ms);
         apply_connectivity_transition(&mut tx, &dev, connectivity, at, reported_isolated_ms)
             .await?;

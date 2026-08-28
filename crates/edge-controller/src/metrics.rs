@@ -21,6 +21,8 @@ pub struct Metrics {
     pub devices_online: IntGauge,
     pub devices_offline: IntGauge,
     pub devices_isolated: IntGauge,
+    pub devices_sleeping: IntGauge,
+    pub device_wake_missed: IntCounter,
     pub device_restarts: IntCounterVec,
     pub http_duration: HistogramVec,
 }
@@ -92,6 +94,14 @@ impl Metrics {
             devices_online: reg!(IntGauge::new(DEVICES_ONLINE, "Online devices")?),
             devices_offline: reg!(IntGauge::new(DEVICES_OFFLINE, "Offline devices")?),
             devices_isolated: reg!(IntGauge::new(DEVICES_ISOLATED, "Isolated devices")?),
+            devices_sleeping: reg!(IntGauge::new(
+                DEVICES_SLEEPING,
+                "Expected sleeping devices"
+            )?),
+            device_wake_missed: reg!(IntCounter::new(
+                DEVICE_WAKE_MISSED_TOTAL,
+                "Expected wake windows missed"
+            )?),
             device_restarts: reg!(IntCounterVec::new(
                 Opts::new(DEVICE_RESTARTS_TOTAL, "Device boot identity changes"),
                 &["device_id"]
@@ -156,6 +166,8 @@ mod devices {
         metrics.devices_online.set(2);
         metrics.devices_offline.set(1);
         metrics.devices_isolated.set(1);
+        metrics.devices_sleeping.set(1);
+        metrics.device_wake_missed.inc();
         metrics
             .device_restarts
             .with_label_values(&["plant-node-01"])
@@ -163,5 +175,6 @@ mod devices {
         assert_eq!(metrics.devices_online.get(), 2);
         assert_eq!(metrics.devices_offline.get(), 1);
         assert_eq!(metrics.devices_isolated.get(), 1);
+        assert_eq!(metrics.devices_sleeping.get(), 1);
     }
 }

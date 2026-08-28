@@ -1,5 +1,10 @@
 # Issue M5-020 — Implement sleep-aware device liveness on the edge
 
+**Status:** SUPERSEDED before M5 started. This scope was delivered as the
+2026-08-28 post-M4 battery-compatibility correction recorded in
+`docs/reports/M4.md`. This issue remains as planning history; it is not an M5
+implementation task.
+
 **Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M5-019, M4-012, M4-004
 
 ## Context
@@ -11,11 +16,9 @@ device — **a device that sleeps disconnects cleanly roughly a hundred times a
 day, and the registry as delivered reports every one of those as an offline
 device.**
 
-M4 was not reopened for this, in the same way M0 was not reopened by the
-2026-08-26 architecture pass. This issue extends the M4-owned registry model in
-the first milestone still open, which is exactly what
-[ADR-018](../../adr/018-battery-and-deep-sleep-device-mode.md) §1 requires and
-no more.
+The later focused correction changed this ownership decision: M4's delivered
+report now carries a dated addendum, without pretending the original M4 gate
+contained the battery model.
 
 ## Goal
 

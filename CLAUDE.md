@@ -462,6 +462,7 @@ this area:
   topics. Holding a command is an Edge-side mechanism with no wire representation.
 - **Command TTL and `edge.time`.** Unchanged, because the command is minted at
   the wake. SAFETY-002 is untouched.
-- **M4.** It was not reopened. Its registry model is extended in **M5-020**, the
+- **M4.** Its completed report carries a dated battery-compatibility correction;
+  the registry model is no longer deferred to **M5-020**, which is superseded.
   first milestone still open — the same treatment M0 got in August. That is why
   M5, a plant milestone, contains three device issues.

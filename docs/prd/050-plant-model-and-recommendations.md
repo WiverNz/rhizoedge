@@ -38,7 +38,7 @@
 >   measurement kinds, the optional `power` blocks, and the `sleeping` offline
 >   reason. Entirely additive within v1; no version bump
 >   ([versioning-policy.md](../protocol/versioning-policy.md) §1).
-> - **M5-020** teaches the registry to tell an announced, bounded sleep from a
+> - The **post-M4 battery correction** teaches the registry to tell an announced, bounded sleep from a
 >   device that stopped waking — the new **SAFETY-021**.
 > - **M5-021** gives the simulator a battery mode, so SCEN-110…SCEN-112 run with
 >   no hardware and M9 has a specification to match rather than to invent.

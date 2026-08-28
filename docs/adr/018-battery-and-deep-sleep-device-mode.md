@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted — 2026-08-28. Contract and edge model in M5, durable command delivery
+Accepted — 2026-08-28. Contract and edge model delivered by the dated post-M4
+battery-compatibility correction, durable command delivery
 in M6, end-to-end scenarios in M8, firmware mechanics in M9, measurement in M10,
 presentation in M12, fleet operations in M13, solar and field power in M14.
 Planning only; no runtime code was written when this was accepted.

@@ -1,5 +1,10 @@
 # Issue M5-019 — Add power mode, sleep announcement, and battery measurement kinds to the contract
 
+**Status:** PARTIALLY SUPERSEDED before M5 started. The minimal status
+power/sleep contract needed by registry liveness was delivered as the 2026-08-28
+post-M4 correction recorded in `docs/reports/M4.md`. Battery measurement kinds
+and desired-config power fields remain M5 scope; M5 has not started.
+
 **Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M1-019
 
 ## Context

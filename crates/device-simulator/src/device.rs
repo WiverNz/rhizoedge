@@ -1398,6 +1398,7 @@ impl Device {
             rssi_dbm: Some(SIMULATED_RSSI_DBM),
             applied_policy_versions: self.store.state().applied_policy_versions.clone(),
             connectivity: Some(self.connectivity()),
+            power: None,
             capabilities: self.capabilities.declaration(|_| (true, 0)),
             limits: Some(ReportedLimits {
                 max_run_seconds: FIRMWARE_MAX_RUN_SECONDS,

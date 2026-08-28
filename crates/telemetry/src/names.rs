@@ -57,6 +57,10 @@ pub const DEVICES_ONLINE: &str = "devices_online";
 pub const DEVICES_OFFLINE: &str = "devices_offline";
 /// Currently isolated devices.
 pub const DEVICES_ISOLATED: &str = "devices_isolated";
+/// Devices inside an edge-bounded announced sleep window.
+pub const DEVICES_SLEEPING: &str = "devices_sleeping";
+/// Expected wake windows that elapsed without a wake.
+pub const DEVICE_WAKE_MISSED_TOTAL: &str = "device_wake_missed_total";
 /// Device restarts, deliberately fleet-cardinality labelled.
 pub const DEVICE_RESTARTS_TOTAL: &str = "device_restarts_total";
 /// HTTP request latency.

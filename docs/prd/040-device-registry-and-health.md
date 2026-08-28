@@ -178,7 +178,7 @@ its owner stops reading — including on the day a device actually dies.
 **M4 was not reopened for this**, in the same way M0 was not reopened by the
 2026-08-26 architecture pass. M4's delivered exit criteria stand, and this
 amendment records what the delivered model must *accommodate* and where the
-extension lands: **M5-020**, in the first milestone still open, with the
+extension landed as the **2026-08-28 post-M4 battery correction**, with the
 simulator that can produce the behaviour in M5-021.
 
 What M4 already got right, and why nothing here is a correction:
@@ -197,7 +197,7 @@ What M4 already got right, and why nothing here is a correction:
 - F-040-17 already publishes `edge.time` on **any** status receipt, so a waking
   device is synchronised without a new mechanism.
 
-What M5-020 must add:
+Delivered by the dated post-M4 battery-compatibility correction:
 
 | ID | Requirement |
 |---|---|
