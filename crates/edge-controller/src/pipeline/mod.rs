@@ -160,7 +160,32 @@ async fn process(
             d
         }
         Msg::Actuator(e) => retry_transient(m, || ingest::persist_actuator(db, &e, at)).await?,
-        Msg::Status(e) => retry_transient(m, || ingest::persist_status(db, &e, at)).await?,
+        Msg::Status(e) => {
+            let dedup = retry_transient(m, || ingest::persist_status(db, &e, at)).await?;
+            publish_edge_time(client, &e.device_id, at).await?;
+            if dedup == Dedup::New {
+                let device_id = e.device_id.to_string();
+                let status_name = match e.data.status {
+                    rhizo_mqtt_contract::payload::DeviceStatusValue::Online => "online",
+                    rhizo_mqtt_contract::payload::DeviceStatusValue::Offline => "offline",
+                };
+                let transitioned: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM device_events WHERE device_id=? AND kind=? AND occurred_at=?",
+                ).bind(&device_id).bind(status_name).bind(at).fetch_one(db.pool()).await
+                    .map_err(|error| StorageError::Database(error.to_string()))?;
+                if transitioned != 0 {
+                    tracing::info!(device=%device_id, status=status_name, "device status transition");
+                }
+                let restarted: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM device_events WHERE device_id=? AND kind='device_restart' AND occurred_at=?",
+                ).bind(&device_id).bind(at).fetch_one(db.pool()).await
+                    .map_err(|error| StorageError::Database(error.to_string()))?;
+                if restarted != 0 {
+                    m.device_restarts.with_label_values(&[&device_id]).inc();
+                }
+            }
+            dedup
+        }
         Msg::Result(e) => retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?,
         Msg::Events(e) => {
             for event in &e.data.events {
@@ -222,6 +247,37 @@ async fn process(
         .with_label_values(&[kind])
         .observe(started.elapsed().as_secs_f64());
     Ok(())
+}
+
+async fn publish_edge_time(
+    client: &rumqttc::AsyncClient,
+    device: &rhizo_mqtt_contract::DeviceId,
+    at: i64,
+) -> Result<(), EdgeError> {
+    let envelope = Envelope {
+        v: 1,
+        kind: rhizo_mqtt_contract::MessageKind::EdgeTime,
+        message_id: rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4()),
+        device_id: device.clone(),
+        boot_id: None,
+        sequence: None,
+        device_time_ms: None,
+        clock_synced: None,
+        data: rhizo_mqtt_contract::payload::EdgeTime {
+            edge_time_ms: rhizo_mqtt_contract::UtcMillis(at),
+        },
+    };
+    client
+        .publish(
+            Topic::Time(device.clone()).as_string(),
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            envelope
+                .to_json()
+                .map_err(|e| EdgeError::Decode(e.to_string()))?,
+        )
+        .await
+        .map_err(|e| EdgeError::Mqtt(e.to_string()))
 }
 
 /// Retries only what ADR-014 classifies as `Transient`, with its documented

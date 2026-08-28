@@ -51,3 +51,13 @@ pub const MQTT_PROCESSING_DURATION_SECONDS: &str = "mqtt_processing_duration_sec
 pub const ROWS_PRUNED_TOTAL: &str = "rows_pruned_total";
 /// Durable device-reported gaps.
 pub const HISTORY_GAPS_TOTAL: &str = "history_gaps_total";
+/// Currently online devices.
+pub const DEVICES_ONLINE: &str = "devices_online";
+/// Currently offline devices.
+pub const DEVICES_OFFLINE: &str = "devices_offline";
+/// Currently isolated devices.
+pub const DEVICES_ISOLATED: &str = "devices_isolated";
+/// Device restarts, deliberately fleet-cardinality labelled.
+pub const DEVICE_RESTARTS_TOTAL: &str = "device_restarts_total";
+/// HTTP request latency.
+pub const HTTP_REQUEST_DURATION_SECONDS: &str = "http_request_duration_seconds";

@@ -38,11 +38,11 @@ guards that.
 
 ## Acceptance criteria
 
-- [ ] `devices_online` and `devices_offline` reflect actual state.
-- [ ] They update when a device goes silent, with no inbound message.
-- [ ] `device_restarts_total` increments on a `boot_id` change.
-- [ ] `device_id` appears on no other metric.
-- [ ] The cardinality test still passes.
+- [x] `devices_online` and `devices_offline` reflect actual state.
+- [x] They update when a device goes silent, with no inbound message.
+- [x] `device_restarts_total` increments on a `boot_id` change.
+- [x] `device_id` appears on no other metric.
+- [x] The cardinality test still passes.
 
 ## Verification
 

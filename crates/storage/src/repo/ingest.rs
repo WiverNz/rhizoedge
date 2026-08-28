@@ -51,15 +51,17 @@ async fn touch_device(
     seq: Option<u64>,
     received: i64,
 ) -> Result<(), StorageError> {
-    let previous = sqlx::query!(
-        "SELECT boot_id,last_sequence FROM devices WHERE device_id=?",
-        device
-    )
+    let previous = sqlx::query(
+        "SELECT boot_id,last_sequence,last_seen_at,telemetry_interval_seconds FROM devices WHERE device_id=?",
+    ).bind(device)
     .fetch_optional(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    if let Some(row) = previous {
-        if boot != row.boot_id {
+    use sqlx::Row as _;
+    if let Some(row) = previous.as_ref() {
+        let old_boot: Option<String> = row.get("boot_id");
+        let old_sequence: Option<i64> = row.get("last_sequence");
+        if boot != old_boot {
             let event_id = format!("boot:{device}:{}", boot.as_deref().unwrap_or("unknown"));
             sqlx::query!(
                 "INSERT INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at) VALUES(?,?,'boot','info',?,?) ON CONFLICT(event_id) DO NOTHING",
@@ -71,7 +73,22 @@ async fn touch_device(
             .execute(&mut **tx)
             .await
             .map_err(StorageError::from_sqlx)?;
-        } else if let (Some(old), Some(new)) = (row.last_sequence, seq)
+            if old_boot.is_some()
+                && row
+                    .get::<Option<i64>, _>("last_seen_at")
+                    .is_some_and(|last| {
+                        received.saturating_sub(last)
+                            < row
+                                .get::<i64, _>("telemetry_interval_seconds")
+                                .saturating_mul(2_000)
+                    })
+            {
+                let conflict_id = format!("boot-thrash:{device}:{received}");
+                sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at,origin) VALUES(?,?,'boot_id_thrash','warning',?,?,'edge')")
+                .bind(conflict_id).bind(device).bind(received).bind(received)
+                .execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+            }
+        } else if let (Some(old), Some(new)) = (old_sequence, seq)
             && (new as i64) < old
         {
             let event_id = format!(
@@ -90,6 +107,7 @@ async fn touch_device(
             .map_err(StorageError::from_sqlx)?;
         }
     }
+    let is_new = previous.is_none();
     let sequence = seq.map(|v| v as i64);
     sqlx::query!(
         "INSERT INTO devices(device_id,boot_id,last_sequence,last_seen_at,created_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET boot_id=excluded.boot_id,last_sequence=excluded.last_sequence,last_seen_at=excluded.last_seen_at",
@@ -102,6 +120,9 @@ async fn touch_device(
     .execute(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    if is_new {
+        insert_edge_event(tx, device, "device_registered", "info", None, received).await?;
+    }
     Ok(())
 }
 
@@ -676,14 +697,29 @@ pub async fn persist_status(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
-    touch_device(
-        &mut tx,
-        &dev,
-        e.boot_id.as_ref().map(ToString::to_string),
-        e.sequence,
-        at,
-    )
-    .await?;
+    let prior =
+        sqlx::query("SELECT status,boot_id,connectivity_mode FROM devices WHERE device_id=?")
+            .bind(&dev)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+    use sqlx::Row as _;
+    let prior_status = prior.as_ref().map(|r| r.get::<String, _>("status"));
+    let prior_boot = prior
+        .as_ref()
+        .and_then(|r| r.try_get::<Option<String>, _>("boot_id").ok().flatten());
+    let prior_connectivity = prior
+        .as_ref()
+        .map(|r| r.get::<String, _>("connectivity_mode"));
+    if prior.is_none() {
+        sqlx::query("INSERT INTO devices(device_id,created_at) VALUES(?,?)")
+            .bind(&dev)
+            .bind(at)
+            .execute(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+        insert_edge_event(&mut tx, &dev, "device_registered", "info", None, at).await?;
+    }
     let prior_sequence = previous.as_ref().and_then(|(old_generation, sequence, _)| {
         (*old_generation == Some(generation))
             .then_some(*sequence)
@@ -703,24 +739,149 @@ pub async fn persist_status(
     };
     let status_json =
         serde_json::to_string(&e.data).map_err(|x| StorageError::Serialization(x.to_string()))?;
+    let sensors_json = serde_json::to_string(&e.data.capabilities.sensors)
+        .map_err(|x| StorageError::Serialization(x.to_string()))?;
+    let status = json_name(&e.data.status)?;
+    let connectivity = match e.data.connectivity.map(|c| c.mode) {
+        Some(rhizo_mqtt_contract::payload::ConnectivityMode::Isolated) => "isolated",
+        _ => "connected",
+    };
+    let boot = e.boot_id.as_ref().map(ToString::to_string);
+    let seq = e.sequence.map(|v| v as i64);
+    let last_seen = (e.data.status == DeviceStatusValue::Online).then_some(at);
+    let firmware = e.data.firmware_version.as_deref();
+    let protocol = e.data.protocol_version.map(i64::from);
+    let applied = e.data.applied_config_version.map(i64::from);
+    let uptime = e.data.uptime_ms.and_then(|v| i64::try_from(v).ok());
+    let heap = e.data.free_heap_bytes.map(i64::from);
+    let rssi = e.data.rssi_dbm.map(i64::from);
     let stored_sequence = if is_lwt {
         prior_sequence
     } else {
         Some(sequence)
     };
-    sqlx::query!(
-        "UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=? WHERE device_id=?",
-        status_json,
-        generation,
-        stored_sequence,
-        lwt_id,
-        dev
-    )
+    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=?,status=?,firmware_version=?,protocol_version=?,boot_id=?,last_sequence=?,clock_synced=?,last_seen_at=COALESCE(?,last_seen_at),applied_config_version=?,uptime_ms=?,free_heap_bytes=?,rssi_dbm=?,sensors_json=?,connectivity_mode=? WHERE device_id=?")
+    .bind(status_json).bind(generation).bind(stored_sequence).bind(lwt_id)
+    .bind(&status).bind(firmware).bind(protocol).bind(&boot).bind(seq)
+    .bind(e.clock_synced.unwrap_or(false)).bind(last_seen).bind(applied).bind(uptime)
+    .bind(heap).bind(rssi).bind(sensors_json).bind(connectivity).bind(&dev)
     .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    if prior_status.as_deref() != Some(status.as_str()) {
+        let severity = if e.data.reason.as_deref() == Some("connection_lost") {
+            "warning"
+        } else {
+            "info"
+        };
+        insert_edge_event(
+            &mut tx,
+            &dev,
+            &status,
+            severity,
+            e.data.reason.as_deref(),
+            at,
+        )
+        .await?;
+    }
+    if prior_boot.is_some() && prior_boot != boot {
+        insert_edge_event(&mut tx, &dev, "device_restart", "info", None, at).await?;
+    }
+    replace_capabilities(&mut tx, &dev, &e.data.capabilities, at, prior_boot != boot).await?;
+    if prior_connectivity.as_deref() != Some(connectivity) {
+        let reported_isolated_ms = e.data.connectivity.map_or(0, |value| value.isolated_ms);
+        apply_connectivity_transition(&mut tx, &dev, connectivity, at, reported_isolated_ms)
+            .await?;
+    }
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(Dedup::New)
+}
+
+async fn insert_edge_event(
+    tx: &mut Transaction<'_, Sqlite>,
+    device: &str,
+    kind: &str,
+    severity: &str,
+    detail: Option<&str>,
+    at: i64,
+) -> Result<(), StorageError> {
+    let event_id = format!("edge:{device}:{kind}:{at}");
+    let detail_json = detail.map(|value| serde_json::json!({"reason": value}).to_string());
+    sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,origin) VALUES(?,?,?,?,?,?,?,'edge')")
+        .bind(event_id).bind(device).bind(kind).bind(severity).bind(detail_json).bind(at).bind(at)
+        .execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    Ok(())
+}
+
+async fn replace_capabilities(
+    tx: &mut Transaction<'_, Sqlite>,
+    device: &str,
+    capabilities: &rhizo_mqtt_contract::payload::DeviceCapabilities,
+    at: i64,
+    reboot: bool,
+) -> Result<(), StorageError> {
+    let old: Vec<String> = sqlx::query_scalar("SELECT capability_id || ':' || class || ':' || kinds_json || ':' || COALESCE(point,'') FROM device_capabilities WHERE device_id=? ORDER BY capability_id,class")
+        .bind(device).fetch_all(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    sqlx::query("DELETE FROM device_capabilities WHERE device_id=?")
+        .bind(device)
+        .execute(&mut **tx)
+        .await
+        .map_err(StorageError::from_sqlx)?;
+    for sensor in &capabilities.sensors {
+        let kinds = serde_json::to_string(&sensor.kinds)
+            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        sqlx::query("INSERT INTO device_capabilities(device_id,capability_id,class,kinds_json,point,limits_json,declared_at) VALUES(?,?,'sensor',?,?,NULL,?)")
+            .bind(device).bind(sensor.sensor_id.as_str()).bind(kinds).bind(sensor.point.as_str()).bind(at)
+            .execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    }
+    for actuator in &capabilities.actuators {
+        let kind = json_name(&actuator.kind)?;
+        sqlx::query("INSERT INTO device_capabilities(device_id,capability_id,class,kinds_json,point,limits_json,declared_at) VALUES(?,?,'actuator',?,NULL,NULL,?)")
+            .bind(device).bind(actuator.actuator_id.as_str()).bind(serde_json::json!([kind]).to_string()).bind(at)
+            .execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    }
+    let new: Vec<String> = sqlx::query_scalar("SELECT capability_id || ':' || class || ':' || kinds_json || ':' || COALESCE(point,'') FROM device_capabilities WHERE device_id=? ORDER BY capability_id,class")
+        .bind(device).fetch_all(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    if reboot && !old.is_empty() && old != new {
+        insert_edge_event(tx, device, "capabilities_changed", "warning", None, at).await?;
+    }
+    Ok(())
+}
+
+async fn apply_connectivity_transition(
+    tx: &mut Transaction<'_, Sqlite>,
+    device: &str,
+    mode: &str,
+    at: i64,
+    reported_isolated_ms: u64,
+) -> Result<(), StorageError> {
+    if mode == "isolated" {
+        let reported = i64::try_from(reported_isolated_ms).unwrap_or(i64::MAX);
+        let started_at = at.saturating_sub(reported);
+        sqlx::query("INSERT INTO device_isolation_periods(device_id,started_at) VALUES(?,?)")
+            .bind(device)
+            .bind(started_at)
+            .execute(&mut **tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+        sqlx::query("UPDATE devices SET isolation_started_at=? WHERE device_id=?")
+            .bind(started_at)
+            .bind(device)
+            .execute(&mut **tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+        insert_edge_event(tx, device, "device.isolated", "warning", None, at).await?;
+    } else {
+        sqlx::query("UPDATE device_isolation_periods SET ended_at=?,duration_ms=?-started_at WHERE device_id=? AND ended_at IS NULL")
+            .bind(at).bind(at).bind(device).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+        sqlx::query("UPDATE devices SET isolation_started_at=NULL WHERE device_id=?")
+            .bind(device)
+            .execute(&mut **tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+        insert_edge_event(tx, device, "device.reconciled", "info", None, at).await?;
+    }
+    Ok(())
 }
 #[cfg(test)]
 mod dedup {

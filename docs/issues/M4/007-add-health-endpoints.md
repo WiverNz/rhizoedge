@@ -43,12 +43,12 @@ readiness oscillate.
 
 ## Acceptance criteria
 
-- [ ] `/health/live` returns 200 while running.
-- [ ] `/health/ready` returns 200 in normal operation.
-- [ ] `/health/ready` returns 503 with `mqtt: disconnected` when the broker is stopped.
-- [ ] **`/health/ready` returns 200 when the cloud is stopped.**
-- [ ] The body lists each check with a specific status.
-- [ ] A brief reconnect does not flip readiness.
+- [x] `/health/live` returns 200 while running.
+- [x] `/health/ready` returns 200 in normal operation.
+- [x] `/health/ready` returns 503 with `mqtt: disconnected` when the broker is stopped.
+- [x] **`/health/ready` returns 200 when the cloud is stopped.**
+- [x] The body lists each check with a specific status.
+- [x] A brief reconnect does not flip readiness.
 
 ## Verification
 

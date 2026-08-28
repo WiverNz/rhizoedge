@@ -39,11 +39,11 @@ Store the declaration as rows rather than an opaque blob, so validation can quer
 
 ## Acceptance criteria
 
-- [ ] Declared capabilities are stored and exposed in the device API.
-- [ ] A device with no actuators is represented correctly, not as an error.
-- [ ] A capability disappearing across a reboot raises `capabilities_changed`.
-- [ ] The lookup answers capability queries without a JSON parse.
-- [ ] Re-declaring identical capabilities creates no event.
+- [x] Declared capabilities are stored and exposed in the device API.
+- [x] A device with no actuators is represented correctly, not as an error.
+- [x] A capability disappearing across a reboot raises `capabilities_changed`.
+- [x] The lookup answers capability queries without a JSON parse.
+- [x] Re-declaring identical capabilities creates no event.
 
 ## Verification
 

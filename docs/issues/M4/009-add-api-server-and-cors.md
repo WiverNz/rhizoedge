@@ -39,12 +39,12 @@ CORS is wildcard-free: only named origins, never `*`.
 
 ## Acceptance criteria
 
-- [ ] The server binds to loopback by default.
-- [ ] A configured bind address is honoured.
-- [ ] CORS is off by default.
-- [ ] Named origins are permitted when configured; `*` is not accepted.
-- [ ] Request metrics are recorded with route and status labels.
-- [ ] Oversized bodies are rejected.
+- [x] The server binds to loopback by default.
+- [x] A configured bind address is honoured.
+- [x] CORS is off by default.
+- [x] Named origins are permitted when configured; `*` is not accepted.
+- [x] Request metrics are recorded with route and status labels.
+- [x] Oversized bodies are rejected.
 
 ## Verification
 

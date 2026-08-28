@@ -36,11 +36,11 @@ still reporting truthfully. The value is in the operator knowing.
 
 ## Acceptance criteria
 
-- [ ] Matching versions report `drift: false`.
-- [ ] A mismatch persisting beyond two intervals raises `config_drift`.
-- [ ] A brief mismatch during application does not raise it.
-- [ ] The condition clears when versions match.
-- [ ] `drift` is exposed in the device API.
+- [x] Matching versions report `drift: false`.
+- [x] A mismatch persisting beyond two intervals raises `config_drift`.
+- [x] A brief mismatch during application does not raise it.
+- [x] The condition clears when versions match.
+- [x] `drift` is exposed in the device API.
 
 ## Verification
 

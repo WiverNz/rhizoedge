@@ -42,11 +42,11 @@ that claims to be connected while the edge hears nothing is not connected.
 
 ## Acceptance criteria
 
-- [ ] Mode is exposed and correct in all three states.
-- [ ] Isolation periods are recorded with accurate start and duration.
-- [ ] `device.isolated` and `device.reconciled` events are raised.
-- [ ] The device's self-report is treated as advisory, not authoritative.
-- [ ] The gauge reflects reality.
+- [x] Mode is exposed and correct in all three states.
+- [x] Isolation periods are recorded with accurate start and duration.
+- [x] `device.isolated` and `device.reconciled` events are raised.
+- [x] The device's self-report is treated as advisory, not authoritative.
+- [x] The gauge reflects reality.
 
 ## Verification
 

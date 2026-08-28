@@ -133,6 +133,7 @@ base_url = "http://localhost:8081"
 
 [api]
 bind = "127.0.0.1:8080"
+cors_allowed_origins = []
 
 [log]
 level  = "info"
@@ -220,6 +221,9 @@ pub struct ApiConfig {
     /// Address to bind. Loopback by default; widening it is explicit, because
     /// V1 has no authentication on this API.
     pub bind: SocketAddr,
+    /// Exact origins allowed to use the browser API. Wildcards are forbidden.
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
 }
 
 /// Logging.
@@ -551,6 +555,16 @@ fn validate(c: &EdgeConfig) -> Result<(), ConfigError> {
 
     if c.cloud.enabled {
         validate_http_url("cloud.base_url", &c.cloud.base_url)?;
+    }
+    if c.api
+        .cors_allowed_origins
+        .iter()
+        .any(|origin| origin == "*")
+    {
+        return Err(ConfigError::invalid(
+            "api.cors_allowed_origins",
+            "wildcard origins are not permitted",
+        ));
     }
 
     rhizo_telemetry::validate_filter(&c.log.level)

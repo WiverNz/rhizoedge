@@ -39,11 +39,11 @@ it indicates a misconfiguration worth surfacing.
 
 ## Acceptance criteria
 
-- [ ] An unknown device is registered on its first message.
-- [ ] **`plants` remains empty** after registration.
-- [ ] The device appears in `GET /api/v1/devices` with no plant.
-- [ ] A `device_registered` event is recorded.
-- [ ] Rapid `boot_id` alternation raises an event.
+- [x] An unknown device is registered on its first message.
+- [x] **`plants` remains empty** after registration.
+- [x] The device appears in `GET /api/v1/devices` with no plant.
+- [x] A `device_registered` event is recorded.
+- [x] Rapid `boot_id` alternation raises an event.
 
 ## Verification
 

@@ -44,14 +44,14 @@ are properties that a later convenience change could quietly break.
 
 ## Acceptance criteria
 
-- [ ] All gate commands pass.
-- [ ] Killing the simulator moves the device offline and records an event.
-- [ ] Restarting yields a new `boot_id` with the sequence restart **not** flagged.
-- [ ] Stopping telemetry while connected produces a stale indication from the timer.
-- [ ] An unknown device registers with **no plant attached**.
-- [ ] `/health/ready` is 200 with the cloud stopped and 503 with the broker stopped.
-- [ ] PATCH changes the name; nothing changes `device_id`.
-- [ ] ROADMAP.md updated and the report recorded.
+- [x] All gate commands pass.
+- [x] Killing the simulator moves the device offline and records an event.
+- [x] Restarting yields a new `boot_id` with the sequence restart **not** flagged.
+- [x] Stopping telemetry while connected produces a stale indication from the timer.
+- [x] An unknown device registers with **no plant attached**.
+- [x] `/health/ready` is 200 with the cloud stopped and 503 with the broker stopped.
+- [x] PATCH changes the name; nothing changes `device_id`.
+- [x] ROADMAP.md updated and the report recorded.
 
 ## Verification
 

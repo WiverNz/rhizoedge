@@ -42,13 +42,13 @@ depends on downstream.
 
 ## Acceptance criteria
 
-- [ ] `sample_age_seconds` is computed from `received_at`.
-- [ ] The threshold is `max(15 min, 3 x interval)`.
-- [ ] A device configured with a 10-second interval uses the 15-minute floor.
-- [ ] A device that stops publishing while connected is detected **by the timer**.
-- [ ] No `stale` column exists in the schema.
-- [ ] Every online device receives an `edge.time` at least every 300 s.
-- [ ] A device with a badly wrong clock still reports correct staleness.
+- [x] `sample_age_seconds` is computed from `received_at`.
+- [x] The threshold is `max(15 min, 3 x interval)`.
+- [x] A device configured with a 10-second interval uses the 15-minute floor.
+- [x] A device that stops publishing while connected is detected **by the timer**.
+- [x] No `stale` column exists in the schema.
+- [x] Every online device receives an `edge.time` at least every 300 s.
+- [x] A device with a badly wrong clock still reports correct staleness.
 
 ## Verification
 

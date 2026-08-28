@@ -18,6 +18,11 @@ pub struct Metrics {
     pub duration: HistogramVec,
     pub rows_pruned: IntCounterVec,
     pub history_gaps: IntCounterVec,
+    pub devices_online: IntGauge,
+    pub devices_offline: IntGauge,
+    pub devices_isolated: IntGauge,
+    pub device_restarts: IntCounterVec,
+    pub http_duration: HistogramVec,
 }
 impl Metrics {
     /// Registers the catalogue in a private registry-friendly process registry.
@@ -84,6 +89,17 @@ impl Metrics {
                 Opts::new(HISTORY_GAPS_TOTAL, "Reported history gaps"),
                 &["tier"]
             )?),
+            devices_online: reg!(IntGauge::new(DEVICES_ONLINE, "Online devices")?),
+            devices_offline: reg!(IntGauge::new(DEVICES_OFFLINE, "Offline devices")?),
+            devices_isolated: reg!(IntGauge::new(DEVICES_ISOLATED, "Isolated devices")?),
+            device_restarts: reg!(IntCounterVec::new(
+                Opts::new(DEVICE_RESTARTS_TOTAL, "Device boot identity changes"),
+                &["device_id"]
+            )?),
+            http_duration: reg!(HistogramVec::new(
+                HistogramOpts::new(HTTP_REQUEST_DURATION_SECONDS, "HTTP request latency"),
+                &["route", "status"]
+            )?),
         };
         for metric in [&metrics.received, &metrics.duplicate, &metrics.measurements] {
             metric.with_label_values(&["unknown"]);
@@ -96,6 +112,10 @@ impl Metrics {
         metrics.duration.with_label_values(&["unknown"]);
         metrics.rows_pruned.with_label_values(&["unknown"]);
         metrics.history_gaps.with_label_values(&["unknown"]);
+        metrics.device_restarts.with_label_values(&["unknown"]);
+        metrics
+            .http_duration
+            .with_label_values(&["unknown", "unknown"]);
         let _ = INSTANCE.set(metrics.clone());
         Ok(metrics)
     }
@@ -108,7 +128,11 @@ mod tests {
         let _ = Metrics::new().unwrap();
         let text = rhizo_telemetry::render_prometheus();
         assert!(text.contains(MQTT_MESSAGES_RECEIVED_TOTAL));
-        assert!(!text.contains("device_id="));
+        assert!(
+            text.lines()
+                .filter(|line| line.contains("device_id="))
+                .all(|line| line.starts_with(DEVICE_RESTARTS_TOTAL))
+        );
     }
     #[test]
     fn cardinality() {
@@ -122,5 +146,22 @@ mod tests {
             series < 100,
             "exported series count {series} exceeded 100; a new label was probably added; check ADR-010's cardinality rules"
         );
+    }
+}
+#[cfg(test)]
+mod devices {
+    #[test]
+    fn lifecycle_gauges_and_restart_label_are_bounded() {
+        let metrics = super::Metrics::new().unwrap();
+        metrics.devices_online.set(2);
+        metrics.devices_offline.set(1);
+        metrics.devices_isolated.set(1);
+        metrics
+            .device_restarts
+            .with_label_values(&["plant-node-01"])
+            .inc();
+        assert_eq!(metrics.devices_online.get(), 2);
+        assert_eq!(metrics.devices_offline.get(), 1);
+        assert_eq!(metrics.devices_isolated.get(), 1);
     }
 }

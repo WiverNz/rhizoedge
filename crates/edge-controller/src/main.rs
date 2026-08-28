@@ -93,7 +93,7 @@ async fn start() -> Result<(), String> {
             rx,
             db.clone(),
             clock.clone(),
-            client,
+            client.clone(),
             cache,
             supervisor.shutdown_receiver(),
             metrics.clone(),
@@ -103,18 +103,30 @@ async fn start() -> Result<(), String> {
         "retention",
         edge_controller::retention::run(
             db.clone(),
-            clock,
+            clock.clone(),
             supervisor.shutdown_receiver(),
             metrics.clone(),
         ),
     );
+    supervisor.spawn(
+        "device_health",
+        edge_controller::device::health::run(
+            db.clone(),
+            clock,
+            client.clone(),
+            metrics.clone(),
+            supervisor.shutdown_receiver(),
+        ),
+    );
     let bind = c.api.bind;
+    let cors_allowed_origins = c.api.cors_allowed_origins;
+    let api_state = edge_controller::api::ApiState {
+        db: db.clone(),
+        metrics: metrics.clone(),
+    };
     let mut shutdown = supervisor.shutdown_receiver();
     supervisor.spawn("api", async move {
-        let app = axum::Router::new().route(
-            "/metrics",
-            axum::routing::get(|| async { rhizo_telemetry::render_prometheus() }),
-        );
+        let app = edge_controller::api::server::router(api_state, cors_allowed_origins);
         let listener = tokio::net::TcpListener::bind(bind)
             .await
             .map_err(|e| e.to_string())?;

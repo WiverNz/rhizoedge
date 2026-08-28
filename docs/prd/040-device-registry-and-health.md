@@ -1,6 +1,6 @@
 # PRD 040 — Device Registry and Health
 
-**Milestone:** M4 · **Status:** PLANNED · **Depends on:** M3
+**Milestone:** M4 · **Status:** IMPLEMENTED · **Depends on:** M3
 
 > **Revised 2026-08-26.** The registry now records **declared capabilities**
 > ([ADR-016](../adr/016-plant-binding-and-policy-model.md)) and exposes

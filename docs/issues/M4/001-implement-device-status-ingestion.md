@@ -51,13 +51,13 @@ not news.
 
 ## Acceptance criteria
 
-- [ ] A status message updates the registry.
-- [ ] An `online` transition is recorded as an event.
-- [ ] A retained status is applied on subscribe.
-- [ ] An out-of-order older status does **not** overwrite a newer one.
-- [ ] Only transitions are logged at INFO.
-- [ ] Receiving a status triggers an `edge.time` publish to that device.
-- [ ] The `time` publish is **never** retained, asserted by a fresh-subscriber test.
+- [x] A status message updates the registry.
+- [x] An `online` transition is recorded as an event.
+- [x] A retained status is applied on subscribe.
+- [x] An out-of-order older status does **not** overwrite a newer one.
+- [x] Only transitions are logged at INFO.
+- [x] Receiving a status triggers an `edge.time` publish to that device.
+- [x] The `time` publish is **never** retained, asserted by a fresh-subscriber test.
 
 ## Verification
 

@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0, M1, M2, and M3 complete; M4 next.
+**Planning status:** complete. **Implementation status:** M0–M4 complete; M5 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -35,7 +35,7 @@ pin may move forward deliberately
 | M1 | Domain Model and MQTT Protocol | The shared wire contract, typed measurement kinds, capability and offline-policy payloads, and the pure domain and policy crates | M0 | 19 | **DONE** |
 | M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **DONE** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **DONE** |
-| M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **READY** |
+| M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **DONE** |
 | M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 19 | **READY** |
 | M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 22 | **READY** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
@@ -199,7 +199,7 @@ telemetry resuming. A message with one bad field stores the rest. SIGTERM exits
 
 ---
 
-### M4 — Device Registry and Health · READY
+### M4 — Device Registry and Health · DONE
 
 **Objective.** Know whether a device is there, and how fresh its data is.
 
@@ -219,6 +219,8 @@ stopped. No endpoint changes `device_id`.
 **Invariants.** Provides SAFETY-005's inputs; applies SAFETY-012 to onboarding.
 
 **PRD.** [040](docs/prd/040-device-registry-and-health.md)
+
+**Evidence.** [M4 milestone report](docs/reports/M4.md).
 
 ---
 
@@ -769,14 +771,14 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0, M1, M2, and M3 are `DONE`.** The next unstarted issue is:
+**M0–M4 are `DONE`. M5 is `READY`.** The next unstarted issue is:
 
 ```text
-M4-001 — Apply ingested device status to the registry
+M5-001 — Add plant and profile repositories
 ```
 
-It depends on M3-018, which is complete, so it is executable now. See
-[docs/issues/M4/001-implement-device-status-ingestion.md](docs/issues/M4/001-implement-device-status-ingestion.md)
+It depends on M4-013, which is complete, so it is executable now. See
+[docs/issues/M5/001-add-plant-and-profile-repositories.md](docs/issues/M5/001-add-plant-and-profile-repositories.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails

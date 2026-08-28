@@ -16,7 +16,9 @@
 // unhandled failure (workspace lint policy, root Cargo.toml).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod api;
 pub mod config;
+pub mod device;
 pub mod error;
 pub mod metrics;
 pub mod mqtt;

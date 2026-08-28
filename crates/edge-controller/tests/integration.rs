@@ -159,6 +159,170 @@ async fn count(db: &rhizo_storage::EdgeDb) -> i64 {
     0
 }
 
+#[tokio::test]
+async fn retained_status() {
+    let Some(b) = support::broker("retained_status").await else {
+        return;
+    };
+    let mut device = support::Subscriber::connect(
+        &b,
+        &format!("status-publisher-{}", uuid::Uuid::new_v4()),
+        "plant-node-01",
+        &b.device_password("plant-node-01"),
+        "rhizo/v1/devices/plant-node-01/time",
+    )
+    .await;
+    device
+        .client()
+        .publish(
+            "rhizo/v1/devices/plant-node-01/status",
+            QoS::AtLeastOnce,
+            true,
+            include_bytes!("../../../test/fixtures/protocol/valid/status-with-capabilities.json")
+                .as_slice(),
+        )
+        .await
+        .unwrap();
+    let edge = EdgeHarness::start(&b).await;
+    for _ in 0..50 {
+        let n = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM devices WHERE status='online'")
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap();
+        if n == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM devices WHERE status='online'")
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(
+        device
+            .next_matching(Duration::from_secs(3), |m| m.topic.ends_with("/time"))
+            .await
+            .is_some(),
+        "every valid status receipt must produce edge.time"
+    );
+    let mut fresh = support::Subscriber::connect(
+        &b,
+        &format!("fresh-time-{}", uuid::Uuid::new_v4()),
+        "plant-node-01",
+        &b.device_password("plant-node-01"),
+        "rhizo/v1/devices/plant-node-01/time",
+    )
+    .await;
+    assert!(
+        fresh
+            .next_matching(Duration::from_millis(500), |m| m.topic.ends_with("/time"))
+            .await
+            .is_none(),
+        "edge.time must never be retained"
+    );
+}
+
+#[tokio::test]
+async fn auto_registration_creates_no_plant() {
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let status = rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+    ))
+    .unwrap();
+    rhizo_storage::repo::ingest::persist_status(&db, &status, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM plants")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn lwt_offline() {
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let online: rhizo_mqtt_contract::Envelope<rhizo_mqtt_contract::payload::DeviceStatus> =
+        rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+            "../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+        ))
+        .unwrap();
+    rhizo_storage::repo::ingest::persist_status(&db, &online, 10)
+        .await
+        .unwrap();
+    let mut lwt = online.clone();
+    lwt.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+    lwt.sequence = Some(0);
+    lwt.data.status = rhizo_mqtt_contract::payload::DeviceStatusValue::Offline;
+    lwt.data.reason = Some("connection_lost".to_owned());
+    rhizo_storage::repo::ingest::persist_status(&db, &lwt, 20)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM devices")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        "offline"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT last_seen_at FROM devices")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        Some(10)
+    );
+    assert_eq!(
+        rhizo_storage::repo::ingest::persist_status(&db, &lwt, 30)
+            .await
+            .unwrap(),
+        rhizo_storage::repo::ingest::Dedup::Duplicate
+    );
+}
+
+#[tokio::test]
+async fn stale_without_inbound_message() {
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let status = rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+    ))
+    .unwrap();
+    rhizo_storage::repo::ingest::persist_status(&db, &status, 1_000)
+        .await
+        .unwrap();
+    let clock = Arc::new(TestClock::new(
+        Utc.timestamp_millis_opt(902_000).single().unwrap(),
+    ));
+    let options = MqttOptions::new("unused-health-test", "127.0.0.1", 9);
+    let (client, _) = rumqttc::AsyncClient::new(options, 8);
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(edge_controller::device::health::run(
+        db.clone(),
+        clock,
+        client,
+        Metrics::new().unwrap(),
+        shutdown,
+    ));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM device_events WHERE kind='stale'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    stop.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
 fn restart_broker() -> std::process::ExitStatus {
     let root = support::workspace_root();
     #[cfg(windows)]

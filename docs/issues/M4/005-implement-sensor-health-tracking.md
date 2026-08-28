@@ -39,10 +39,10 @@ lockouts but the operator needs to tell them apart.
 
 ## Acceptance criteria
 
-- [ ] Sensor health is recorded from status messages.
-- [ ] Presence, health, and error count are exposed per sensor.
-- [ ] An absent sensor is distinguishable from an unhealthy one.
-- [ ] Ingestion-side `sensor_invalid` events are visible alongside.
+- [x] Sensor health is recorded from status messages.
+- [x] Presence, health, and error count are exposed per sensor.
+- [x] An absent sensor is distinguishable from an unhealthy one.
+- [x] Ingestion-side `sensor_invalid` events are visible alongside.
 
 ## Verification
 

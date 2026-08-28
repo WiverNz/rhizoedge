@@ -39,12 +39,12 @@ Timestamps are RFC 3339 in the API even though storage is integer millis
 
 ## Acceptance criteria
 
-- [ ] All endpoints return the documented shapes.
-- [ ] 404 for an unknown device with the error envelope.
-- [ ] PATCH changes the display name.
-- [ ] **No endpoint changes `device_id`.**
-- [ ] Timestamps are RFC 3339 with `Z`.
-- [ ] Event listing supports `since` and `limit`.
+- [x] All endpoints return the documented shapes.
+- [x] 404 for an unknown device with the error envelope.
+- [x] PATCH changes the display name.
+- [x] **No endpoint changes `device_id`.**
+- [x] Timestamps are RFC 3339 with `Z`.
+- [x] Event listing supports `since` and `limit`.
 
 ## Verification
 

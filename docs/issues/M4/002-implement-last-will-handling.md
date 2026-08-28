@@ -42,11 +42,11 @@ worth a warning.
 
 ## Acceptance criteria
 
-- [ ] Killing the simulator marks the device offline within the keepalive window.
-- [ ] An `offline` device event is recorded.
-- [ ] `last_seen_at` stops advancing.
-- [ ] A repeated LWT `message_id` is deduplicated with no second event.
-- [ ] `shutdown` and `connection_lost` are distinguished in the event detail.
+- [x] Killing the simulator marks the device offline within the keepalive window.
+- [x] An `offline` device event is recorded.
+- [x] `last_seen_at` stops advancing.
+- [x] A repeated LWT `message_id` is deduplicated with no second event.
+- [x] `shutdown` and `connection_lost` are distinguished in the event detail.
 
 ## Verification
 
