@@ -43,3 +43,6 @@ Thumbs.db
 
 # Machine-specific Claude Code notes — never shared
 CLAUDE.local.md
+
+# Machine-specific Codex notes — never shared
+AGENTS.override.md
