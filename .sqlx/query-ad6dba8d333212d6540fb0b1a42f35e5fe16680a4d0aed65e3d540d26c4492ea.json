@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM quarantined_messages WHERE id IN (SELECT id FROM (SELECT id FROM quarantined_messages ORDER BY received_at DESC,id DESC LIMIT -1 OFFSET 1000) LIMIT ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ad6dba8d333212d6540fb0b1a42f35e5fe16680a4d0aed65e3d540d26c4492ea"
+}

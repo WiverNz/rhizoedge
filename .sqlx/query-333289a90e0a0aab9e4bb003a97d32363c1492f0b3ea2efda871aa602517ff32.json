@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO quarantined_messages(device_id,topic,payload,error,received_at) VALUES(?,?,?,?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "333289a90e0a0aab9e4bb003a97d32363c1492f0b3ea2efda871aa602517ff32"
+}

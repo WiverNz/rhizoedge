@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO command_results(message_id,command_id,device_id,result_json,received_at,device_time_ms,boot_id,sequence) VALUES(?,?,?,?,?,?,?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "57c708c779d6fc165e4963669a0723a90c77426d80df28cbe6f53ea3dbd2a5d0"
+}

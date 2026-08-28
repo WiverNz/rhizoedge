@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO actuator_states(message_id,device_id,actuator_id,kind,state_json,received_at,device_time_ms,boot_id,sequence) VALUES(?,?,?,?,?,?,?,?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "12f5a37536d38d2dc8f6789f5c901bb7223c91c5d1950ef217216347eef9484d"
+}

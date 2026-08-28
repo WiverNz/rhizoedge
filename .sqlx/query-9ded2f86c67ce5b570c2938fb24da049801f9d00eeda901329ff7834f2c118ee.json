@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,next_attempt_at,created_at) VALUES(?,?,'low','{}','pending',?,?) ON CONFLICT(event_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "9ded2f86c67ce5b570c2938fb24da049801f9d00eeda901329ff7834f2c118ee"
+}

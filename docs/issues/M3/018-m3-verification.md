@@ -57,16 +57,22 @@ be quietly broken, because the connection metric looks healthy either way.
 - [x] Broker restart reconnects **and re-subscribes**; telemetry resumes.
 - [x] A partially invalid message stores good fields and nulls the bad one.
 - [x] Invalid JSON is quarantined and the next message processes.
-- [x] SIGTERM exits 0; a task panic exits non-zero.
+- [x] SIGTERM exits 0; a task panic exits non-zero. Process-level evidence in
+      `crates/edge-controller/tests/shutdown.rs`, **run under WSL2** — the test
+      is `#[cfg(unix)]` and compiles to nothing on the Windows host, so a
+      Windows-only run does not verify this line.
 - [x] ROADMAP.md updated and the report recorded.
 
 ## Verification
 
 ```bash
-cargo test --workspace --all-features
-cargo test --test integration
+RHIZO_REQUIRE_BROKER=1 cargo test --workspace --all-features
+RHIZO_REQUIRE_BROKER=1 cargo test -p edge-controller --test integration
 docker compose restart mosquitto  # confirm resubscription
 cargo run --manifest-path tools/docscheck/Cargo.toml
+
+# Unix-only, and not covered by a Windows run:
+wsl -e bash -lc "cd /mnt/d/Projects/rhizoedge && cargo test -p edge-controller --test shutdown"
 ```
 
 ## Tests required

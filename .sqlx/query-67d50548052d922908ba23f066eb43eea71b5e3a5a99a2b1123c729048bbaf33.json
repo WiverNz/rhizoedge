@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM processed_messages WHERE message_id IN (SELECT message_id FROM processed_messages WHERE received_at < ? ORDER BY received_at LIMIT ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "67d50548052d922908ba23f066eb43eea71b5e3a5a99a2b1123c729048bbaf33"
+}

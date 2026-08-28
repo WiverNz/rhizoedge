@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM pending_cloud_events WHERE event_id IN (SELECT event_id FROM pending_cloud_events WHERE status='synced' AND synced_at < ? ORDER BY synced_at LIMIT ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e7c7d3ec43fdb27e635d140d894a164b6e4636e9e0a9c2465be90b2191e07d4b"
+}

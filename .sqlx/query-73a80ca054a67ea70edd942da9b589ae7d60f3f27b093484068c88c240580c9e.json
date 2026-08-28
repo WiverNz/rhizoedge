@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at) VALUES(?,?,'sequence_regression','warning',?,?) ON CONFLICT(event_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "73a80ca054a67ea70edd942da9b589ae7d60f3f27b093484068c88c240580c9e"
+}

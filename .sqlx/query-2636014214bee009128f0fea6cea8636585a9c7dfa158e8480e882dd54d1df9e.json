@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO history_gaps(gap_id,device_id,boot_id,from_seq,to_seq,lost_count,tier,reported_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(gap_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "2636014214bee009128f0fea6cea8636585a9c7dfa158e8480e882dd54d1df9e"
+}

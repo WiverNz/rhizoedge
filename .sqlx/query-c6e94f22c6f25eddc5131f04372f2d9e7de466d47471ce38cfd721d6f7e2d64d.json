@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM measurements WHERE id IN (SELECT id FROM measurements WHERE received_at < ? ORDER BY received_at LIMIT ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c6e94f22c6f25eddc5131f04372f2d9e7de466d47471ce38cfd721d6f7e2d64d"
+}

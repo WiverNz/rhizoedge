@@ -12,7 +12,22 @@ pub async fn insert(
 ) -> Result<(), StorageError> {
     let mut tx = db.begin().await?;
     let data = &payload[..payload.len().min(1024)];
-    sqlx::query("INSERT INTO quarantined_messages(device_id,topic,payload,error,received_at) VALUES(?,?,?,?,?)").bind(device).bind(topic).bind(data).bind(error).bind(at).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
-    sqlx::query("DELETE FROM quarantined_messages WHERE id IN (SELECT id FROM quarantined_messages ORDER BY received_at DESC,id DESC LIMIT -1 OFFSET 1000)").execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+    sqlx::query!(
+        "INSERT INTO quarantined_messages(device_id,topic,payload,error,received_at) VALUES(?,?,?,?,?)",
+        device,
+        topic,
+        data,
+        error,
+        at
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    sqlx::query!(
+        "DELETE FROM quarantined_messages WHERE id IN (SELECT id FROM quarantined_messages ORDER BY received_at DESC,id DESC LIMIT -1 OFFSET 1000)"
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     tx.commit().await.map_err(StorageError::from_sqlx)
 }

@@ -456,22 +456,38 @@ async fn restart_reopen_preserves_history_and_registry() {
     );
 }
 
-/// `storage_bytes` is the gauge ADR-004 and the failure model watch to see a
-/// disk filling before `SQLITE_FULL` makes every write fatal, so it has to
-/// report a real size and grow with the data.
+/// `storage_bytes` must be the footprint the filesystem would report, because
+/// that is what exhausts the volume. In WAL mode the log can outgrow the main
+/// database between checkpoints, so all three files are counted.
 #[tokio::test]
-async fn storage_bytes_reports_a_real_size_that_grows() {
-    let db = db().await;
+async fn storage_bytes_reports_the_real_on_disk_footprint_and_grows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge.sqlite");
+    let db = EdgeDb::connect(&path).await.unwrap();
+    db.migrate().await.unwrap();
+
     let empty = rhizo_storage::repo::query::storage_bytes(&db)
         .await
         .unwrap();
     assert!(empty > 0, "a migrated database is never zero bytes");
 
+    let on_disk = |suffix: &str| {
+        let mut file = path.clone().into_os_string();
+        file.push(suffix);
+        std::fs::metadata(std::path::Path::new(&file)).map_or(0, |m| m.len() as i64)
+    };
+    assert_eq!(
+        empty,
+        on_disk("") + on_disk("-wal") + on_disk("-shm"),
+        "the gauge is the sum of the database, its write-ahead log, and its shared-memory index"
+    );
+    assert!(on_disk("-wal") > 0, "WAL mode is active, so the log exists");
+
     let e = Envelope::<TelemetryBatch>::from_json(include_bytes!(
         "../../../test/fixtures/protocol/valid/telemetry-batch.json"
     ))
     .unwrap();
-    for i in 0..200 {
+    for i in 0..300 {
         let mut batch = e.clone();
         batch.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
         batch.data.batch_id = uuid::Uuid::new_v4();
@@ -479,11 +495,219 @@ async fn storage_bytes_reports_a_real_size_that_grows() {
             .await
             .unwrap();
     }
+    let grown = rhizo_storage::repo::query::storage_bytes(&db)
+        .await
+        .unwrap();
+    assert!(
+        grown > empty,
+        "the gauge must move as rows are written: {empty} -> {grown}"
+    );
+    db.close().await;
+}
+
+/// An in-memory database has no files, so the gauge falls back to SQLite's own
+/// page accounting rather than silently reporting zero.
+#[tokio::test]
+async fn storage_bytes_falls_back_to_page_accounting_in_memory() {
+    let db = db().await;
     assert!(
         rhizo_storage::repo::query::storage_bytes(&db)
             .await
             .unwrap()
-            > empty,
-        "the gauge must move as rows are written"
+            > 0,
+        "an in-memory database still reports a real allocated size"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Replay acknowledgement prefix semantics (protocol section 5.13).
+//
+// `device_seq` is zero-based, so "nothing is committed" and "sequence 0 is
+// committed" are different facts. `ReplayCommit::through_device_seq` is
+// `Option<u64>` for that reason, and `None` means the edge publishes no
+// acknowledgement at all.
+// ---------------------------------------------------------------------------
+
+/// Builds a replay batch carrying exactly `seqs`, with an `event_id` derived
+/// from the sequence so a repartitioned replay is recognisably the same events.
+fn replay_batch(seqs: &[u64], complete: bool) -> Envelope<DeviceEventBatch> {
+    let events: Vec<serde_json::Value> = seqs
+        .iter()
+        .map(|seq| {
+            serde_json::json!({
+                "event_id": format!("018fd7c0-0000-7000-8000-{seq:012}"),
+                "device_seq": seq,
+                "tier": "audit",
+                "kind": "policy.activated",
+                "monotonic_ms": 1_000 + seq,
+                "detail": {"detail_type": "policy_activated", "policy_version": 7},
+            })
+        })
+        .collect();
+    let value = serde_json::json!({
+        "v": 1,
+        "kind": "device.events",
+        "message_id": uuid::Uuid::new_v4(),
+        "device_id": "plant-node-01",
+        "boot_id": "018fd6b0-1122-4000-8000-aabbccddeeff",
+        "sequence": 41,
+        "device_time_ms": 1_756_121_400_000i64,
+        "clock_synced": true,
+        "data": {"replay": true, "complete": complete, "events": events},
+    });
+    Envelope::from_json(&serde_json::to_vec(&value).unwrap()).unwrap()
+}
+
+/// A replay of exactly sequence 0 is acknowledged with 0, not confused with
+/// "nothing". This is the case the old `u64` representation could not express.
+#[tokio::test]
+async fn a_replay_of_sequence_zero_is_acknowledged_with_zero() {
+    let db = db().await;
+    let commit = ingest::persist_replay(&db, &replay_batch(&[0], true), 10)
+        .await
+        .unwrap();
+    assert_eq!(commit.dedup, Dedup::New);
+    assert_eq!(commit.through_device_seq, Some(0));
+}
+
+/// A suffix-only replay — the device's buffer starts above anything the edge
+/// holds — is committed but acknowledges nothing. Acknowledging 0 here would
+/// tell the device to discard sequence 0, which the edge does not have.
+#[tokio::test]
+async fn a_suffix_only_replay_commits_but_acknowledges_nothing() {
+    let db = db().await;
+    let commit = ingest::persist_replay(&db, &replay_batch(&[118, 119, 120, 121], true), 10)
+        .await
+        .unwrap();
+    assert_eq!(commit.dedup, Dedup::New);
+    assert_eq!(commit.through_device_seq, None);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM device_events WHERE device_seq >= 118")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        4,
+        "the events are still durably committed; only the acknowledgement is withheld"
+    );
+    assert!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT through_device_seq FROM replay_progress")
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .is_none(),
+        "no progress is recorded, so the column stays NULL rather than 0"
+    );
+}
+
+#[tokio::test]
+async fn a_contiguous_replay_from_zero_is_acknowledged_through_its_last_sequence() {
+    let db = db().await;
+    let commit = ingest::persist_replay(&db, &replay_batch(&[0, 1, 2, 3], true), 10)
+        .await
+        .unwrap();
+    assert_eq!(commit.through_device_seq, Some(3));
+}
+
+/// The hole case: a suffix arrives first and is withheld, then the missing
+/// prefix arrives and the acknowledgement jumps to cover both.
+#[tokio::test]
+async fn a_late_prefix_completes_a_withheld_suffix() {
+    let db = db().await;
+    let suffix = ingest::persist_replay(&db, &replay_batch(&[3, 4], false), 10)
+        .await
+        .unwrap();
+    assert_eq!(suffix.through_device_seq, None, "3 and 4 skip a hole");
+
+    let prefix = ingest::persist_replay(&db, &replay_batch(&[0, 1, 2], true), 20)
+        .await
+        .unwrap();
+    assert_eq!(
+        prefix.through_device_seq,
+        Some(4),
+        "the prefix closes the hole, so the whole run becomes acknowledgeable"
+    );
+}
+
+/// A partial prefix is acknowledged only as far as it is contiguous.
+#[tokio::test]
+async fn a_prefix_with_a_hole_is_acknowledged_only_up_to_the_hole() {
+    let db = db().await;
+    let commit = ingest::persist_replay(&db, &replay_batch(&[0, 1, 3, 4], true), 10)
+        .await
+        .unwrap();
+    assert_eq!(commit.through_device_seq, Some(1));
+}
+
+/// The same events resent in different batch shapes are one logical replay:
+/// `event_id` deduplicates them and the prefix never moves backwards.
+#[tokio::test]
+async fn a_repartitioned_replay_is_idempotent_and_never_lowers_the_prefix() {
+    let db = db().await;
+    assert_eq!(
+        ingest::persist_replay(&db, &replay_batch(&[0, 1, 2], false), 10)
+            .await
+            .unwrap()
+            .through_device_seq,
+        Some(2)
+    );
+    // Same events, different partitioning, fresh transport ids.
+    let repartitioned = ingest::persist_replay(&db, &replay_batch(&[0, 1], false), 20)
+        .await
+        .unwrap();
+    assert_eq!(repartitioned.dedup, Dedup::Duplicate);
+    assert_eq!(
+        repartitioned.through_device_seq,
+        Some(2),
+        "a re-sent earlier slice must not lower the acknowledged prefix"
+    );
+    let extended = ingest::persist_replay(&db, &replay_batch(&[2, 3, 4], true), 30)
+        .await
+        .unwrap();
+    assert_eq!(extended.through_device_seq, Some(4));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM device_events WHERE origin='offline_replay'"
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap(),
+        5,
+        "five distinct event ids across four overlapping batches"
+    );
+}
+
+/// An exact transport duplicate short-circuits on the marker but still reports
+/// the prefix already committed, so a lost acknowledgement can be re-derived.
+#[tokio::test]
+async fn an_exact_duplicate_replay_reports_the_committed_prefix() {
+    let db = db().await;
+    let batch = replay_batch(&[0, 1], true);
+    assert_eq!(
+        ingest::persist_replay(&db, &batch, 10)
+            .await
+            .unwrap()
+            .through_device_seq,
+        Some(1)
+    );
+    let duplicate = ingest::persist_replay(&db, &batch, 20).await.unwrap();
+    assert_eq!(duplicate.dedup, Dedup::Duplicate);
+    assert_eq!(duplicate.through_device_seq, Some(1));
+}
+
+/// A duplicate arriving for a boot that never produced a committed prefix must
+/// report `None`, not a fabricated zero.
+#[tokio::test]
+async fn a_duplicate_of_a_suffix_only_replay_still_reports_nothing() {
+    let db = db().await;
+    let batch = replay_batch(&[118, 119], true);
+    assert_eq!(
+        ingest::persist_replay(&db, &batch, 10)
+            .await
+            .unwrap()
+            .through_device_seq,
+        None
+    );
+    let duplicate = ingest::persist_replay(&db, &batch, 20).await.unwrap();
+    assert_eq!(duplicate.dedup, Dedup::Duplicate);
+    assert_eq!(duplicate.through_device_seq, None);
 }

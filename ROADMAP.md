@@ -281,7 +281,11 @@ test safety_006` passes. `POST /water` during a leak returns 409 with nothing
 published. Restart after publish produces no second command and one watering
 event. Replaying a buffered offline batch three times out of order produces one
 `watering_event` per `event_id` and one budget charge. No `_ =>` arm on any
-safety match.
+safety match. **A `command.result` acknowledged to a device survives an edge
+crash between receipt and commit** — a broker PUBACK is not proof of durable
+commit, and M6 may not enable real watering until that is closed
+([M6-010](docs/issues/M6/010-implement-command-result-handling.md), carried
+forward from M3).
 
 **Invariants enforced.** SAFETY-001, -002, -003, -004, -005, -006, -007 (via the
 shared validator), -010, -012, and — against the simulator as the reference

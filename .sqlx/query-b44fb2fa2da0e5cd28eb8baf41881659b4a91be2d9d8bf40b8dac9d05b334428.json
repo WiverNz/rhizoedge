@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,boot_id,device_seq,origin) VALUES(?,?,?,?,?,?,?,?,?,'offline_replay') ON CONFLICT(event_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "b44fb2fa2da0e5cd28eb8baf41881659b4a91be2d9d8bf40b8dac9d05b334428"
+}

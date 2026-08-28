@@ -34,7 +34,15 @@ Export the ingestion metric set.
 limits `device_id` to `device_restarts_total`, where the fleet-size cardinality
 is the point. Adding it here multiplies every series by the device count.
 
-`storage_bytes` is sampled periodically rather than computed per request.
+`storage_bytes` is sampled periodically rather than computed per request. It is
+the **on-disk footprint** — database, `-wal`, and `-shm` summed — not SQLite's
+logical page allocation. In WAL mode the log can outgrow the main database
+between checkpoints, and it is the sum that exhausts the volume.
+
+**Correction, post-M3.** The metric was registered but never sampled, so it
+reported a constant zero and the disk-fill signal ADR-004 and failure-model §3.6
+rely on did not exist. It is now refreshed every 60 seconds by the supervised
+retention task, from three `stat` calls.
 
 ## Acceptance criteria
 
@@ -43,6 +51,8 @@ is the point. Adding it here multiplies every series by the device count.
 - [x] No `device_id` label appears on any ingestion metric.
 - [x] `/metrics` output parses as valid exposition format.
 - [x] Counters increment in the expected scenarios.
+- [x] `storage_bytes` reports the real on-disk footprint, is non-zero, and grows
+      with the data (`storage_bytes_reports_the_real_on_disk_footprint_and_grows`).
 
 ## Verification
 

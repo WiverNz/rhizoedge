@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT through_device_seq FROM replay_progress WHERE device_id=? AND boot_id=?",
+  "describe": {
+    "columns": [
+      {
+        "name": "through_device_seq",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "replay_progress",
+            "name": "through_device_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "fdac370517e3940c5ff909ff0ee507c77fa139bb38043ced2807ae6a283601b1"
+}

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT status_boot_generation,status_sequence,status_lwt_message_id FROM devices WHERE device_id=?",
+  "describe": {
+    "columns": [
+      {
+        "name": "status_boot_generation",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "devices",
+            "name": "status_boot_generation"
+          }
+        }
+      },
+      {
+        "name": "status_sequence",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "devices",
+            "name": "status_sequence"
+          }
+        }
+      },
+      {
+        "name": "status_lwt_message_id",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "devices",
+            "name": "status_lwt_message_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "470c2c18fe273166c19ebc14c3fb976662995ccd72a56b08ccb426e8de7775dd"
+}

@@ -178,7 +178,13 @@ async fn process(
             let dev = e.device_id.clone();
             let replay = e.data.replay;
             let commit = retry_transient(m, || ingest::persist_replay(db, &e, at)).await?;
-            if replay && let Some(boot_id) = boot {
+            // No contiguous prefix means there is nothing truthful to say, so
+            // the edge stays silent and the device replays again. `Some(0)` is
+            // a real acknowledgement of sequence 0 and is published normally.
+            if replay
+                && let Some(boot_id) = boot
+                && let Some(through_device_seq) = commit.through_device_seq
+            {
                 let ack = Envelope {
                     v: 1,
                     kind: rhizo_mqtt_contract::MessageKind::EventAck,
@@ -190,7 +196,7 @@ async fn process(
                     clock_synced: None,
                     data: rhizo_mqtt_contract::payload::EventAck {
                         boot_id,
-                        through_device_seq: commit.through_device_seq,
+                        through_device_seq,
                     },
                 };
                 client
@@ -203,6 +209,8 @@ async fn process(
                     )
                     .await
                     .map_err(|x| EdgeError::Mqtt(x.to_string()))?;
+            } else if replay && commit.through_device_seq.is_none() {
+                tracing::info!(device=%e.device_id,"replay committed with no contiguous prefix; publishing no acknowledgement");
             }
             commit.dedup
         }

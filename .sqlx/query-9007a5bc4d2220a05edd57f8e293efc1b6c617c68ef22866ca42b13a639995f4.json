@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO processed_messages(message_id,device_id,kind,received_at) VALUES(?,?,?,?) ON CONFLICT(message_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "9007a5bc4d2220a05edd57f8e293efc1b6c617c68ef22866ca42b13a639995f4"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO replay_progress(device_id,boot_id,through_device_seq,complete,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id,boot_id) DO UPDATE SET through_device_seq=CASE WHEN excluded.through_device_seq IS NULL THEN through_device_seq WHEN through_device_seq IS NULL THEN excluded.through_device_seq ELSE max(through_device_seq,excluded.through_device_seq) END,complete=max(complete,excluded.complete),updated_at=excluded.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "98bb3da2ed281afe051906b1853ddd6a79c775586e21c10a52074ee095eeed8d"
+}

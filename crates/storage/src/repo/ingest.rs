@@ -30,8 +30,17 @@ pub async fn mark_processed(
     kind: &str,
     received_at: i64,
 ) -> Result<Dedup, StorageError> {
-    let n=sqlx::query("INSERT INTO processed_messages(message_id,device_id,kind,received_at) VALUES(?,?,?,?) ON CONFLICT(message_id) DO NOTHING")
-        .bind(message_id).bind(device_id).bind(kind).bind(received_at).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?.rows_affected();
+    let n = sqlx::query!(
+        "INSERT INTO processed_messages(message_id,device_id,kind,received_at) VALUES(?,?,?,?) ON CONFLICT(message_id) DO NOTHING",
+        message_id,
+        device_id,
+        kind,
+        received_at
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?
+    .rows_affected();
     Ok(if n == 0 { Dedup::Duplicate } else { Dedup::New })
 }
 
@@ -42,30 +51,57 @@ async fn touch_device(
     seq: Option<u64>,
     received: i64,
 ) -> Result<(), StorageError> {
-    let previous: Option<(Option<String>, Option<i64>)> =
-        sqlx::query_as("SELECT boot_id,last_sequence FROM devices WHERE device_id=?")
-            .bind(device)
-            .fetch_optional(&mut **tx)
+    let previous = sqlx::query!(
+        "SELECT boot_id,last_sequence FROM devices WHERE device_id=?",
+        device
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    if let Some(row) = previous {
+        if boot != row.boot_id {
+            let event_id = format!("boot:{device}:{}", boot.as_deref().unwrap_or("unknown"));
+            sqlx::query!(
+                "INSERT INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at) VALUES(?,?,'boot','info',?,?) ON CONFLICT(event_id) DO NOTHING",
+                event_id,
+                device,
+                received,
+                received
+            )
+            .execute(&mut **tx)
             .await
             .map_err(StorageError::from_sqlx)?;
-    if let Some((old_boot, old_seq)) = previous {
-        if boot != old_boot {
-            let event_id = format!("boot:{device}:{}", boot.as_deref().unwrap_or("unknown"));
-            sqlx::query("INSERT INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at) VALUES(?,?,'boot','info',?,?) ON CONFLICT(event_id) DO NOTHING")
-                .bind(event_id).bind(device).bind(received).bind(received).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
-        } else if let (Some(old), Some(new)) = (old_seq, seq)
+        } else if let (Some(old), Some(new)) = (row.last_sequence, seq)
             && (new as i64) < old
         {
             let event_id = format!(
                 "sequence-regression:{device}:{}:{new}",
                 boot.as_deref().unwrap_or("unknown")
             );
-            sqlx::query("INSERT INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at) VALUES(?,?,'sequence_regression','warning',?,?) ON CONFLICT(event_id) DO NOTHING")
-                    .bind(event_id).bind(device).bind(received).bind(received).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+            sqlx::query!(
+                "INSERT INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at) VALUES(?,?,'sequence_regression','warning',?,?) ON CONFLICT(event_id) DO NOTHING",
+                event_id,
+                device,
+                received,
+                received
+            )
+            .execute(&mut **tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
         }
     }
-    sqlx::query("INSERT INTO devices(device_id,boot_id,last_sequence,last_seen_at,created_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET boot_id=excluded.boot_id,last_sequence=excluded.last_sequence,last_seen_at=excluded.last_seen_at")
-        .bind(device).bind(boot).bind(seq.map(|v|v as i64)).bind(received).bind(received).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    let sequence = seq.map(|v| v as i64);
+    sqlx::query!(
+        "INSERT INTO devices(device_id,boot_id,last_sequence,last_seen_at,created_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET boot_id=excluded.boot_id,last_sequence=excluded.last_sequence,last_seen_at=excluded.last_seen_at",
+        device,
+        boot,
+        sequence,
+        received,
+        received
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     Ok(())
 }
 
@@ -84,11 +120,12 @@ pub async fn persist_telemetry(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok((Dedup::Duplicate, 0));
     }
-    if sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM measurements WHERE device_id=? AND batch_id=?)",
+    let batch_id = envelope.data.batch_id.to_string();
+    if sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM measurements WHERE device_id=? AND batch_id=?) AS "present!: i64""#,
+        device,
+        batch_id
     )
-    .bind(&device)
-    .bind(envelope.data.batch_id.to_string())
     .fetch_one(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?
@@ -105,7 +142,6 @@ pub async fn persist_telemetry(
         received_at,
     )
     .await?;
-    let batch_id = envelope.data.batch_id.to_string();
     let mut accepted = 0;
     for (sample_index, sample) in envelope.data.samples.iter().enumerate() {
         let valid = sample.validate().is_valid();
@@ -162,8 +198,36 @@ async fn insert_sample(
     } else {
         (None, None)
     };
-    sqlx::query("INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,calibration_ref,received_at,device_time_ms,boot_id,sequence,batch_id,origin,source_message_id,sample_index) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(device).bind(s.sensor_id.as_ref().map(|v|v.as_str())).bind(s.point.as_str()).bind(json_name(&s.kind)?).bind(num).bind(bval).bind(json_name(&s.unit)?).bind(json_name(&s.quality)?).bind(s.calibration_ref.as_ref().map(|v|v.as_str())).bind(received).bind(device_time).bind(boot).bind(sequence.map(|v|v as i64)).bind(batch).bind(origin).bind(source_message_id).bind(sample_index).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    let sensor_id = s.sensor_id.as_ref().map(|v| v.as_str());
+    let point = s.point.as_str();
+    let kind = json_name(&s.kind)?;
+    let unit = json_name(&s.unit)?;
+    let quality = json_name(&s.quality)?;
+    let calibration_ref = s.calibration_ref.as_ref().map(|v| v.as_str());
+    let sequence = sequence.map(|v| v as i64);
+    sqlx::query!(
+        "INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,calibration_ref,received_at,device_time_ms,boot_id,sequence,batch_id,origin,source_message_id,sample_index) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        device,
+        sensor_id,
+        point,
+        kind,
+        num,
+        bval,
+        unit,
+        quality,
+        calibration_ref,
+        received,
+        device_time,
+        boot,
+        sequence,
+        batch,
+        origin,
+        source_message_id,
+        sample_index
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     Ok(())
 }
 async fn record_invalid(
@@ -180,7 +244,17 @@ async fn record_invalid(
     );
     let detail =
         serde_json::to_string(s).map_err(|e| StorageError::Serialization(e.to_string()))?;
-    sqlx::query("INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at) VALUES(?,?,'sensor_invalid','warning',?,?,?)").bind(id).bind(device).bind(detail).bind(at).bind(at).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    sqlx::query!(
+        "INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at) VALUES(?,?,'sensor_invalid','warning',?,?,?)",
+        id,
+        device,
+        detail,
+        at,
+        at
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     Ok(())
 }
 async fn enqueue(
@@ -189,7 +263,16 @@ async fn enqueue(
     kind: &str,
     at: i64,
 ) -> Result<(), StorageError> {
-    sqlx::query("INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,next_attempt_at,created_at) VALUES(?,?,'low','{}','pending',?,?) ON CONFLICT(event_id) DO NOTHING").bind(id).bind(kind).bind(at).bind(at).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    sqlx::query!(
+        "INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,next_attempt_at,created_at) VALUES(?,?,'low','{}','pending',?,?) ON CONFLICT(event_id) DO NOTHING",
+        id,
+        kind,
+        at,
+        at
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     Ok(())
 }
 
@@ -206,10 +289,10 @@ pub async fn persist_actuator(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
-    if sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM actuator_states WHERE message_id=?)",
+    if sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM actuator_states WHERE message_id=?) AS "present!: i64""#,
+        id
     )
-    .bind(&id)
     .fetch_one(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?
@@ -226,7 +309,28 @@ pub async fn persist_actuator(
         at,
     )
     .await?;
-    sqlx::query("INSERT INTO actuator_states(message_id,device_id,actuator_id,kind,state_json,received_at,device_time_ms,boot_id,sequence) VALUES(?,?,?,?,?,?,?,?,?)").bind(&id).bind(&dev).bind(e.data.actuator_id.as_str()).bind(json_name(&e.data.kind)?).bind(serde_json::to_string(&e.data).map_err(|x|StorageError::Serialization(x.to_string()))?).bind(at).bind(e.device_time_ms.map(|v|v.0)).bind(e.boot_id.as_ref().map(ToString::to_string)).bind(e.sequence.map(|v|v as i64)).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+    let actuator_id = e.data.actuator_id.as_str();
+    let kind = json_name(&e.data.kind)?;
+    let state_json =
+        serde_json::to_string(&e.data).map_err(|x| StorageError::Serialization(x.to_string()))?;
+    let device_time_ms = e.device_time_ms.map(|v| v.0);
+    let boot_id = e.boot_id.as_ref().map(ToString::to_string);
+    let sequence = e.sequence.map(|v| v as i64);
+    sqlx::query!(
+        "INSERT INTO actuator_states(message_id,device_id,actuator_id,kind,state_json,received_at,device_time_ms,boot_id,sequence) VALUES(?,?,?,?,?,?,?,?,?)",
+        id,
+        dev,
+        actuator_id,
+        kind,
+        state_json,
+        at,
+        device_time_ms,
+        boot_id,
+        sequence
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(Dedup::New)
 }
@@ -244,10 +348,11 @@ pub async fn persist_command_result(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
-    if sqlx::query_scalar::<_, i64>(
-        "SELECT EXISTS(SELECT 1 FROM command_results WHERE command_id=?)",
+    let command_id = e.data.command_id.to_string();
+    if sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM command_results WHERE command_id=?) AS "present!: i64""#,
+        command_id
     )
-    .bind(e.data.command_id.to_string())
     .fetch_one(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?
@@ -264,7 +369,25 @@ pub async fn persist_command_result(
         at,
     )
     .await?;
-    sqlx::query("INSERT INTO command_results(message_id,command_id,device_id,result_json,received_at,device_time_ms,boot_id,sequence) VALUES(?,?,?,?,?,?,?,?)").bind(&id).bind(e.data.command_id.to_string()).bind(&dev).bind(serde_json::to_string(&e.data).map_err(|x|StorageError::Serialization(x.to_string()))?).bind(at).bind(e.device_time_ms.map(|v|v.0)).bind(e.boot_id.as_ref().map(ToString::to_string)).bind(e.sequence.map(|v|v as i64)).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+    let result_json =
+        serde_json::to_string(&e.data).map_err(|x| StorageError::Serialization(x.to_string()))?;
+    let device_time_ms = e.device_time_ms.map(|v| v.0);
+    let boot_id = e.boot_id.as_ref().map(ToString::to_string);
+    let sequence = e.sequence.map(|v| v as i64);
+    sqlx::query!(
+        "INSERT INTO command_results(message_id,command_id,device_id,result_json,received_at,device_time_ms,boot_id,sequence) VALUES(?,?,?,?,?,?,?,?)",
+        id,
+        command_id,
+        dev,
+        result_json,
+        at,
+        device_time_ms,
+        boot_id,
+        sequence
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(Dedup::New)
 }
@@ -272,7 +395,16 @@ pub async fn persist_command_result(
 /// Replay commit result used to publish an acknowledgement only after commit.
 pub struct ReplayCommit {
     pub dedup: Dedup,
-    pub through_device_seq: u64,
+    /// The highest contiguous committed `device_seq`, or `None` when no
+    /// contiguous prefix is committed at all.
+    ///
+    /// `device_seq` is zero-based, so `Some(0)` and "nothing" are different
+    /// facts and cannot share a representation. Protocol section 5.13 makes
+    /// `through_device_seq` a prefix, and a device that receives one discards
+    /// everything at or below it; acknowledging 0 to mean "nothing" would tell
+    /// the device to discard the single event the edge does not hold. `None`
+    /// means the edge publishes no acknowledgement and the device replays again.
+    pub through_device_seq: Option<u64>,
     pub complete: bool,
 }
 
@@ -302,10 +434,11 @@ pub async fn persist_replay(
     if !e.data.events.is_empty() {
         let mut all_events_exist = true;
         for event in &e.data.events {
-            let exists = sqlx::query_scalar::<_, i64>(
-                "SELECT EXISTS(SELECT 1 FROM device_events WHERE event_id=?)",
+            let event_id = event.event_id.to_string();
+            let exists = sqlx::query_scalar!(
+                r#"SELECT EXISTS(SELECT 1 FROM device_events WHERE event_id=?) AS "present!: i64""#,
+                event_id
             )
-            .bind(event.event_id.to_string())
             .fetch_one(&mut *tx)
             .await
             .map_err(StorageError::from_sqlx)?;
@@ -329,7 +462,28 @@ pub async fn persist_replay(
         let kind = json_name(&event.kind)?;
         let detail = serde_json::to_string(&event.detail)
             .map_err(|x| StorageError::Serialization(x.to_string()))?;
-        sqlx::query("INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,boot_id,device_seq,origin) VALUES(?,?,?,?,?,?,?,?,?,'offline_replay') ON CONFLICT(event_id) DO NOTHING").bind(&eid).bind(&dev).bind(&kind).bind(if event.tier==EventTier::Audit{"warning"}else{"info"}).bind(&detail).bind(event.device_time_ms.map_or(at,|v|v.0)).bind(at).bind(&boot).bind(event.device_seq as i64).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+        let severity = if event.tier == EventTier::Audit {
+            "warning"
+        } else {
+            "info"
+        };
+        let occurred_at = event.device_time_ms.map_or(at, |v| v.0);
+        let device_seq = event.device_seq as i64;
+        sqlx::query!(
+            "INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,boot_id,device_seq,origin) VALUES(?,?,?,?,?,?,?,?,?,'offline_replay') ON CONFLICT(event_id) DO NOTHING",
+            eid,
+            dev,
+            kind,
+            severity,
+            detail,
+            occurred_at,
+            at,
+            boot,
+            device_seq
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(StorageError::from_sqlx)?;
         if let EventDetail::Gap {
             from_seq,
             to_seq,
@@ -337,16 +491,58 @@ pub async fn persist_replay(
             lost_tier,
         } = event.detail
         {
-            sqlx::query("INSERT INTO history_gaps(gap_id,device_id,boot_id,from_seq,to_seq,lost_count,tier,reported_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(gap_id) DO NOTHING").bind(&eid).bind(&dev).bind(&boot).bind(from_seq as i64).bind(to_seq as i64).bind(lost_count as i64).bind(json_name(&lost_tier)?).bind(at).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+            let (from_seq, to_seq, lost_count) =
+                (from_seq as i64, to_seq as i64, lost_count as i64);
+            let tier = json_name(&lost_tier)?;
+            sqlx::query!(
+                "INSERT INTO history_gaps(gap_id,device_id,boot_id,from_seq,to_seq,lost_count,tier,reported_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(gap_id) DO NOTHING",
+                eid,
+                dev,
+                boot,
+                from_seq,
+                to_seq,
+                lost_count,
+                tier,
+                at
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
         }
         if let (EventKind::WateringOfflineAutonomous, EventDetail::Watering { delivered_ml, .. }) =
             (&event.kind, &event.detail)
         {
-            sqlx::query("INSERT INTO watering_events(watering_event_id,device_id,mode,origin,started_at,completed_at,delivered_ml,status) VALUES(?,?,'automatic','offline_autonomous',?,?,?,'completed') ON CONFLICT(watering_event_id) DO NOTHING").bind(&eid).bind(&dev).bind(event.device_time_ms.map_or(at,|v|v.0)).bind(event.device_time_ms.map_or(at,|v|v.0)).bind(*delivered_ml as f64).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+            let happened_at = event.device_time_ms.map_or(at, |v| v.0);
+            let delivered = f64::from(*delivered_ml);
+            sqlx::query!(
+                "INSERT INTO watering_events(watering_event_id,device_id,mode,origin,started_at,completed_at,delivered_ml,status) VALUES(?,?,'automatic','offline_autonomous',?,?,?,'completed') ON CONFLICT(watering_event_id) DO NOTHING",
+                eid,
+                dev,
+                happened_at,
+                happened_at,
+                delivered
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
         }
     }
     let through = contiguous_in_tx(&mut tx, &dev, &boot).await?;
-    sqlx::query("INSERT INTO replay_progress(device_id,boot_id,through_device_seq,complete,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id,boot_id) DO UPDATE SET through_device_seq=max(through_device_seq,excluded.through_device_seq),complete=max(complete,excluded.complete),updated_at=excluded.updated_at").bind(&dev).bind(&boot).bind(through as i64).bind(i64::from(e.data.complete)).bind(at).execute(&mut *tx).await.map_err(StorageError::from_sqlx)?;
+    // SQLite's `max(a,b)` returns NULL if either argument is NULL, so the
+    // no-progress case has to be spelled out rather than folded into it.
+    let progress = through.map(|v| v as i64);
+    let complete = i64::from(e.data.complete);
+    sqlx::query!(
+        "INSERT INTO replay_progress(device_id,boot_id,through_device_seq,complete,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id,boot_id) DO UPDATE SET through_device_seq=CASE WHEN excluded.through_device_seq IS NULL THEN through_device_seq WHEN through_device_seq IS NULL THEN excluded.through_device_seq ELSE max(through_device_seq,excluded.through_device_seq) END,complete=max(complete,excluded.complete),updated_at=excluded.updated_at",
+        dev,
+        boot,
+        progress,
+        complete,
+        at
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(ReplayCommit {
         dedup: Dedup::New,
@@ -354,43 +550,69 @@ pub async fn persist_replay(
         complete: e.data.complete,
     })
 }
+/// The highest `device_seq` such that every sequence at or below it is committed.
+///
+/// Returns `None` when the committed events form no prefix at all — a
+/// suffix-only replay, where the device's buffer starts above anything the edge
+/// holds. Protocol section 5.13 is explicit that a prefix which skips a hole is
+/// a lie about what the edge holds, so the honest answer there is "nothing",
+/// not zero.
 async fn contiguous_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
     dev: &str,
     boot: &str,
-) -> Result<u64, StorageError> {
-    let seqs:Vec<i64>=sqlx::query_scalar("SELECT device_seq FROM device_events WHERE device_id=? AND boot_id=? AND device_seq IS NOT NULL ORDER BY device_seq").bind(dev).bind(boot).fetch_all(&mut **tx).await.map_err(StorageError::from_sqlx)?;
-    let prior: Option<i64> = sqlx::query_scalar(
-        "SELECT through_device_seq FROM replay_progress WHERE device_id=? AND boot_id=?",
+) -> Result<Option<u64>, StorageError> {
+    let seqs = sqlx::query_scalar!(
+        r#"SELECT device_seq AS "device_seq!: i64" FROM device_events WHERE device_id=? AND boot_id=? AND device_seq IS NOT NULL ORDER BY device_seq"#,
+        dev,
+        boot
     )
-    .bind(dev)
-    .bind(boot)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    let mut through = progress_in_tx(tx, dev, boot).await?;
+    let mut expected = through.map_or(0, |v| v + 1);
+    for s in seqs {
+        let s = s as u64;
+        if s == expected {
+            through = Some(s);
+            expected += 1;
+        } else if s > expected {
+            // A hole. Everything past it stays unacknowledged and the device
+            // replays it, which is the whole point of a cumulative prefix.
+            break;
+        }
+        // s < expected: already covered by an earlier batch, so skip it.
+    }
+    Ok(through)
+}
+async fn progress_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    dev: &str,
+    boot: &str,
+) -> Result<Option<u64>, StorageError> {
+    Ok(sqlx::query_scalar!(
+        "SELECT through_device_seq FROM replay_progress WHERE device_id=? AND boot_id=?",
+        dev,
+        boot
+    )
     .fetch_optional(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?
-    .flatten();
-    let mut expected = prior.map_or(0, |v| v as u64 + 1);
-    let mut through = prior.unwrap_or(-1);
-    for s in seqs {
-        if s as u64 == expected {
-            through = s;
-            expected += 1;
-        } else if s as u64 > expected {
-            break;
-        }
-    }
-    Ok(through.max(0) as u64)
+    .flatten()
+    .map(|v| v as u64))
 }
-async fn replay_through(db: &EdgeDb, dev: &str, boot: &str) -> Result<u64, StorageError> {
-    Ok(sqlx::query_scalar::<_, Option<i64>>(
+async fn replay_through(db: &EdgeDb, dev: &str, boot: &str) -> Result<Option<u64>, StorageError> {
+    Ok(sqlx::query_scalar!(
         "SELECT through_device_seq FROM replay_progress WHERE device_id=? AND boot_id=?",
+        dev,
+        boot
     )
-    .bind(dev)
-    .bind(boot)
-    .fetch_one(db.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(StorageError::from_sqlx)?
-    .unwrap_or(0) as u64)
+    .flatten()
+    .map(|v| v as u64))
 }
 
 /// Persists status as raw prerequisite state without M4 health behaviour.
@@ -424,13 +646,20 @@ pub async fn persist_status(
     let is_lwt = sequence == 0
         && e.data.status == DeviceStatusValue::Offline
         && e.data.reason.as_deref() == Some("connection_lost");
-    let previous: Option<(Option<i64>, Option<i64>, Option<String>)> = sqlx::query_as(
+    let previous = sqlx::query!(
         "SELECT status_boot_generation,status_sequence,status_lwt_message_id FROM devices WHERE device_id=?",
+        dev
     )
-    .bind(&dev)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(StorageError::from_sqlx)?;
+    .map_err(StorageError::from_sqlx)?
+    .map(|row| {
+        (
+            row.status_boot_generation,
+            row.status_sequence,
+            row.status_lwt_message_id,
+        )
+    });
     let apply = match previous.as_ref() {
         None | Some((None, _, _)) => true,
         Some((Some(old_generation), old_sequence, old_lwt)) => {
@@ -472,22 +701,24 @@ pub async fn persist_status(
     } else {
         None
     };
-    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=? WHERE device_id=?")
-        .bind(
-            serde_json::to_string(&e.data)
-                .map_err(|x| StorageError::Serialization(x.to_string()))?,
-        )
-        .bind(generation)
-        .bind(if is_lwt {
-            prior_sequence
-        } else {
-            Some(sequence)
-        })
-        .bind(lwt_id)
-        .bind(&dev)
-        .execute(&mut *tx)
-        .await
-        .map_err(StorageError::from_sqlx)?;
+    let status_json =
+        serde_json::to_string(&e.data).map_err(|x| StorageError::Serialization(x.to_string()))?;
+    let stored_sequence = if is_lwt {
+        prior_sequence
+    } else {
+        Some(sequence)
+    };
+    sqlx::query!(
+        "UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=? WHERE device_id=?",
+        status_json,
+        generation,
+        stored_sequence,
+        lwt_id,
+        dev
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(Dedup::New)
 }

@@ -19,9 +19,30 @@ pub async fn run(
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
     let mut sample = tokio::time::interval(SAMPLE_INTERVAL);
     loop {
-        tokio::select! {changed=shutdown.changed()=>{if changed.is_err()||*shutdown.borrow(){return Ok(())}},_=sample.tick()=>{metrics.storage_bytes.set(rhizo_storage::repo::query::storage_bytes(&db).await.map_err(|e|e.to_string())?)},_=tick.tick()=>{let now=clock.now().timestamp_millis();let p=rhizo_storage::repo::retention::run_batch(&db,now,500).await.map_err(|e|e.to_string())?;for(name,n)in[("processed_messages",p.processed),("pending_cloud_events",p.outbox),("quarantined_messages",p.quarantine),("measurements",p.measurements)]{metrics.rows_pruned.with_label_values(&[name]).inc_by(n)}}}
+        tokio::select! {changed=shutdown.changed()=>{if changed.is_err()||*shutdown.borrow(){return Ok(())}},_=sample.tick()=>{sample_storage_bytes(&db,&metrics).await?},_=tick.tick()=>{let now=clock.now().timestamp_millis();let p=rhizo_storage::repo::retention::run_batch(&db,now,500).await.map_err(|e|e.to_string())?;for(name,n)in[("processed_messages",p.processed),("pending_cloud_events",p.outbox),("quarantined_messages",p.quarantine),("measurements",p.measurements)]{metrics.rows_pruned.with_label_values(&[name]).inc_by(n)}}}
     }
 }
+/// Refreshes the `storage_bytes` gauge.
+///
+/// A gauge is not worth the process, so only a failure that already means the
+/// edge cannot continue is allowed to stop this supervised task; anything else
+/// is logged and the next tick tries again.
+async fn sample_storage_bytes(db: &rhizo_storage::EdgeDb, metrics: &Metrics) -> Result<(), String> {
+    match rhizo_storage::repo::query::storage_bytes(db).await {
+        Ok(bytes) => {
+            metrics.storage_bytes.set(bytes);
+            Ok(())
+        }
+        Err(error) if rhizo_telemetry::Classify::classify(&error).is_fatal() => {
+            Err(error.to_string())
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not sample storage_bytes");
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::module_inception,

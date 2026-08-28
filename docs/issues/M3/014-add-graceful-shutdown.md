@@ -36,9 +36,22 @@ restart would silently drop a cooldown or an absorption wait.
 The startup log is the operator's evidence that recovery worked; make it list
 counts rather than being a bare 'started'.
 
+**Correction, post-M3.** The criterion was originally ticked on the strength of
+the supervisor's watch-channel tests alone. Those cover the cooperative drain
+and the hung-task timeout, but a signal handler and a process exit code only
+exist in a process, so they could not have shown what the criterion claims. The
+supervisor tests remain; `tests/shutdown.rs` was added alongside them, together
+with a guard test asserting that an *unhandled* SIGTERM still kills a process
+with no exit code — without which `sigterm_exits_zero` could pass vacuously.
+
 ## Acceptance criteria
 
-- [x] SIGTERM exits 0 with no partial transaction.
+- [x] SIGTERM exits 0 with no partial transaction — verified at the **process**
+      level by `tests/shutdown.rs::sigterm_exits_zero`, which spawns the real
+      binary, delivers a real `SIGTERM`, and asserts `code() == Some(0)` and
+      `signal() == None`. A process with no handler is *terminated by* the
+      signal and has no exit code at all, so that pair is a direct test of the
+      handler. Unix only; run under WSL2 on a Windows host.
 - [x] A hung task does not prevent exit past the timeout.
 - [x] Startup restores the device registry from SQLite.
 - [x] The startup log reports what was restored.

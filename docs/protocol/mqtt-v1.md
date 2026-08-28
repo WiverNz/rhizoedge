@@ -1054,6 +1054,15 @@ degrades to a no-op rather than to partial deletion.
 - `event.ack` MUST NOT be retained (§3).
 - The edge MAY acknowledge once per replay or once per batch. Neither is more
   correct; batching costs a round-trip, per-batch costs a message.
+- **When the edge holds no contiguous prefix, it publishes no `event.ack` at
+  all.** `device_seq` is zero-based, so 0 is a real sequence and cannot double
+  as "nothing committed"; a device receiving `through_device_seq: 0` discards
+  sequence 0. This is reachable whenever a device's remaining buffer starts
+  above everything the edge holds — after the edge lost its replay progress, or
+  where the events below the buffer were acknowledged to an earlier edge. The
+  device simply replays again. Silence is the only truthful message here, and
+  is a clarification of the prefix rule above rather than a change to it: no
+  field is added, removed, or retyped.
 - An acknowledgement is advisory in one direction only: losing one costs a
   repeated replay, so the edge is not required to retry it. It MUST NOT retry it
   by *raising* the sequence to cover events committed since — that is a new

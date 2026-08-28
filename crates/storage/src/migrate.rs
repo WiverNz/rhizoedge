@@ -2,6 +2,16 @@ use crate::{EdgeDb, StorageError};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations/edge");
 
+/// Applies the embedded migrations, backing the database up first.
+///
+/// The queries here are deliberately *not* compile-time checked (M3-004). They
+/// read `sqlite_master` and `_sqlx_migrations` — the migrator's own bookkeeping
+/// table, which does not exist on a fresh database and is created by the very
+/// call this function is about to make. A macro would have to describe a table
+/// whose existence is the question being asked. They reference no application
+/// table, so no schema change can invalidate them, and
+/// [`tests::fresh_and_idempotent`] plus every integration test that opens a
+/// database exercises this path on each run.
 pub(crate) async fn run(db: &EdgeDb) -> Result<(), StorageError> {
     let migration_table_exists: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",

@@ -41,6 +41,23 @@ failure mode `sqlx` produces.
 - [x] CI verifies the cache is current.
 - [x] Changing a query without regenerating fails CI.
 - [x] The regeneration procedure is documented.
+- [x] Every statically known storage query uses `query!` / `query_as!` /
+      `query_scalar!`, so the check has real subject matter. The whole
+      `crates/storage/src/repo` layer is checked; the only exceptions are
+      `PRAGMA` statements, which sqlx cannot describe, and `migrate.rs`, which
+      queries the migrator's own bookkeeping table before it exists. Both carry
+      their justification in a comment at the call site.
+
+### Correction, post-M3
+
+The first implementation satisfied the four original criteria with a single
+checked query (`SELECT count(*) FROM devices`) against 81 runtime-checked
+`sqlx::query(...)` calls — the exact substitution this issue's Non-goals
+forbid. `cargo sqlx prepare --check` passed, and proved almost nothing: a
+column renamed in a later migration would have compiled and failed at runtime.
+The repository layer was converted afterwards, taking the cache from 1 query to
+30, and the gate was verified by negative control rather than by assumption
+(see [docs/reports/M3.md](../../reports/M3.md) §Negative controls).
 
 ## Verification
 

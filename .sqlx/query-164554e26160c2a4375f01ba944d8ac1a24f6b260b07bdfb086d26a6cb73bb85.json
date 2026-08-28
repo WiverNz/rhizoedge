@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_seq AS \"device_seq!: i64\" FROM device_events WHERE device_id=? AND boot_id=? AND device_seq IS NOT NULL ORDER BY device_seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "device_events",
+            "name": "device_seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "164554e26160c2a4375f01ba944d8ac1a24f6b260b07bdfb086d26a6cb73bb85"
+}

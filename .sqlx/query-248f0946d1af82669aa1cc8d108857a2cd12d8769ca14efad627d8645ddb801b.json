@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at) VALUES(?,?,'sensor_invalid','warning',?,?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "248f0946d1af82669aa1cc8d108857a2cd12d8769ca14efad627d8645ddb801b"
+}

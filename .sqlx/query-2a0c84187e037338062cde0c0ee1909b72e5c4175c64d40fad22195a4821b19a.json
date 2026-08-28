@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.device_id AS \"device_id!\", m.point AS \"point!\", m.kind AS \"kind!\", m.value_num, m.value_bool, m.received_at AS \"received_at!\"\n           FROM measurements m\n           WHERE m.id = (SELECT m2.id FROM measurements m2\n                         WHERE m2.device_id = m.device_id AND m2.point = m.point AND m2.kind = m.kind\n                         ORDER BY m2.received_at DESC, m2.id DESC LIMIT 1)",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "measurements",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "point!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "measurements",
+            "name": "point"
+          }
+        }
+      },
+      {
+        "name": "kind!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "measurements",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "value_num",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "measurements",
+            "name": "value_num"
+          }
+        }
+      },
+      {
+        "name": "value_bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "measurements",
+            "name": "value_bool"
+          }
+        }
+      },
+      {
+        "name": "received_at!",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "measurements",
+            "name": "received_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "2a0c84187e037338062cde0c0ee1909b72e5c4175c64d40fad22195a4821b19a"
+}

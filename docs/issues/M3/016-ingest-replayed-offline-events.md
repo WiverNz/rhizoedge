@@ -63,7 +63,28 @@ skips a hole is a lie about what the edge holds. Set `boot_id` from the replay
 being acknowledged — a device ignores an acknowledgement addressed to another
 boot, and correctly so.
 
+### Correction, post-M3
+
+`device_seq` is zero-based, so the original `u64` acknowledgement could not tell
+"sequence 0 is committed" from "nothing is committed" — both were 0. The commit
+result is now `Option<u64>`: `None` means the edge publishes **no** `event.ack`
+at all, and `Some(0)` is a real acknowledgement of sequence 0. A suffix-only
+replay, where the device's buffer starts above anything the edge holds,
+therefore commits its events and stays silent rather than telling the device to
+discard sequence 0. Migration `0004_replay_progress_nullable.sql` makes
+`replay_progress.through_device_seq` nullable to carry the same distinction.
+
+**Consequence, recorded honestly.** An edge that has lost its `replay_progress`
+while a device is still in the same boot will never acknowledge that device's
+remaining buffer, because it has no prefix and protocol section 5.13 forbids
+claiming one. The device replays indefinitely and eventually opens a
+`history.gap`. That is the fail-safe direction — repeated replay rather than
+deleted history — but it is a real operational edge, and closing it properly
+needs a protocol-level "nothing acknowledged" or a resynchronisation exchange.
+
 ## Acceptance criteria
+
+- [x] `through_device_seq` is `Option<u64>`; `None` publishes no acknowledgement and `Some(0)` acknowledges sequence 0.
 
 - [x] A replayed batch is ingested and its events stored.
 - [x] Replaying the same batch three times creates one row per `event_id`.

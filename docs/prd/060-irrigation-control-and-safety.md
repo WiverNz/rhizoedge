@@ -261,6 +261,7 @@ asserted by `prop_state_machine_total`.
 | Crash during `WaitForAbsorption` | state and `wait_until` restored from SQLite; cycle continues |
 | Result arrives for an unknown `command_id` | logged, ignored — no watering event invented |
 | Duplicate result | dedup at M3's layer plus a terminal-status check |
+| **Crash between receiving a result and committing it** | **Currently loses the result: `rumqttc` PUBACKs before the pipeline commits, and protocol section 5.10 stops the device retrying at the PUBACK. Must be closed before M6 enables watering ([M6-010](../issues/M6/010-implement-command-result-handling.md)).** |
 | Device offline when a dose is due | no command issued; `device_online: false` is a gate input |
 | MQTT publish fails 3× | command `failed`, state `Recheck`, no event |
 | Leak asserted mid-dose | device stops; result reports partial delivery; edge locks out |
@@ -349,6 +350,10 @@ The heaviest test investment in the project.
 - [ ] The shared offline evaluator, its sole simulator call site, reconciliation,
       and SAFETY-013…020 property coverage required by M6-019…M6-021 are green.
 - [ ] No MQTT water command is published while reconciliation is incomplete.
+- [ ] A `command.result` acknowledged to a device survives an edge crash between
+      receipt and commit — the device's retry stops on the edge's durable
+      commit, not on the broker PUBACK. Carried forward from the M3 audit; a
+      lost delivered dose under-counts the SAFETY-006 budget.
 
 ## Dependencies
 

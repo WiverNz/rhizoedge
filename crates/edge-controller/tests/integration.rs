@@ -96,7 +96,13 @@ async fn publish(b: &support::TestBroker, payload: &[u8]) {
     );
 }
 
-async fn publish_replay_and_wait_ack(b: &support::TestBroker, payload: &[u8]) -> support::Received {
+/// Publishes a replay and returns the acknowledgement, or `None` if the edge
+/// deliberately published none within the window.
+async fn publish_replay(
+    b: &support::TestBroker,
+    payload: &[u8],
+    wait: Duration,
+) -> Option<support::Received> {
     let mut peer = support::Subscriber::connect(
         b,
         &format!("plant-node-01-replay-it-{}", uuid::Uuid::new_v4()),
@@ -114,9 +120,30 @@ async fn publish_replay_and_wait_ack(b: &support::TestBroker, payload: &[u8]) ->
         )
         .await
         .unwrap();
-    peer.next_matching(Duration::from_secs(5), |m| m.topic.ends_with("/events/ack"))
+    peer.next_matching(wait, |m| m.topic.ends_with("/events/ack"))
+        .await
+}
+
+async fn publish_replay_and_wait_ack(b: &support::TestBroker, payload: &[u8]) -> support::Received {
+    publish_replay(b, payload, Duration::from_secs(5))
         .await
         .expect("commit must be followed by a live ACK")
+}
+
+/// Renumbers a replay fixture's events onto `seqs`, keeping every other field.
+///
+/// `device_seq` is zero-based and the shipped fixture is deliberately a
+/// suffix (118-121, after a gap), so a test that wants a prefix has to say so.
+fn replay_with_sequences(fixture: &[u8], seqs: &[u64]) -> Vec<u8> {
+    let mut value: serde_json::Value = serde_json::from_slice(fixture).unwrap();
+    value["message_id"] = serde_json::json!(uuid::Uuid::new_v4());
+    let events = value["data"]["events"].as_array_mut().unwrap();
+    assert!(seqs.len() <= events.len());
+    events.truncate(seqs.len());
+    for (event, seq) in events.iter_mut().zip(seqs) {
+        event["device_seq"] = serde_json::json!(seq);
+    }
+    serde_json::to_vec(&value).unwrap()
 }
 async fn count(db: &rhizo_storage::EdgeDb) -> i64 {
     for _ in 0..50 {
@@ -330,12 +357,11 @@ async fn offline_replay_is_idempotent_and_acknowledged_after_commit() {
         return;
     };
     let edge = EdgeHarness::start(&b).await;
-    let raw = include_str!("../../../test/fixtures/protocol/valid/events-replay-gap.json")
-        .replace("\"device_seq\":118", "\"device_seq\":0")
-        .replace("\"device_seq\":119", "\"device_seq\":1")
-        .replace("\"device_seq\":120", "\"device_seq\":2")
-        .replace("\"device_seq\":121", "\"device_seq\":3");
-    let ack = publish_replay_and_wait_ack(&b, raw.as_bytes()).await;
+    let raw = replay_with_sequences(
+        include_bytes!("../../../test/fixtures/protocol/valid/events-replay-gap.json"),
+        &[0, 1, 2, 3],
+    );
+    let ack = publish_replay_and_wait_ack(&b, &raw).await;
     let json = ack.json();
     assert_eq!(json["data"]["through_device_seq"], 3);
     for _ in 0..50 {
@@ -352,7 +378,7 @@ async fn offline_replay_is_idempotent_and_acknowledged_after_commit() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let _lost_ack = ack;
-    let second = publish_replay_and_wait_ack(&b, raw.as_bytes()).await;
+    let second = publish_replay_and_wait_ack(&b, &raw).await;
     assert!(!second.retain, "event.ack must never be retained");
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -370,4 +396,74 @@ async fn offline_replay_is_idempotent_and_acknowledged_after_commit() {
             .unwrap(),
         1
     );
+}
+
+/// The shipped fixture is a genuine suffix: it opens with a sealed gap marker
+/// at `device_seq` 118 covering 101-117. The edge holds nothing at or below
+/// 117, so protocol section 5.13's prefix rule leaves it nothing truthful to
+/// acknowledge — and 0 is a real sequence, not a way to say "nothing".
+#[tokio::test]
+async fn a_suffix_only_replay_is_committed_without_an_acknowledgement() {
+    let Some(b) =
+        support::broker("a_suffix_only_replay_is_committed_without_an_acknowledgement").await
+    else {
+        return;
+    };
+    let edge = EdgeHarness::start(&b).await;
+    let raw = include_bytes!("../../../test/fixtures/protocol/valid/events-replay-gap.json");
+    let ack = publish_replay(&b, raw, Duration::from_secs(3)).await;
+    assert!(
+        ack.is_none(),
+        "a suffix-only replay must not be acknowledged, got {ack:?}"
+    );
+    for _ in 0..50 {
+        if sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM device_events WHERE origin='offline_replay'",
+        )
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap()
+            == 4
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM device_events WHERE origin='offline_replay'"
+        )
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap(),
+        4,
+        "the events are durably committed; only the acknowledgement is withheld"
+    );
+    assert!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT through_device_seq FROM replay_progress")
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// Sequence 0 is acknowledged as 0, on the wire. This is the case the old
+/// `u64` representation could not distinguish from "nothing committed", and
+/// the reason the earlier test had to renumber its fixture away from it.
+#[tokio::test]
+async fn a_replay_of_sequence_zero_is_acknowledged_with_zero_on_the_wire() {
+    let Some(b) =
+        support::broker("a_replay_of_sequence_zero_is_acknowledged_with_zero_on_the_wire").await
+    else {
+        return;
+    };
+    let _edge = EdgeHarness::start(&b).await;
+    let raw = replay_with_sequences(
+        include_bytes!("../../../test/fixtures/protocol/valid/events-replay-gap.json"),
+        &[0],
+    );
+    let ack = publish_replay_and_wait_ack(&b, &raw).await;
+    assert_eq!(ack.json()["data"]["through_device_seq"], 0);
+    assert!(!ack.retain, "event.ack must never be retained");
 }
