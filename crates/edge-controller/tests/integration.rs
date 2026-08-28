@@ -200,6 +200,41 @@ async fn mqtt_ingress_persists_and_deduplicates_qos1() {
 }
 
 #[tokio::test]
+async fn real_m2_simulator_telemetry_reaches_sqlite() {
+    let Some(b) = support::broker("real_m2_simulator_telemetry_reaches_sqlite").await else {
+        return;
+    };
+    let edge = EdgeHarness::start(&b).await;
+    let simulator = support::SimulatedDevice::start(
+        &b,
+        "plant-node-01",
+        &[
+            "--telemetry-interval",
+            "10",
+            "--time-scale",
+            "100",
+            "--no-control-api",
+        ],
+    )
+    .await;
+    assert!(
+        count(&edge.db).await > 0,
+        "simulator telemetry was not persisted"
+    );
+    assert!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM measurements WHERE received_at=1900000000000"
+        )
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap()
+            > 0,
+        "simulator samples did not use the injected Edge receipt clock"
+    );
+    simulator.stop_cleanly().await;
+}
+
+#[tokio::test]
 async fn partial_invalid_fields_persist_good_siblings_through_mqtt() {
     let Some(b) =
         support::broker("partial_invalid_fields_persist_good_siblings_through_mqtt").await
@@ -267,14 +302,18 @@ async fn broker_restart_reconnects_and_resubscribes() {
     assert!(count(&edge.db).await > 0);
     let status = restart_broker();
     assert!(status.success());
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Mosquitto may restart faster than rumqttc's jittered reconnect window.
+    // Wait through the bounded first retry before publishing the proof message.
+    tokio::time::sleep(Duration::from_secs(6)).await;
     let second = include_bytes!("../../../test/fixtures/protocol/valid/telemetry-partial.json");
     publish(&b, second).await;
     for _ in 0..50 {
-        let n = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM processed_messages")
-            .fetch_one(edge.db.pool())
-            .await
-            .unwrap();
+        let n = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM processed_messages WHERE kind='telemetry.batch'",
+        )
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap();
         if n == 2 {
             return;
         }

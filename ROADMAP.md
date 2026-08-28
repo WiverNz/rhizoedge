@@ -761,7 +761,7 @@ M4-001 — Implement device status ingestion
 ```
 
 It depends on M3-018, which is complete, so it is executable now. See
-[docs/issues/M4/001-implement-status-ingestion.md](docs/issues/M4/001-implement-status-ingestion.md)
+[docs/issues/M4/001-implement-device-status-ingestion.md](docs/issues/M4/001-implement-device-status-ingestion.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails
