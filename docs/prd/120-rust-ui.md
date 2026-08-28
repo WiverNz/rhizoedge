@@ -142,6 +142,37 @@ a pump to a program, and the limits should be visible at that moment.
 | F-120-36 | Offline events and history gaps are visible; charts render reported gaps as gaps rather than interpolation |
 | F-120-37 | A monitoring-only plant renders no watering controls |
 
+### Creating a plant from a species preset (M12-017)
+
+```text
+1. Operator starts a new plant and searches a species by name or synonym.
+2. Selects one, then "Use recommended settings".
+3. A review screen shows every generated value BEFORE anything is written,
+   each field editable in place, each labelled with where it came from:
+   a figure a source stated, or a starting value Rhizo derived.
+   The catalogue version, source, and licence are on the same screen.
+4. Operator edits what they disagree with and confirms. One write happens here.
+5. Automation is still off. Enabling it stays a separate deliberate act.
+
+"Configure manually" is available at step 1 as an equal path, not as a way out
+of the preset flow.
+```
+
+The review step is the feature, not a courtesy. Some preset values are Rhizo's
+interpretation rather than anything a source stated, and the difference is shown
+**in words** — "Rhizo starting value, derived from a moderate moisture
+preference" rather than an asterisk. This is the one screen where that
+distinction changes what an operator does, and the edit they make is better
+informed than the catalogue's guess.
+
+The wording is deliberate: "recommended", never "optimal" or "correct". The
+catalogue does not know the pot, the room, the window, or the season.
+
+Nothing in this flow waters anything, and the no-override prohibition is
+unchanged by it.
+
+
+
 ## Interfaces
 
 Consumes the Edge REST API
@@ -236,6 +267,12 @@ Automated browser testing is **not** done — it would require the JS tooling th
 project excludes ([strategy.md](../testing/strategy.md) §11).
 
 ## Acceptance criteria
+
+- [ ] A plant can be created from a species preset, with every generated value
+      reviewed and editable before the first write.
+- [ ] Source-stated and Rhizo-derived values are distinguishable in words.
+- [ ] "Configure manually" reaches the full editor without a preset.
+- [ ] The preset flow works with no internet connection.
 
 - [ ] `cargo tauri build` produces a runnable app on Windows and Linux.
 - [ ] **No `package.json`, no `node_modules`, no JS dependency** anywhere in the

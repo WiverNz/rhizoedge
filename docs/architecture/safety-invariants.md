@@ -701,7 +701,9 @@ UI renders no watering controls at all rather than disabled ones.
 **Failure scenarios covered.** Watering a monitoring-only plant via API; enabling
 connected or offline automation without an actuator; removing an actuator binding
 while automation is enabled; a policy naming an actuator the device never
-declared.
+declared; **applying a species preset carrying dose and cooldown defaults to a
+plant with no actuator** (M5-018) — which must succeed and create measurement
+policies, while creating no actuator binding and no actuation path.
 
 **Planned tests.**
 - `safety_018_no_actuator_no_command` (integration, M5).
@@ -709,6 +711,8 @@ declared.
   offline policies.
 - `safety_018_api_returns_422_not_409` (integration) — the distinction is the point.
 - `safety_018_policy_naming_undeclared_actuator_rejected` (unit).
+- `safety_018_preset_creates_no_actuation_path` (integration, M5) — applying a
+  preset to a monitoring-only plant succeeds and leaves the plant unwaterable.
 - SCEN-106.
 
 **Becomes enforced.** M5 (validation and API); M12 (UI omission).

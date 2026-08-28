@@ -1,6 +1,6 @@
 # Issue M13-001 — Verify and harden multi-device operation
 
-**Milestone:** M13 · **PRD:** [PRD 130](../../prd/130-multi-plant-home.md) · **Depends on:** M12-017
+**Milestone:** M13 · **PRD:** [PRD 130](../../prd/130-multi-plant-home.md) · **Depends on:** M12-018
 
 ## Context
 
@@ -26,7 +26,7 @@ Operate reliably with 10 devices and 20 plants.
 
 ## Dependencies
 
-- M12-017
+- M12-018
 
 ## Implementation notes
 

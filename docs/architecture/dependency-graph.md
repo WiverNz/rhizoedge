@@ -252,17 +252,24 @@ M5-005 ──┬──→ M5-006 (dry duration) ──┐
          └── M5-005 + M5-006 ──→ M5-009 (recommendation engine)
                                     ├──→ M5-010 (plant state)
                                     └── M5-009 + M5-010 ──→ M5-012 (endpoints + tick)
-                                                       all ──→ M5-017 (verification)
+
+M5-014 ──→ M5-017 (preset catalogue — pure, embedded, offline)
+   M5-017 + M5-014 + M5-016 ──→ M5-018 (apply preset to plant)
+                                                       all ──→ M5-019 (verification)
 ```
 
 **M5-003 and M5-005 depend only on `M1-012`**, so they can be executed in
 parallel with the repository and endpoint work. They are the pure-domain half of
 the milestone.
 
+**M5-017 is pure-domain too** — an embedded catalogue with no I/O — so it can run
+in parallel with the trend and recommendation work. Only M5-018, which writes
+`MeasurementPolicy` rows, needs the policy and offline-policy issues in place.
+
 ### M6 — Irrigation and safety
 
 ```text
-M5-017 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
+M5-019 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
               ▼
            M6-002 (safety gate — exhaustive, no catch-all)
               ├──→ M6-003 (leak + tank checks)
@@ -437,15 +444,21 @@ M6-022 ──→ M12-001 (Tauri + Leptos workspace, no Node)
      │        ├──→ M12-006 (watering actions — no override control)
      │        └──→ M12-007 (charts)
      └──→ M12-010 (connection state) ──→ M12-011 (packaging) ──→ M12-012 (CI)
-                                                          all ──→ M12-017 (verification)
+
+  M12-013 + M12-014 + M12-002 ──→ M12-017 (preset picker + review step)
+                                                          all ──→ M12-018 (verification)
 ```
 
 M12-003 through M12-009 are largely parallelisable after M12-002.
 
+**M12-017 comes after the binding editor and threshold configuration**, because
+the review step edits exactly the fields those two screens own; building it
+first would duplicate their editors.
+
 ### M13 — Multi-plant home
 
 ```text
-M12-017 ──→ M13-001 (multi-device operation + cross-plant isolation)
+M12-018 ──→ M13-001 (multi-device operation + cross-plant isolation)
    ├──→ M13-002 (provisioning tool)
    ├──→ M13-003 (reservoir entity) ──→ M13-004 (shared reservoir lockout)
    ├──→ M13-005 (grouping/filtering)
@@ -454,7 +467,7 @@ M12-017 ──→ M13-001 (multi-device operation + cross-plant isolation)
    └──→ M13-010 (downsampling)
 
    M13-004 + M13-007 ──→ M13-011 (multi-device scenarios)
-   M13-011 + M12-017 ──→ M13-012 (UI at scale)
+   M13-011 + M12-018 ──→ M13-012 (UI at scale)
                    all ──→ M13-016 (verification)
 ```
 
@@ -556,6 +569,8 @@ most easily missed, because the milestone table alone does not show them.
 | M3-016 | M3-008 | replay reuses the dedup transaction |
 | M4-011 | M4-001 | capabilities arrive in `device.status` |
 | M5-013 | M4-011 | a binding may only name a **declared** capability |
+| M5-018 | M5-014, M5-016 | a preset materialises into ordinary policies, never around the binding/policy model |
+| M12-017 | M12-013, M12-014 | the preset review step edits the fields those editors own |
 | M6-019 | M6-002, M6-006, M2-017 | implements the shared offline gate and activates the prepared simulator seam |
 | M6-020 | M3-016 | reconciliation consumes ingested replay |
 | M8-015 | M6-019, M6-021 | full isolation scenarios require the shared evaluator and its safety tests, not M2 alone |
@@ -563,7 +578,7 @@ most easily missed, because the milestone table alone does not show them.
 | M9-016 | M9-011 | offline dosing routes through the existing actuation gate |
 | M12-013 | M12-008 | extends the profile editor surface |
 | M13-014 | M13-013 | the MSRV matrix sits alongside release CI |
-| M13-012 | M12-017 | extends the completed UI |
+| M13-012 | M12-018 | extends the completed UI |
 
 ---
 
@@ -577,7 +592,7 @@ M0-001 → M0-002 → M0-003 → M0-012 → M0-013
        → M2-001 → M2-002 → M2-003 → M2-006 → M2-008 → M2-019
        → M3-001 → M3-002 → M3-003 → M3-008 → M3-009 → M3-018
        → M4-001 → M4-008 → M4-013
-       → M5-001 → M5-005 → M5-009 → M5-012 → M5-017
+       → M5-001 → M5-005 → M5-009 → M5-012 → M5-019
        → M6-001 → M6-002 → M6-004 → M6-005 → M6-006 → M6-007
                 → M6-008 → M6-009 → M6-010 → M6-012 → M6-018 → M6-022
        → M7-001 → M7-002 → M7-003 → M7-005 → M7-006 → M7-015

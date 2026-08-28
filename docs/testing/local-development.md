@@ -252,6 +252,17 @@ A stale `.sqlx/` cache produces confusing compile errors. If a query "should
 compile" and does not, regenerate the cache first
 ([ADR-004](../adr/004-sqlite-edge-persistence-model.md)).
 
+**On Windows, use a relative URL.** `sqlite://$PWD/data/edge.sqlite` expands to
+`sqlite://D:/...`, which `sqlx-cli` rejects with `(code: 14) unable to open
+database file` — it reads the drive letter as an authority. `DATABASE_URL="sqlite://data/edge.sqlite"`
+works, and so does running the whole procedure from WSL2.
+
+The cache is committed on purpose and is **not** gitignored: a build with
+`DATABASE_URL` unset — every CI job and every fresh clone — reads `.sqlx/`
+instead of connecting, and fails with `set DATABASE_URL to use query macros
+online, or run cargo sqlx prepare to update the query cache` if it is missing or
+stale. One file per checked query is the expected shape.
+
 ---
 
 ## 10. Logs

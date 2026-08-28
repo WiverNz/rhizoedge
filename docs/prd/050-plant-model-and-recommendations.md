@@ -164,10 +164,87 @@ pub fn detect_manual_watering(prev: &Sample, cur: &Sample, cfg: &DetectCfg)
     -> Option<DetectedWatering>;
 ```
 
+### Preset endpoints (M5-017, M5-018)
+
+```text
+GET  /presets                      list and search the embedded catalogue
+GET  /presets/{preset_id}          one entry, with provenance per value
+POST /plants                       optional `preset_id` prefills configuration
+POST /plants/{id}/apply-preset     apply to an existing plant; `overwrite`
+                                   required if it already has policies, and the
+                                   response names every changed field
+```
+
+A preset value that violates a profile hard limit is **rejected with 422**, not
+clamped: a curated catalogue is an input, not a trusted one. Creating a plant
+without `preset_id` behaves exactly as it did before presets existed — the
+manual path is not a fallback, it is the same first-class path it always was.
+
 ## Data model
 
 Uses `plants`, `plant_profiles`, and `watering_events` from
-[ADR-004](../adr/004-sqlite-edge-persistence-model.md). No new migrations.
+[ADR-004](../adr/004-sqlite-edge-persistence-model.md), plus `applied_preset_id`
+and `applied_catalogue_version` on `plants` (M5-018), which are **provenance
+columns only** — nothing reads them to decide anything.
+
+### Plant presets
+
+A **plant preset** is a reusable starting configuration for a species, so that
+creating a plant does not begin with an operator inventing a moisture band. It
+is a template in the same sense `PlantProfile` is, and it is subject to the same
+rule: it is never authoritative runtime state. Applying one writes ordinary
+per-plant `MeasurementPolicy` rows through the existing binding and policy model
+([ADR-016](../adr/016-plant-binding-and-policy-model.md)) and then stops
+mattering. Every value is editable afterwards, and no edit is ever re-derived.
+
+Three constraints define the shape:
+
+- **A preset is not a schedule.** It holds preferences and conditions — a
+  soil-moisture band, a light preference, temperature and humidity ranges, pH, a
+  suggested dose and cooldown class — and never an interval such as "water every
+  2 days". Watering remains a function of measurements and, from M6, the safety
+  gate. A timer would be a second actuation authority that no sensor reading and
+  no lockout could contradict.
+- **Source facts and Rhizo-derived defaults are stored separately.** A figure a
+  cited source stated, in that source's own units, is a `SourceFact`. A starting
+  value Rhizo interpreted from it is a `RhizoDefault`. An external
+  `soil_humidity = 6` on some vendor's 1-10 scale converted to a volumetric
+  water content is an interpretation with a guess inside it, and presenting it
+  as a measured fact gives a plausible number authority it has not earned.
+- **The catalogue is embedded and versioned.** It is compiled into the binary,
+  carries a `catalogue_version`, and requires no network and no database. Making
+  plant creation the one operation that needs the internet would contradict the
+  offline-first premise in the README.
+
+Two further properties are invariants rather than conveniences:
+
+- **Materialisation happens exactly once, and the provenance columns are inert.**
+  A preset is applied at one moment and never re-derived — not on restart, not on
+  a catalogue upgrade, not on a tick. `applied_preset_id` is **not read by
+  recommendation, by the safety gate, by irrigation control, or by offline-policy
+  evaluation**; those four see a preset-configured plant and a hand-configured
+  plant as identical, because they consume the same `MeasurementPolicy` rows,
+  bindings, and measurements. Anything else gives the plant two owners, and the
+  operator's edit is the one that loses.
+- **A preset names a `MeasurementKind`, never a sensor.** The catalogue holds no
+  `device_id`, `sensor_id`, `point`, or capability identity. Which probe supplies
+  a kind for a given plant is a `SensorBinding` and stays one, so applying a
+  preset resolves against the bindings the plant already has and creates,
+  selects, or edits none. A catalogue cannot know which probe is in which pot.
+
+Applying a preset to a **monitoring-only plant succeeds**: measurement policies
+are created normally, and any dose or cooldown default is recorded as an inert
+starting value that neither creates nor requires an `ActuatorBinding`. SAFETY-018
+holds by construction, since nothing on this path writes to `actuator_bindings`.
+Presets are most useful for exactly these plants.
+
+Each entry carries `source`, `source_ref`, `license`, and `retrieved_at`.
+External catalogues such as Trefle or Perenual may be used as **import and
+research inputs** for building the curated data offline, with human review; they
+are never a runtime dependency, and their licences must be verified to permit
+redistribution before any of their data is committed (see Open questions).
+
+Delivered by M5-017 (catalogue) and M5-018 (application).
 
 A `plant_recommendations` row is written per evaluation only when the decision
 or reason set **changes**, not on every tick — otherwise a 30-second tick would
@@ -271,6 +348,22 @@ that reaches the same conclusion as the previous tick is not news.
 
 ## Acceptance criteria
 
+- [ ] A plant created from a preset has ordinary `MeasurementPolicy` rows,
+      indistinguishable from hand-configured ones, and every value stays
+      editable afterwards.
+- [ ] No catalogue entry contains an interval, frequency, or schedule field.
+- [ ] Every preset value is labelled as either a source fact or a Rhizo-derived
+      default; there is no unlabelled third case.
+- [ ] The catalogue is queryable with no network and no external service.
+- [ ] `auto_watering_enabled` is still `false` on a plant created from a preset.
+- [ ] Recommendation and threshold evaluation give identical results for a
+      preset-configured and a hand-configured plant carrying the same values,
+      and no decision path reads `applied_preset_id`.
+- [ ] Applying a preset to a plant with no `ActuatorBinding` succeeds, creates
+      its measurement policies, and leaves `POST /water` returning 422
+      `no_actuator_bound` (SAFETY-018).
+- [ ] Applying a preset creates, selects, or edits no `SensorBinding`.
+
 - [ ] The simulator drying past the threshold produces `WaterRecommended` with a
       non-empty structured reason list.
 - [ ] **No MQTT command is published in any M5 scenario.**
@@ -301,6 +394,22 @@ that reaches the same conclusion as the previous tick is not news.
    from the moisture deficit and pot volume is tempting and is deliberately
    deferred: multi-dose feedback (M6) achieves the same convergence with a
    bounded worst case.
+
+**Preset catalogue licensing — must be resolved inside M5-017.** Trefle and
+Perenual are the obvious import sources for building the curated catalogue, and
+both are attractive because they are free to query. Free to query is not the
+same as free to redistribute, and Rhizo would be shipping their data inside a
+binary. Each source's licence must be read and the outcome recorded here before
+any of its rows are committed. If redistribution is not clearly permitted, the
+catalogue is written from horticultural references with per-entry citation
+instead — smaller, slower, and unambiguous.
+
+**How many species does the first catalogue need?** The working assumption is
+that twenty genuinely curated entries beat four hundred scraped ones: a small
+catalogue keeps the provenance discipline visible while it is cheap to
+establish, and an operator with an unlisted species still has the manual path.
+Revisit once real usage shows what people actually plant.
+
 
 ## Future work
 

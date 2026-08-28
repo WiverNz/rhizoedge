@@ -36,18 +36,18 @@ pin may move forward deliberately
 | M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **DONE** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **DONE** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **READY** |
-| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 17 | **READY** |
+| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 19 | **READY** |
 | M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 22 | **READY** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
 | M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 17 | **READY** |
 | M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 19 | PLANNED |
 | M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 11 | PLANNED |
 | M11 | Real Pump and Safety Hardware | Real actuation with calibration and physically verified lockouts | M10 | 14 | PLANNED |
-| M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 17 | PLANNED |
+| M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 18 | PLANNED |
 | M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, a supportable deployment, **release binary CI, the MSRV matrix, and the optional Grafana profile** | M12 | 16 | PLANNED |
 | M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field, **plus optional Helm packaging and the future actuator model** — **documentation only** | M13 | 9 | PLANNED |
 
-**Total: 239 issues.**
+**Total: 242 issues.**
 
 ### Status semantics
 
@@ -240,7 +240,9 @@ the profile demoted to a template that pre-populates policies · least-squares
 moisture trend returning `None` on sparse data · dry-duration tracking with gap
 handling · manual-watering detection with command attribution · stuck-sensor
 detection · rule-based recommendation with typed reasons · plant state
-derivation · EC trend and warning · evaluation tick and endpoints.
+derivation · EC trend and warning · evaluation tick and endpoints ·
+**a versioned, embedded, curated species preset catalogue with per-value
+provenance, and its application into ordinary per-plant policies**.
 
 **Exit criteria.** Drying produces `WaterRecommended` with a non-empty reason
 list and **zero MQTT commands published**. A plant with no `ActuatorBinding`
@@ -248,7 +250,10 @@ returns **422**, not 409, from every actuation path, and still receives telemetr
 thresholds, and alerts. A binding to a capability the device never declared is
 rejected. A critical temperature raises an alert and waters nothing. A profile
 with `dose_ml = 200` is rejected with 422 naming the firmware limit. A moisture
-step following a command creates no second event.
+step following a command creates no second event. A plant created from a species
+preset has ordinary, fully editable `MeasurementPolicy` rows, still has
+`auto_watering_enabled = false`, and **no catalogue entry contains an interval or
+schedule** — a preset stores preferences, never a timer.
 
 **Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path).
 Otherwise builds the gate's inputs without actuating.
@@ -446,13 +451,19 @@ control is active** · **offline history showing autonomously delivered doses wi
 `origin: offline_autonomous` and any reported gaps** · watering actions with **no
 override control** · inline SVG charts with the target band and watering markers ·
 profile editor · connection-state handling that never shows a blank screen ·
-packaging with WebView2 bootstrap · CI job asserting no Node artefacts.
+packaging with WebView2 bootstrap · CI job asserting no Node artefacts ·
+**a species preset picker whose generated configuration is reviewed and editable
+before the first write, labelling source-stated and Rhizo-derived values
+differently, with manual configuration always available as an equal path**.
 
 **Exit criteria.** Builds on Windows and Linux. No JS toolchain anywhere. A leak
 lockout is prominent with no clear button and manual watering shows the reason.
 A monitoring-only plant shows no watering control at all rather than a disabled
 one. An isolated device's autonomous doses appear in history, attributed, once
-reconciled. Stopping the edge shows greyed last-known data with its age.
+reconciled. Stopping the edge shows greyed last-known data with its age. A plant
+can be created from a species preset with every generated value reviewed and
+editable before anything is written, offline, with automation still off
+afterwards.
 
 **Invariants.** Enforces none; must be incapable of violating any. Verified by
 the absent dependencies and the absent override control.

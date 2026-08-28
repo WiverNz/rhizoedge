@@ -162,6 +162,41 @@ with its calibration reference attached.
 Details: [ADR-017](docs/adr/017-extensible-measurement-model.md) ·
 [ADR-016](docs/adr/016-plant-binding-and-policy-model.md)
 
+## Species presets: a starting point, not an authority
+
+Thresholds belonging to the plant is the right design, and it means configuring
+a new plant begins with an operator inventing a moisture band for a species they
+bought yesterday. **Plant presets** fill that in: pick "Rose", "Monstera", or
+"Basil" and the per-measurement policy is prefilled — then reviewed and edited
+before anything is written.
+
+Three rules stop a convenience from becoming an authority:
+
+- **A preset is not a schedule.** It stores what a species prefers — a moisture
+  band, a light preference, temperature and humidity ranges, pH, a dose and
+  cooldown class — and never "water every 2 days". Watering remains a function
+  of measurements and the safety gate. A timer would be a second actuation
+  authority that no sensor reading and no lockout could contradict.
+- **A preset is a template, exactly as `PlantProfile` is.** Applying one writes
+  ordinary per-plant threshold rows and then stops mattering: every value stays
+  editable, nothing is silently re-derived later, and a preset value that would
+  exceed a firmware hard limit is rejected rather than clamped. A curated
+  catalogue is an input, not a trusted one.
+- **A stated fact and a derived guess are labelled differently.** Where a source
+  says a species likes "moderate" soil moisture, the volumetric figure Rhizo
+  would target is an interpretation with a unit conversion inside it. The
+  interface says which is which, in words — that sentence is what invites an
+  operator to correct a number they know better than the catalogue does.
+
+The catalogue is curated, versioned, and compiled into the binary, so creating a
+plant is not the one operation that needs the Internet. External species
+databases may be used to research and import entries offline, with human review
+and a verified licence — never as a runtime dependency.
+
+Configuring a plant entirely by hand remains an equal path, not a fallback.
+
+Planned for M5 (catalogue and application) and M12 (picker and review step).
+
 ## The pump is optional
 
 Most plants in a real home will never have one. A plant with no actuator is a
@@ -296,12 +331,24 @@ Project-wide gate:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+RHIZO_REQUIRE_BROKER=1 cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
 cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
+cargo sqlx prepare --workspace --check
 cargo run -p rhizo-docscheck
 ```
+
+`RHIZO_REQUIRE_BROKER=1` is how CI runs the suite. Without it the broker-backed
+tests print a loud skip and pass, so a fresh clone is green; with it, a missing
+Mosquitto is a failure — a suite that can silently skip its own subject
+eventually proves nothing.
+
+`cargo sqlx prepare --check` verifies the committed `.sqlx/` offline cache
+against the migrated schema. The cache is checked into version control on
+purpose: CI has no database, so every offline build reads it instead of
+connecting, and a query changed without regenerating it fails there rather than
+at runtime.
 
 A milestone is complete only when its acceptance tests are green and its exit
 criteria are demonstrably met — never on the basis of closed issues alone.
