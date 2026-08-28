@@ -436,6 +436,7 @@ Published retained on connect, on config change, and at least every
   "boot_id": "018fd6b0-…", "sequence": 1,
   "device_time_ms": 1756121400000, "clock_synced": true,
   "data": {
+    "boot_generation": 42,
     "status": "online",
     "firmware_version": "0.1.0",
     "protocol_version": 1,
@@ -476,6 +477,19 @@ Published retained on connect, on config change, and at least every
 
 `limits` reports the compile-time hard limits for observability. **Reporting is
 one-way.** No message can change them (SAFETY-007).
+
+`boot_generation` is a positive monotonic counter persisted by the device and
+incremented before each boot is announced. It orders status effects across
+random `boot_id` values; it is not a replacement for `boot_id`, and it MUST NOT
+be derived from the device wall clock. Losing or rolling this counter back is a
+persistent-state fault, not permission to make an old boot current again.
+
+Within one `boot_generation`, normal status publications are ordered by the
+envelope `sequence`. The fixed `sequence: 0` LWT is one terminal logical status
+identified by its `message_id`. The Edge stores only the current generation,
+normal-status high-water sequence, and current boot's LWT identity. Therefore
+an old retained status or LWT cannot refresh `last_seen_at`, even after its
+short-lived transport marker has been pruned.
 
 `status` MUST be one of `"online"` or `"offline"`.
 
@@ -525,7 +539,7 @@ payload:
   "device_id": "plant-node-01",
   "boot_id": "018fd6b0-…", "sequence": 0,
   "clock_synced": false,
-  "data": { "status": "offline", "reason": "connection_lost" }
+  "data": { "boot_generation": 42, "status": "offline", "reason": "connection_lost" }
 }
 ```
 
@@ -1089,17 +1103,26 @@ destroy M6's guarantee.
 
 ## 6. Deduplication — normative
 
-**Receivers MUST deduplicate on `message_id` alone.**
+Receivers MUST use `message_id` as the transport deduplication key. Because
+transport markers are retained for a bounded period, every durable effect MUST
+also have a stable logical identity or order key that survives marker pruning.
 
 The edge:
 
 1. attempts `INSERT INTO processed_messages(message_id) … ON CONFLICT DO NOTHING`
-2. if 0 rows affected, the message is a duplicate: the transaction is rolled
+2. if 0 rows affected, the transport message is a duplicate: the transaction is rolled
    back and **no effect of any kind is applied**
 3. otherwise processing continues in the same transaction
 
 The dedup marker and the message's effects MUST share one transaction, so a
 crash cannot make one durable without the other (SAFETY-001, SAFETY-010).
+
+For `device.status`, the independent logical order is
+`(boot_generation, sequence)` for normal publications plus the fixed LWT
+`message_id` for the current boot. A logically old status is a no-op and MUST
+NOT refresh `last_seen_at`. Its receipt still triggers the live `edge.time`
+response required by §5.10; response ownership is independent of projection
+acceptance.
 
 The device deduplicates water commands on `command_id`, keeping the last 16 in
 NVS with their outcomes. A repeat MUST re-publish the stored result and MUST NOT

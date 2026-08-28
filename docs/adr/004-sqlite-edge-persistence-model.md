@@ -71,6 +71,9 @@ CREATE TABLE devices (
     last_seen_at           INTEGER,
     desired_config_version INTEGER NOT NULL DEFAULT 0,
     applied_config_version INTEGER,
+    status_boot_generation INTEGER, -- persisted device counter; status order
+    status_sequence        INTEGER, -- normal-status high-water in generation
+    status_lwt_message_id  TEXT,    -- one fixed LWT identity for current boot
     created_at             INTEGER NOT NULL
 );
 
@@ -309,6 +312,14 @@ tx.commit().await?;                // all or nothing
 
 The dedup marker and the effects share a transaction. There is no window in
 which one is durable without the other.
+
+`processed_messages` is a bounded transport fast path, not the lifetime
+identity of an effect. Markers older than seven days may be deleted only because
+each effect also has stable uniqueness or ordering. Status is the mutable case:
+the single `devices` row retains its greatest persisted `boot_generation`, the
+greatest normal status `sequence` within it, and the fixed LWT identity for that
+boot. Replaying an older logical status after marker deletion is therefore a
+no-op and cannot refresh `last_seen_at`; storage remains one row per device.
 
 ### Why a narrow measurement table rather than wide columns
 

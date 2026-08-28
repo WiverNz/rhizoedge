@@ -1,8 +1,11 @@
 //! M3 persistence integration tests.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use rhizo_mqtt_contract::{
-    Envelope, MessageKind,
-    payload::{ActuatorState, CommandResult, DeviceEventBatch, DeviceStatus, TelemetryBatch},
+    BootId, Envelope, MessageId,
+    payload::{
+        ActuatorState, CommandResult, DeviceEventBatch, DeviceStatus, DeviceStatusValue,
+        TelemetryBatch,
+    },
 };
 use rhizo_storage::{
     EdgeDb,
@@ -274,35 +277,104 @@ async fn replay_effect_identities_survive_transport_marker_pruning() {
 }
 
 #[tokio::test]
-async fn retained_status_marker_is_not_pruned_or_reapplied() {
+async fn status_effect_is_ordered_after_transport_marker_pruning() {
     let db = db().await;
-    let e = Envelope::<DeviceStatus>::from_json(include_bytes!(
+    let original = Envelope::<DeviceStatus>::from_json(include_bytes!(
         "../../../test/fixtures/protocol/valid/status-with-capabilities.json"
     ))
     .unwrap();
     assert_eq!(
-        ingest::persist_raw(&db, &e, MessageKind::DeviceStatus, 10)
-            .await
-            .unwrap(),
+        ingest::persist_status(&db, &original, 10).await.unwrap(),
         Dedup::New
     );
-    let pruned = retention::run_batch(&db, 8 * 86_400_000, 500)
-        .await
-        .unwrap();
-    assert_eq!(pruned.processed, 0);
+    remove_marker(&db, original.message_id).await;
     assert_eq!(
-        ingest::persist_raw(&db, &e, MessageKind::DeviceStatus, 20)
+        ingest::persist_status(&db, &original, 20).await.unwrap(),
+        Dedup::Duplicate
+    );
+    let mut newer = original.clone();
+    newer.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+    newer.sequence = Some(original.sequence.unwrap() + 1);
+    assert_eq!(
+        ingest::persist_status(&db, &newer, 30).await.unwrap(),
+        Dedup::New
+    );
+
+    let mut new_boot = original.clone();
+    new_boot.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+    new_boot.boot_id = Some(BootId::from_uuid(uuid::Uuid::new_v4()));
+    new_boot.sequence = Some(1);
+    new_boot.data.boot_generation += 1;
+    assert_eq!(
+        ingest::persist_status(&db, &new_boot, 40).await.unwrap(),
+        Dedup::New
+    );
+
+    let mut delayed_old_boot = original.clone();
+    delayed_old_boot.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+    delayed_old_boot.sequence = Some(99);
+    assert_eq!(
+        ingest::persist_status(&db, &delayed_old_boot, 50)
             .await
             .unwrap(),
         Dedup::Duplicate
     );
+
+    let mut lwt = new_boot.clone();
+    lwt.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+    lwt.sequence = Some(0);
+    lwt.data.status = DeviceStatusValue::Offline;
+    lwt.data.reason = Some("connection_lost".into());
+    assert_eq!(
+        ingest::persist_status(&db, &lwt, 60).await.unwrap(),
+        Dedup::New
+    );
+    remove_marker(&db, lwt.message_id).await;
+    assert_eq!(
+        ingest::persist_status(&db, &lwt, 70).await.unwrap(),
+        Dedup::Duplicate
+    );
+    let mut delayed_same_boot = new_boot.clone();
+    delayed_same_boot.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+    assert_eq!(
+        ingest::persist_status(&db, &delayed_same_boot, 80)
+            .await
+            .unwrap(),
+        Dedup::Duplicate
+    );
+    let mut reconnected = new_boot.clone();
+    reconnected.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+    reconnected.sequence = Some(2);
+    assert_eq!(
+        ingest::persist_status(&db, &reconnected, 90).await.unwrap(),
+        Dedup::New
+    );
+    assert_eq!(
+        ingest::persist_status(&db, &lwt, 100).await.unwrap(),
+        Dedup::Duplicate
+    );
+
+    let pruned = retention::run_batch(&db, 8 * 86_400_000, 500)
+        .await
+        .unwrap();
+    assert_eq!(pruned.processed, 3);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT last_seen_at FROM devices WHERE device_id=?")
-            .bind(e.device_id.to_string())
+            .bind(original.device_id.to_string())
             .fetch_one(db.pool())
             .await
             .unwrap(),
-        10
+        90
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT status_boot_generation FROM devices WHERE device_id=?"
+        )
+        .bind(original.device_id.to_string())
+        .fetch_one(db.pool())
+        .await
+        .unwrap(),
+        new_boot.data.boot_generation as i64
     );
 }
 

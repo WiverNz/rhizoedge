@@ -83,9 +83,9 @@ operator changes config → edge bumps config_version → publishes retained
 | ID | Requirement |
 |---|---|
 | F-040-01 | Retained `device.status` with `status: "online"` marks the device online |
-| F-040-02 | LWT payload (`status: "offline"`) marks it offline; the LWT's duplicate `message_id` is handled correctly by the M3 dedup path |
+| F-040-02 | A logically new LWT payload (`status: "offline"`) marks it offline; replay of that current boot's fixed LWT identity is a no-op even after transport-marker pruning |
 | F-040-03 | Unknown `device_id` is auto-registered with `status` from the message and **no plant attached** |
-| F-040-04 | `last_seen_at` updated on every message from that device |
+| F-040-04 | `last_seen_at` is updated by every newly accepted logical message effect; a transport duplicate or logically old status receipt does not refresh it |
 | F-040-05 | `firmware_version`, `protocol_version`, `boot_id`, `clock_synced` recorded from status |
 | F-040-06 | Sensor presence and health recorded per sensor from the status message |
 | F-040-07 | `sample_age_seconds` computed as `now − max(received_at)` from the **edge** clock |
@@ -134,6 +134,11 @@ work is how migrations end up edited after being applied.
 Columns populated by M4: `status`, `last_seen_at`, `firmware_version`,
 `boot_id`, `clock_synced`, `applied_config_version`, `name`.
 
+M3 also stores the bounded status-order high water in
+`status_boot_generation`, `status_sequence`, and `status_lwt_message_id`. M4
+must consume that persistence outcome rather than comparing device wall time or
+creating a second status consumer.
+
 Sensor health is stored as a JSON column on `devices` (`sensors_json`) rather
 than a separate table — it is a small, whole-value snapshot from the latest
 status message with no independent lifecycle.
@@ -166,7 +171,7 @@ authoritative answer is always computed.
 
 | Failure | Behaviour |
 |---|---|
-| LWT arrives after the device already reconnected | ordering-insensitive: status is taken from the message with the greater `received_at`, so a late LWT cannot mark a live device dead |
+| Status/LWT from an older boot arrives after reconnect | M3's persisted `boot_generation` order rejects it; the registry and `last_seen_at` stay unchanged, while the valid receipt still gets `edge.time` |
 | Device publishes status with an unparseable body | quarantined per M3; device state unchanged |
 | Two devices claim the same `device_id` | broker ACLs prevent it ([ADR-012](../adr/012-device-identity-and-provisioning.md)); if seen, `boot_id` thrashing is evented |
 | Device never echoes `applied_config_version` | `config_drift` event after 2 intervals; drift exposed in the API |

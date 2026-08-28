@@ -1,11 +1,11 @@
 //! Transaction-only ingestion writes.
 #![allow(missing_docs)]
 
+use rhizo_mqtt_contract::Envelope;
 use rhizo_mqtt_contract::payload::{
-    ActuatorState, DeviceEventBatch, EventDetail, EventKind, EventTier, MeasurementSample,
-    MeasurementValue,
+    ActuatorState, DeviceEventBatch, DeviceStatus, DeviceStatusValue, EventDetail, EventKind,
+    EventTier, MeasurementSample, MeasurementValue,
 };
-use rhizo_mqtt_contract::{Envelope, MessageKind};
 use sqlx::{Sqlite, Transaction};
 
 use crate::{EdgeDb, StorageError};
@@ -394,17 +394,56 @@ async fn replay_through(db: &EdgeDb, dev: &str, boot: &str) -> Result<u64, Stora
 }
 
 /// Persists status as raw prerequisite state without M4 health behaviour.
-pub async fn persist_raw<T: serde::Serialize>(
+///
+/// Transport ids are only a short-lived QoS optimisation. The durable effect
+/// is ordered by the device's persisted boot generation and per-boot sequence;
+/// an LWT is a single terminal logical status within its boot and is remembered
+/// by its fixed id. This leaves one bounded high-water row per device.
+pub async fn persist_status(
     db: &EdgeDb,
-    e: &Envelope<T>,
-    kind: MessageKind,
+    e: &Envelope<DeviceStatus>,
     at: i64,
 ) -> Result<Dedup, StorageError> {
     let mut tx = db.begin().await?;
     let id = e.message_id.to_string();
     let dev = e.device_id.to_string();
-    let k = json_name(&kind)?;
-    if mark_processed(&mut tx, &id, &dev, &k, at).await? == Dedup::Duplicate {
+    if mark_processed(&mut tx, &id, &dev, "device.status", at).await? == Dedup::Duplicate {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok(Dedup::Duplicate);
+    }
+    let generation = i64::try_from(e.data.boot_generation).map_err(|_| {
+        StorageError::Constraint("status boot_generation exceeds SQLite INTEGER".into())
+    })?;
+    if generation == 0 {
+        return Err(StorageError::Constraint(
+            "status boot_generation must be positive".into(),
+        ));
+    }
+    let sequence = i64::try_from(e.sequence.unwrap_or(0))
+        .map_err(|_| StorageError::Constraint("status sequence exceeds SQLite INTEGER".into()))?;
+    let is_lwt = sequence == 0
+        && e.data.status == DeviceStatusValue::Offline
+        && e.data.reason.as_deref() == Some("connection_lost");
+    let previous: Option<(Option<i64>, Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT status_boot_generation,status_sequence,status_lwt_message_id FROM devices WHERE device_id=?",
+    )
+    .bind(&dev)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    let apply = match previous.as_ref() {
+        None | Some((None, _, _)) => true,
+        Some((Some(old_generation), old_sequence, old_lwt)) => {
+            generation > *old_generation
+                || (generation == *old_generation
+                    && if is_lwt {
+                        old_lwt.as_deref() != Some(id.as_str())
+                    } else {
+                        old_sequence.is_none_or(|old| sequence > old)
+                    })
+        }
+    };
+    if !apply {
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
@@ -416,11 +455,35 @@ pub async fn persist_raw<T: serde::Serialize>(
         at,
     )
     .await?;
-    sqlx::query("UPDATE devices SET status_json=? WHERE device_id=?")
+    let prior_sequence = previous.as_ref().and_then(|(old_generation, sequence, _)| {
+        (*old_generation == Some(generation))
+            .then_some(*sequence)
+            .flatten()
+    });
+    let old_lwt = previous.and_then(|(old_generation, _, lwt)| {
+        (old_generation == Some(generation))
+            .then_some(lwt)
+            .flatten()
+    });
+    let lwt_id = if is_lwt {
+        Some(id.as_str())
+    } else if old_lwt.is_some() {
+        old_lwt.as_deref()
+    } else {
+        None
+    };
+    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=? WHERE device_id=?")
         .bind(
             serde_json::to_string(&e.data)
                 .map_err(|x| StorageError::Serialization(x.to_string()))?,
         )
+        .bind(generation)
+        .bind(if is_lwt {
+            prior_sequence
+        } else {
+            Some(sequence)
+        })
+        .bind(lwt_id)
         .bind(&dev)
         .execute(&mut *tx)
         .await

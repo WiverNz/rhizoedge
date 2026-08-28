@@ -60,7 +60,7 @@ async fn process(
         Topic::Telemetry(_) => decode::<TelemetryBatch>(&topic, &item.payload).map(Msg::Telemetry),
         Topic::Actuator(_) => decode::<ActuatorState>(&topic, &item.payload).map(Msg::Actuator),
         Topic::Events(_) => decode::<DeviceEventBatch>(&topic, &item.payload).map(Msg::Events),
-        Topic::Status(_) => decode::<DeviceStatus>(&topic, &item.payload).map(Msg::Status),
+        Topic::Status(_) => decode_status(&topic, &item.payload).map(Msg::Status),
         Topic::CommandResult(_) => decode::<CommandResult>(&topic, &item.payload).map(Msg::Result),
         _ => unreachable!(),
     };
@@ -111,12 +111,7 @@ async fn process(
             d
         }
         Msg::Actuator(e) => retry_busy(m, || ingest::persist_actuator(db, &e, at)).await?,
-        Msg::Status(e) => {
-            retry_busy(m, || {
-                ingest::persist_raw(db, &e, rhizo_mqtt_contract::MessageKind::DeviceStatus, at)
-            })
-            .await?
-        }
+        Msg::Status(e) => retry_busy(m, || ingest::persist_status(db, &e, at)).await?,
         Msg::Result(e) => retry_busy(m, || ingest::persist_command_result(db, &e, at)).await?,
         Msg::Events(e) => {
             for event in &e.data.events {
@@ -203,6 +198,16 @@ fn decode<T: serde::de::DeserializeOwned>(
     e.check_topic(topic)?;
     Ok(e)
 }
+fn decode_status(
+    topic: &Topic,
+    payload: &[u8],
+) -> Result<Envelope<DeviceStatus>, rhizo_mqtt_contract::DecodeError> {
+    let envelope = decode::<DeviceStatus>(topic, payload)?;
+    if envelope.data.boot_generation == 0 {
+        return Err(rhizo_mqtt_contract::DecodeError::Payload);
+    }
+    Ok(envelope)
+}
 enum Msg {
     Telemetry(Envelope<TelemetryBatch>),
     Actuator(Envelope<ActuatorState>),
@@ -234,6 +239,21 @@ mod decode {
         let options = rumqttc::MqttOptions::new("unused-test-client", "127.0.0.1", 9);
         let (client, _eventloop) = rumqttc::AsyncClient::new(options, 4);
         (db, client, Metrics::new().unwrap())
+    }
+
+    #[test]
+    fn zero_status_boot_generation_is_not_semantically_valid() {
+        let topic = Topic::parse("rhizo/v1/devices/plant-node-01/status").unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+        ))
+        .unwrap();
+        value["data"]["boot_generation"] = 0.into();
+        let payload = serde_json::to_vec(&value).unwrap();
+        assert!(matches!(
+            decode_status(&topic, &payload),
+            Err(rhizo_mqtt_contract::DecodeError::Payload)
+        ));
     }
 
     #[tokio::test]

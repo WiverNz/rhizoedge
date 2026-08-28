@@ -34,14 +34,17 @@ Edge time response.
 
 ## Implementation notes
 
-Status resolution must be **order-insensitive**: take the status from the
-message with the greater `received_at`. A late-arriving LWT must not be able to
-mark a live device dead (failure-model 1.4).
+Status resolution uses the M3 durable logical order: greater persisted
+`boot_generation`, then greater normal envelope `sequence`; the current boot's
+fixed LWT is applied once by its logical identity. A delayed status from an
+older boot, or a replayed same logical status after transport-marker pruning,
+must not update the registry or `last_seen_at`.
 
 Registry projection changes apply only after the existing M3 persistence path
-accepts a new status effect. F-040-17 is intentionally per validated receipt:
-even an exact transport duplicate still triggers a fresh, non-retained
-`edge.time` response without reapplying the registry effect.
+accepts a new status effect. F-040-17 is intentionally per validated receipt
+and must execute independently of that outcome: an exact transport duplicate
+or logically old status still triggers a fresh, non-retained `edge.time`
+response without reapplying the registry effect or refreshing `last_seen_at`.
 
 Only log a transition at INFO; a heartbeat that confirms the existing state is
 not news.

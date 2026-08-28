@@ -201,6 +201,7 @@ mod tests {
 
     fn status() -> DeviceStatus {
         DeviceStatus {
+            boot_generation: 1,
             status: DeviceStatusValue::Online,
             reason: None,
             firmware_version: None,

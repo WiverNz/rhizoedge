@@ -78,6 +78,8 @@ pub struct ReportedLimits {
 /// Retained device status data.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceStatus {
+    /** Monotonic boot generation persisted by the device. */
+    pub boot_generation: u64,
     /** Online/offline. */
     pub status: DeviceStatusValue,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,6 +205,7 @@ mod tests {
     #[test]
     fn status_without_actuators_is_normal() {
         let s = DeviceStatus {
+            boot_generation: 1,
             status: DeviceStatusValue::Online,
             reason: None,
             firmware_version: None,

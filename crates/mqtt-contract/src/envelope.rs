@@ -95,6 +95,8 @@ pub enum DecodeError {
     KindMismatch,
     /// Required envelope field absent.
     Envelope,
+    /// Kind-specific semantic validation failed.
+    Payload,
 }
 impl DecodeError {
     /// Stable metric reason label.
@@ -105,6 +107,7 @@ impl DecodeError {
             Self::DeviceMismatch => "device_mismatch",
             Self::KindMismatch => "kind_mismatch",
             Self::Envelope => "envelope",
+            Self::Payload => "payload",
         }
     }
 }

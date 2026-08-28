@@ -1387,6 +1387,7 @@ impl Device {
     /// than from any field the device holds.
     fn status_skeleton(&self) -> DeviceStatus {
         DeviceStatus {
+            boot_generation: self.store.state().boot_count,
             status: DeviceStatusValue::Online,
             reason: None,
             firmware_version: Some(String::from(FIRMWARE_VERSION)),
@@ -1522,7 +1523,13 @@ mod tests {
             .unwrap();
         assert!(p.retain, "status is retained (protocol §3)");
         assert_eq!(p.topic_string(), "rhizo/v1/devices/plant-node-01/status");
-        assert_eq!(decode(p).data.status, DeviceStatusValue::Online);
+        let status = decode(p);
+        assert_eq!(status.data.status, DeviceStatusValue::Online);
+        assert_eq!(
+            status.data.boot_generation,
+            device.store().state().boot_count
+        );
+        assert!(status.data.boot_generation > 0);
         assert!(device.is_connected());
     }
 
