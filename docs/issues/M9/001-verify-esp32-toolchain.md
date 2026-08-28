@@ -1,6 +1,6 @@
 # Issue M9-001 — Verify and correct the ESP32 toolchain documentation
 
-**Milestone:** M9 · **PRD:** [PRD 090](../../prd/090-esp32-rust-firmware.md) · **Depends on:** M8-017
+**Milestone:** M9 · **PRD:** [PRD 090](../../prd/090-esp32-rust-firmware.md) · **Depends on:** M8-018
 
 ## Context
 
@@ -27,7 +27,7 @@ Execute every documented command on a real machine and correct ADR-007.
 
 ## Dependencies
 
-- M8-017
+- M8-018
 
 ## Implementation notes
 

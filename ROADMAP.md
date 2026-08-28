@@ -20,6 +20,26 @@ pin may move forward deliberately
 > invariants were appended as SAFETY-013…020; the original twelve are unchanged
 > and were never renumbered. **M0 was not reopened.**
 
+> **Battery and deep-sleep pass, 2026-08-28 — after M4, before M5.** A
+> battery-powered Wi-Fi node that sleeps between samples became a supported
+> deployment ([ADR-018](docs/adr/018-battery-and-deep-sleep-device-mode.md)).
+> **14 issues were added** across M5, M6, M8, M9, M10, M12, M13, and M14, and each
+> affected milestone's verification issue was renumbered to stay last.
+> **SAFETY-021** was appended; the first twenty are unchanged and were never
+> renumbered. **M4 was not reopened** — its registry model is extended in M5-020,
+> the first milestone still open, exactly as M0 was left alone in August.
+>
+> The change is additive on the wire and needed **no protocol version bump**: two
+> measurement kinds, optional `power` blocks, one offline `reason`. Holding a
+> command for a sleeping device is an Edge-side mechanism with no wire
+> representation at all, so command TTL and `edge.time` are unchanged and
+> SAFETY-002 is untouched.
+>
+> It also corrected [PRD 140](docs/prd/140-field-readiness.md): four of the five
+> "high" connectivity breakages were the *sleep* problem, not the *radio*
+> problem, and are now resolved inside v1. What remains genuinely unsolved is a
+> duty-cycled device that cannot be pushed to at all.
+
 - Source of truth for *what* each milestone builds: [docs/prd/](docs/prd/)
 - Source of truth for *why*: [docs/adr/](docs/adr/)
 - Source of truth for *how, step by step*: [docs/issues/](docs/issues/)
@@ -36,18 +56,18 @@ pin may move forward deliberately
 | M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **DONE** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **DONE** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **DONE** |
-| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 19 | **READY** |
-| M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 22 | **READY** |
+| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 22 | **READY** |
+| M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **READY** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
-| M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 17 | **READY** |
-| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 19 | PLANNED |
-| M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 11 | PLANNED |
+| M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **READY** |
+| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | PLANNED |
+| M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 13 | PLANNED |
 | M11 | Real Pump and Safety Hardware | Real actuation with calibration and physically verified lockouts | M10 | 14 | PLANNED |
-| M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 18 | PLANNED |
-| M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, a supportable deployment, **release binary CI, the MSRV matrix, and the optional Grafana profile** | M12 | 16 | PLANNED |
-| M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field, **plus optional Helm packaging and the future actuator model** — **documentation only** | M13 | 9 | PLANNED |
+| M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 19 | PLANNED |
+| M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, a supportable deployment, **release binary CI, the MSRV matrix, and the optional Grafana profile** | M12 | 17 | PLANNED |
+| M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field, **plus optional Helm packaging and the future actuator model** — **documentation only** | M13 | 10 | PLANNED |
 
-**Total: 242 issues.**
+**Total: 256 issues.**
 
 ### Status semantics
 
@@ -244,7 +264,9 @@ handling · manual-watering detection with command attribution · stuck-sensor
 detection · rule-based recommendation with typed reasons · plant state
 derivation · EC trend and warning · evaluation tick and endpoints ·
 **a versioned, embedded, curated species preset catalogue with per-value
-provenance, and its application into ordinary per-plant policies**.
+provenance, and its application into ordinary per-plant policies** ·
+**the battery-device wire surface, sleep-aware liveness, and a simulator that
+sleeps** (M5-019…M5-021).
 
 **Exit criteria.** Drying produces `WaterRecommended` with a non-empty reason
 list and **zero MQTT commands published**. A plant with no `ActuatorBinding`
@@ -256,8 +278,14 @@ step following a command creates no second event. A plant created from a species
 preset has ordinary, fully editable `MeasurementPolicy` rows, still has
 `auto_watering_enabled = false`, and **no catalogue entry contains an interval or
 schedule** — a preset stores preferences, never a timer.
+A battery device inside its announced window shows as `sleeping`, not `offline`;
+one past `overdue_at` shows as `isolated`, and **the transition is made by the
+liveness timer with no inbound message**. An announced wake time far in the future
+does not extend the Edge's window. An always-on device's liveness behaviour is
+byte-identical to M4's.
 
-**Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path).
+**Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path) and
+**SAFETY-021** (expected sleep is bounded and never masks an unexpected absence).
 Otherwise builds the gate's inputs without actuating.
 
 **PRD.** [050](docs/prd/050-plant-model-and-recommendations.md)
@@ -280,7 +308,9 @@ lockout endpoints with **no override parameter** · no-delivery detection ·
 **`rhizo_policy::evaluate_offline`, the single shared offline evaluator — pure,
 `no_std`, taking elapsed time as a parameter and reading no clock** ·
 **reconciliation of offline actions on reconnect, idempotent by `event_id`, with
-the plant held `Uncertain` and no dose issued until replay completes** · the full
+the plant held `Uncertain` and no dose issued until replay completes** ·
+**durable command intents for sleeping devices, minted into ordinary commands at
+the next wake with the full gate re-run against current inputs** · the full
 property-test suite, including the offline safety properties.
 
 **Exit criteria.** `cargo test safety_` fully green. `PROPTEST_CASES=10000 cargo
@@ -288,7 +318,11 @@ test safety_006` passes. `POST /water` during a leak returns 409 with nothing
 published. Restart after publish produces no second command and one watering
 event. Replaying a buffered offline batch three times out of order produces one
 `watering_event` per `event_id` and one budget charge. No `_ =>` arm on any
-safety match. **A `command.result` acknowledged to a device survives an edge
+safety match. A `POST /water` to a sleeping device **publishes nothing**, returns
+`pending_for_device_wake` with no `command_id`, survives an edge restart, and
+delivers exactly one command whose `issued_at` is the wake instant; a leak raised
+while the device slept refuses it at delivery.
+**A `command.result` acknowledged to a device survives an edge
 crash between receipt and commit** — a broker PUBACK is not proof of durable
 commit, and M6 may not enable real watering until that is closed
 ([M6-010](docs/issues/M6/010-implement-command-result-handling.md), carried
@@ -334,12 +368,14 @@ prove the safety claims are detected rather than assumed.
 **Deliverables.** Dockerfiles with correct signal handling · complete Compose
 topology · test overlay with **restart policies disabled** · time-scale
 agreement check · Rust scenario runner asserting on observable state with
-failure dumps · fourteen e2e scenarios · the eighteen-step first demo ·
-**six-mutation verification** · CI job.
+failure dumps · fourteen e2e scenarios · isolation, reconciliation, and
+**battery/sleep** scenarios · the eighteen-step first demo ·
+**seven-mutation verification** · CI job.
 
 **Exit criteria.** `docker compose up --build` works from a fresh clone. The
 suite runs with one command, exits 0, under 10 minutes. `scenario_first_demo`
-reproduces all eighteen steps. **Each of the six mutations turns the suite red.**
+reproduces all eighteen steps. **Each of the seven mutations turns the suite
+red**, including the one that publishes immediately to a sleeping device.
 
 **Invariants.** Re-verifies SAFETY-001…-010 and -012 in the assembled system.
 
@@ -367,15 +403,22 @@ activated atomically, where a bad update never replaces a good one** ·
 **integration of the shared `rhizo_policy::evaluate_offline`, called from exactly
 one place** · **a bounded offline event buffer with audit and telemetry tiers,
 ordered replay, and explicit gap markers** · **monotonic budget and cooldown state
-persisted across reboot, never replenished by a restart** · interrupted-dose
-reporting · serial provisioning.
+persisted across reboot, never replenished by a restart** · **power mode, the
+deep-sleep wake cycle, checksummed RTC-retained accounting, gated peripheral
+rails with a configured warm-up, an awake hold across watering, and battery
+telemetry** (M9-019…M9-021) · interrupted-dose reporting · serial provisioning.
 
 **Exit criteria.** Builds for the ESP target with no board. Conformance test
 shows identical behaviour to the simulator, including the offline evaluator.
+One firmware image serves both power modes;
+`deep_sleep` has exactly one call site; the device never sleeps mid-dose or before
+the result is acknowledged; no stabilisation constant for any specific sensor part
+appears in the source; no battery field reaches `IrrigationInputs`.
 **With a board:** HIL-1 passes on a multimeter across 20 resets; a duplicate
 `command_id` survives a power cycle; withholding `edge.time` refuses commands
 while telemetry continues; power-cycling mid-cooldown neither shortens the
-cooldown nor replenishes the budget.
+cooldown nor replenishes the budget; 20 consecutive wake cycles complete with no
+missed wake and no watchdog reset.
 
 **Invariants enforced.** SAFETY-011 (firmware); SAFETY-002 and SAFETY-007 on
 real silicon; SAFETY-001 gains its device-side enforcement point; SAFETY-013,
@@ -395,17 +438,28 @@ development machine.
 **Deliverables.** Configuration-selected adapters · generic Modbus RTU client ·
 **register maps as data, not code** · Modbus and analogue soil sensors ·
 calibration where **uncalibrated publishes `null`** · error handling and health ·
-sensor config schema · metrics and events · gravimetric validation.
+sensor config schema · metrics and events · gravimetric validation ·
+**measured sensor power-on stabilization time** and **measured complete-system
+sleep current and wake-cycle energy** (M10-011, M10-012).
 
 **Exit criteria.** Readings flow end to end. Switching analogue↔Modbus is a
 configuration change. Unplugging the probe produces `null` and a `SensorFault`
 lockout. Readings match a gravimetric reference within documented bounds.
+**Sensor power-on → time until stable usable reading is measured** over ≥ 20
+cycles per sensor and reported as a distribution, with the stability definition
+written down beforehand. **Complete-system sleep current is measured on the
+assembled device**, reported separately from the chip deep-sleep figure, and the
+energy budget records every input as measured or assumed with the dominant term
+identified. Until then, **every autonomy figure in the repository stays labelled a
+target.**
 **`git diff` shows no edge-side change for sensor support.**
 
 **Invariants.** SAFETY-005 becomes physically real.
 
 **External dependency.** An RS485 or capacitive probe; a scale and oven for the
-gravimetric reference.
+gravimetric reference; a **wide-dynamic-range** current instrument for M10-012 —
+sleep current is microamps and wake current is hundreds of milliamps within the
+same second, which a handheld multimeter cannot measure.
 
 **PRD.** [100](docs/prd/100-real-soil-sensor.md)
 
@@ -456,7 +510,9 @@ profile editor · connection-state handling that never shows a blank screen ·
 packaging with WebView2 bootstrap · CI job asserting no Node artefacts ·
 **a species preset picker whose generated configuration is reviewed and editable
 before the first write, labelling source-stated and Rhizo-derived values
-differently, with manual configuration always available as an equal path**.
+differently, with manual configuration always available as an equal path** ·
+**a sleeping device presented as a normal state distinct from an unexpectedly
+offline one, and a held dose presented as pending rather than sent** (M12-018).
 
 **Exit criteria.** Builds on Windows and Linux. No JS toolchain anywhere. A leak
 lockout is prominent with no clear button and manual watering shows the reason.
@@ -465,7 +521,11 @@ one. An isolated device's autonomous doses appear in history, attributed, once
 reconciled. Stopping the edge shows greyed last-known data with its age. A plant
 can be created from a species preset with every generated value reviewed and
 editable before anything is written, offline, with automation still off
-afterwards.
+afterwards. A sleeping device is visually distinct from an unexpectedly offline
+one and is never shown as a fault; a dose on a battery device states its delay
+**before** it is requested and renders as `Pending until device wakes` after; a
+monitoring-only battery plant shows no watering control at all; and **no control
+wakes a device, expedites a dose, or overrides anything.**
 
 **Invariants.** Enforces none; must be incapable of violating any. Verified by
 the absent dependencies and the absent override control.
@@ -489,12 +549,17 @@ downsampling that never aggregates the ledger · multi-device scenarios · UI at
 scale · **release CI publishing checksummed binaries from a `v*` tag** · **a CI
 matrix building on the MSRV 1.98.0 and on current stable, so the MSRV cannot rise
 by accident** · **an opt-in `observability` Compose profile adding Prometheus and
-Grafana, which nothing depends on**.
+Grafana, which nothing depends on** · **battery fleet operations: voltage trending, coalesced
+low-battery and missed-wake notifications, power-mode filtering, and deployment
+notes** (M13-016).
 
 **Exit criteria.** SCEN-080 shows byte-identical state for unaffected plants.
 Provisioning refuses reuse without `--force`. A dead notification channel does
 not delay the control loop. The system survives a Pi reboot. Backup and restore
-reproduce identical watering history. 20 plants evaluate within one tick. A tag
+reproduce identical watering history. 20 plants evaluate within one tick, including six battery nodes. Sleeping devices
+are **not** counted as offline anywhere; a battery depletion projection appears
+only where the voltage trend supports one; backup and restore round-trip power
+mode, wake interval, and pending intents. A tag
 produces downloadable archives whose `--version` matches. The MSRV job fails on
 an accidental bump and names ADR-001. Everything works with the observability
 profile disabled.
@@ -522,12 +587,18 @@ requirements stated plainly · **optional Helm packaging specified for server-si
 components only, with the plant-side edge controller explicitly out of scope** ·
 **the future actuator capability model — what `valve`, `grow_light`, `fan`,
 `heater`, `humidifier`, and `fertiliser_dosing_pump` would each require, and which
-need a different automation model rather than an extension**.
+need a different automation model rather than an extension** · **solar and
+outdoor field power planned as a power source rather than a control architecture,
+with the autonomy targets audited** (M14-009).
 
 **Exit criteria.** Every reservation verified against code. **`git diff` shows no
-speculative implementation** — no chart, no actuator kind, no zone table.
-Kubernetes remains absent from the product architecture. Open questions recorded
-as genuinely unresolved.
+speculative implementation** — no chart, no actuator kind, no zone table, **no
+schematic and no part number**. Kubernetes remains absent from the product
+architecture. Seasonal solar arithmetic is worked for a **named** location and
+season with every input labelled measured, cited, or assumed. Every autonomy and
+battery-life figure in the repository is audited: labelled a target, or traceable
+to M10-012. **No claim of indefinite or infinite autonomy exists anywhere.** Open
+questions recorded as genuinely unresolved.
 
 **PRD.** [140](docs/prd/140-field-readiness.md)
 
@@ -603,6 +674,7 @@ Full registry: [docs/architecture/safety-invariants.md](docs/architecture/safety
 | SAFETY-018 | A plant with no actuator has no actuation path | Edge | M5 | M8, M12 |
 | SAFETY-019 | Policy activation is atomic | Device | M9 | M8 |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap | Device + Edge | M9 | M8 |
+| SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M5 | M8, M12 |
 
 Every invariant names at least one automated test in the registry. M6 and M7 are
 not complete until those tests exist and pass.

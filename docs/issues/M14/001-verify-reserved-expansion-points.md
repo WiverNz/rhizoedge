@@ -1,6 +1,6 @@
 # Issue M14-001 — Verify every reserved expansion point exists in code
 
-**Milestone:** M14 · **PRD:** [PRD 140](../../prd/140-field-readiness.md) · **Depends on:** M13-016
+**Milestone:** M14 · **PRD:** [PRD 140](../../prd/140-field-readiness.md) · **Depends on:** M13-017
 
 ## Context
 
@@ -29,7 +29,7 @@ Confirm the reservations are real.
 
 ## Dependencies
 
-- M13-016
+- M13-017
 
 ## Implementation notes
 

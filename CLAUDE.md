@@ -79,10 +79,10 @@ In this order. Do not skip to the issue file.
    acceptance criteria
 
 When a decision seems arbitrary, the reason is in an ADR
-(`docs/adr/`). Seventeen of them, each with Context / Decision / Alternatives /
+(`docs/adr/`). Eighteen of them, each with Context / Decision / Alternatives /
 Consequences / Risks. Read the relevant one rather than re-deciding.
 
-The three newest are the ones most likely to surprise you if you learned this
+The four newest are the ones most likely to surprise you if you learned this
 project from its earlier documents:
 
 - **[ADR-015](docs/adr/015-device-offline-autonomy.md)** — a device provisioned
@@ -94,6 +94,11 @@ project from its earlier documents:
 - **[ADR-017](docs/adr/017-extensible-measurement-model.md)** — one batched
   telemetry topic carrying typed `MeasurementKind` samples, and a narrow
   typed-kind `measurements` table.
+- **[ADR-018](docs/adr/018-battery-and-deep-sleep-device-mode.md)** — a battery
+  device sleeps between samples and is **not offline**. Sleep is announced and
+  bounded by an Edge-computed wake window; a command for a sleeping device is
+  held as an Edge-side **intent** and minted at the next wake. Nothing on the
+  wire changed. See §12.
 
 ---
 
@@ -111,11 +116,11 @@ docs/
 ├── Rhizo_Edge_*.md    historical source material (see §7)
 ├── architecture/      9 docs: overview, components, data flow, deployment,
 │                      safety invariants, failure model, time, config, deps
-├── adr/               ADR-001…017 — why each decision was made
+├── adr/               ADR-001…018 — why each decision was made
 ├── prd/               PRD 000…140 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
-├── testing/           strategy, 72 scenarios, simulator, HIL, local dev
-└── issues/M0…M14/     239 implementation issues
+├── testing/           strategy, 80 scenarios, simulator, HIL, local dev
+└── issues/M0…M14/     256 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
 
@@ -167,7 +172,15 @@ read the relevant section before adding code to a crate.
 - **The UI has no MQTT dependency**, so `UI → MQTT pump command` does not
   compile. Keep it that way.
 - **No override / force / bypass parameter** on any watering endpoint or UI
-  control.
+  control. From ADR-018 this extends to **no wake, expedite, or cancel control**
+  for a sleeping device: the first two have no mechanism and the third is a
+  deliberate open question.
+- **Power is never a safety input.** Battery voltage, charge state, and solar
+  availability are telemetry. They may raise an alert; they grant and refuse
+  nothing, and none of them appears in `IrrigationInputs` (ADR-018 §7).
+- **An announced sleep may only defer the offline indication, never suppress
+  it.** A device past its Edge-computed wake window is `isolated`, not
+  `sleeping` (SAFETY-021).
 - **Persist before publish.** A command row is committed before the MQTT publish;
   a publish retry reuses the same `command_id` and never generates a new one.
 
@@ -277,6 +290,27 @@ gap — a test that inspects the buffer directly must seal first, or reconnect.
 not clamped.** Clamping would turn one corrupt field into "delete the entire
 buffer". Same shape for a mismatched `boot_id`: ignored, not best-effort.
 
+**A sleeping device is not an offline device, and an offline device is never
+shown as sleeping.** A battery device announces sleep with a retained
+`status: "offline", reason: "sleeping"` and the Edge opens a wake window computed
+from **its own** `received_at`. Past `overdue_at` the device is `isolated`. The
+device's own `expected_wake_ms` is advisory and never extends the window; a Last
+Will and an unrecognised `reason` both mean `isolated`. This is SAFETY-021, and
+it is what stops the new state becoming a place where dead devices hide.
+
+**A command for a sleeping device is an *intent*, not a command.** No
+`command_id` exists until the device is awake, which is why persist-before-publish
+and same-`command_id`-retry did not have to change, and why `commands` gains no
+column. The gate re-runs in full at delivery, so this path is *stricter* than the
+immediate one. Command TTL stayed at 120 s and needed no change — the latency
+lives in `intent_expires_at`, which never reaches a device.
+
+**Deep sleep is not a reboot, but only when it can prove it.** A timer wake with
+a valid RTC-memory checksum credits the RTC counter's measured elapsed time;
+every other reset reason, and any checksum failure, credits zero — which is
+SAFETY-015's existing behaviour. Get this backwards and a corrupted RTC word
+becomes free watering budget.
+
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug.
 
@@ -332,7 +366,7 @@ it, so run it before finishing.
 
 ## 9. Safety invariants — the short version
 
-Twelve numbered invariants in
+Twenty-one numbered invariants in
 [docs/architecture/safety-invariants.md](docs/architecture/safety-invariants.md),
 each with named tests and an enforcement milestone. Most become enforced in M6.
 
@@ -348,6 +382,10 @@ The ones most easily broken by an innocent-looking change:
   No `unwrap_or_default()` on a safety input, no `_ =>` arm on a safety match.
 - **SAFETY-001 / -010** — the dedup marker and the message's effects share one
   SQLite transaction. Splitting them reintroduces duplicate watering on crash.
+- **SAFETY-021** — a device is `sleeping` only inside a window the **edge**
+  computed, and `isolated` the moment it is overdue. Trusting the device's own
+  `expected_wake_ms`, or letting an unrecognised offline `reason` mean "asleep",
+  turns the sleep state into a place where dead devices hide.
 
 If you find yourself weakening one of these to make a test pass, the test is
 probably right.
@@ -394,3 +432,36 @@ the cloud is still incapable of originating a command in any mode.
 
 New crate: `rhizo-policy` (`no_std`, pure) holds the offline evaluator and is the
 **second** crate shared with the firmware. `mqtt-contract ← policy ← domain`.
+
+---
+
+## 12. The 2026-08-28 battery and deep-sleep pass
+
+Planning only; no runtime code was written. A battery-powered Wi-Fi node that
+sleeps between samples became a supported deployment
+([ADR-018](docs/adr/018-battery-and-deep-sleep-device-mode.md)). **14 issues were
+added** and each affected milestone's verification issue was renumbered to stay
+last — M5-022, M6-024, M8-018, M9-022, M10-013, M12-019, M13-017, M14-010.
+
+| Was | Is now |
+|---|---|
+| A device is either connected or offline | Four reachability states: `connected`, `sleeping { expected_wake_at }`, `isolated`, `reconciling` |
+| Silence means something is wrong | Silence inside an **announced, Edge-computed** window is normal; silence past it is `isolated` (SAFETY-021) |
+| A command is persisted then published immediately | For a sleeping device: an **intent** is persisted and the command is minted at the next wake |
+| Battery operation was an M14 topic | Real work in M5, M6, M9, M10, M12, M13; M14 keeps only solar and outdoor power |
+| PRD 140 listed five "high" connectivity breakages | Four were the *sleep* problem and are resolved in v1; only the *radio* problem remains |
+| 20 safety invariants | **21** — SAFETY-021 appended; the first twenty unchanged and never renumbered |
+| 242 issues | **256** |
+
+Three things did **not** change, and it is worth knowing why before you touch
+this area:
+
+- **The protocol.** Two `MeasurementKind` variants, optional `power` blocks, one
+  offline `reason`. All additive within v1; no version bump, no new topic, no
+  retention change, and the device still subscribes to exactly seven exact
+  topics. Holding a command is an Edge-side mechanism with no wire representation.
+- **Command TTL and `edge.time`.** Unchanged, because the command is minted at
+  the wake. SAFETY-002 is untouched.
+- **M4.** It was not reopened. Its registry model is extended in **M5-020**, the
+  first milestone still open — the same treatment M0 got in August. That is why
+  M5, a plant milestone, contains three device issues.

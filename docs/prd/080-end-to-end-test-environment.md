@@ -210,12 +210,18 @@ This table is how M8 proves it is not.
 - [ ] Every `e2e` scenario in [failure-scenarios.md](../testing/failure-scenarios.md)
       is implemented and green.
 - [ ] `scenario_first_demo` reproduces all 18 steps of the project-plan demo.
-- [ ] Each of the six mutations above turns the suite red.
+- [ ] Each of the seven mutations turns the suite red — the six above, plus
+      M8-017's: publishing a command immediately to a sleeping device instead of
+      holding it as an intent.
 - [ ] CI runs the suite on every change to `crates/**` or `deploy/**`.
 - [ ] A failing scenario prints database state and MQTT traffic, not just an
       assertion message.
 - [ ] Device-isolation and reconciliation scenarios from M8-015/M8-016 pass and
       re-verify the applicable SAFETY-013…020 invariants.
+- [ ] SCEN-113…SCEN-117 run the battery and sleep seam against a simulator in
+      battery mode, with a spy subscriber confirming **nothing** is published on
+      any `commands/*` topic while a device sleeps, and re-verify SAFETY-021
+      end to end (M8-017).
 
 ## Dependencies
 

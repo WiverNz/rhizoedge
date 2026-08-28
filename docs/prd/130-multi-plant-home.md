@@ -121,6 +121,11 @@ belief is the one that prevents pumping.
 | F-130-33 | Configurable per severity |
 | F-130-34 | **Notification failure never affects control.** Fire-and-forget from a separate task, exactly like the cloud outbox. |
 | F-130-35 | Optional daily digest |
+| F-130-70 | Battery voltage trended per device using M5-005's existing least-squares trend, returning `None` on sparse data for the same reason |
+| F-130-71 | A projected depletion date **only where the trend supports one**, absent otherwise — a LiFePO4 discharge curve is flat across most of its range, and a linear projection over the flat region confidently predicts a date that is wrong by weeks |
+| F-130-72 | `battery_low` and `battery_critical` dispatched through the existing dispatcher and **coalesced per device**; a threshold crossed once and stayed across becomes a daily message that gets muted, which defeats the alert |
+| F-130-73 | `device_wake_missed` dispatched as a **distinct** notification from the low-battery one — different causes, different remedies |
+| F-130-74 | Battery state affects **no** watering decision, checked structurally ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §7) |
 
 F-130-34 restates the SAFETY-008 principle for a new outbound dependency: adding
 a notification channel must not add a way for the control loop to block.
@@ -135,6 +140,8 @@ a notification channel must not add a way for the control loop to block.
 | F-130-43 | Log rotation via journald limits |
 | F-130-44 | Measurement downsampling to hourly beyond the raw retention window |
 | F-130-45 | An upgrade procedure that preserves data |
+| F-130-46 | Backup and restore round-trip `power_mode`, `wake_interval_seconds`, and pending command intents |
+| F-130-47 | Documented battery-node deployment: cell type, replacement interval derived from M10-012's **measured** budget, what to check when a node stops waking, and how to change a wake interval safely |
 
 ### UI
 
@@ -144,6 +151,8 @@ a notification channel must not add a way for the control loop to block.
 | F-130-51 | Grouping by room or reservoir |
 | F-130-52 | Bulk automation enable/disable with a confirmation listing affected plants |
 | F-130-53 | Notification configuration |
+| F-130-54 | Fleet views filter and group by power mode |
+| F-130-55 | **Sleeping devices are not counted as offline** in any UI count or metric — a household with six battery nodes has roughly six sleeping devices at any instant, and that is the healthy state |
 
 ### Release and operations
 

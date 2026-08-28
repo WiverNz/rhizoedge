@@ -46,6 +46,7 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 | SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | PLANNED |
 | SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
+| SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M5 | PLANNED |
 
 Milestone M8 re-verifies SAFETY-001 … SAFETY-010 and SAFETY-012 end-to-end in
 the full Docker environment, and SAFETY-013 … SAFETY-020 in its network-isolation
@@ -794,6 +795,59 @@ ring; overflow during replay.
 - SCEN-104.
 
 **Becomes enforced.** M9 (device); M6 (simulator model); surfaced in M12.
+
+---
+
+## SAFETY-021 — Expected sleep is bounded and never masks an unexpected absence
+
+**Statement.** A device is reported as `sleeping` only while it is inside a wake
+window the **edge** computed from its own clock, and only after the device
+announced the sleep. A device that is overdue past `overdue_at`, or that vanished
+without an announcement, is reported as `isolated`. No configuration, and no
+field of any device-supplied message, can extend a wake window indefinitely or
+convert an unannounced absence into an expected one.
+
+**Rationale.** A battery device is quiet almost all the time, so "quiet" stops
+being evidence of anything ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)
+§1). Without a bound, `sleeping` becomes the state a flat battery, a failed wake
+timer, a crashed device, and a stolen node all sit in for ever, and the operator
+loses the one indication that something has died. The invariant is what makes the
+new state safe to add: it can only ever *defer* the offline indication, never
+suppress it.
+
+The direction of the two derivations is load-bearing. The window is computed by
+the edge, so a device with a wrong clock cannot make itself look punctual — the
+same reason SAFETY-005 uses `received_at`. And an unrecognised `reason` on an
+offline status resolves to `connection_lost`, so uncertainty produces *absent*,
+never *asleep* (SAFETY-012).
+
+**Enforcing components.** Edge (`device` liveness derivation and the liveness
+timer). The device's announcement and its `expected_wake_ms` are advisory inputs
+and are never authoritative.
+
+**Persisted state required.** Edge: `power_mode`, `wake_interval_seconds`,
+`expected_wake_at`, `missed_wake_count` on `devices`. Derived per read, in the
+same way and for the same reason as `stale` (PRD 040 state model).
+
+**Failure scenarios covered.** A battery device that stops waking; a device that
+announces sleep and is then unplugged; a device whose announced
+`expected_wake_ms` is years in the future; a device that announces sleep with an
+unrecognised reason; a device that misses one wake and returns on the next.
+
+**Planned tests.**
+- `safety_021_overdue_sleeper_becomes_isolated` (unit): a device past
+  `overdue_at` derives `isolated`, not `sleeping`.
+- `safety_021_device_wake_time_is_advisory` (unit): an announced
+  `expected_wake_ms` far in the future does not extend the edge-computed window.
+- `safety_021_unannounced_absence_is_never_sleeping` (unit): an LWT with
+  `connection_lost`, and an offline status with an unrecognised `reason`, both
+  derive `isolated`.
+- `safety_021_sleep_window_detected_by_timer` (integration): the liveness timer
+  transitions an overdue sleeper with no inbound message, per F-040-09.
+- SCEN-111, SCEN-112.
+
+**Becomes enforced.** M5 (edge derivation and timer); re-verified in M8 against a
+sleeping simulator and in M12's presentation.
 
 ---
 

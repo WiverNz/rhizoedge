@@ -1,6 +1,6 @@
 # Issue M7-001 — Create the cloud-api binary and PostgreSQL service
 
-**Milestone:** M7 · **PRD:** [PRD 070](../../prd/070-cloud-sync-and-storage.md) · **Depends on:** M6-022
+**Milestone:** M7 · **PRD:** [PRD 070](../../prd/070-cloud-sync-and-storage.md) · **Depends on:** M6-024
 
 ## Context
 
@@ -26,7 +26,7 @@ Create the cloud service skeleton with PostgreSQL.
 
 ## Dependencies
 
-- M6-022
+- M6-024
 
 ## Implementation notes
 

@@ -22,6 +22,32 @@
 > budget or shortens a cooldown; audit events are durable across power loss while
 > telemetry may be lost; `event_id` is stable across replay.
 
+> **Revised 2026-08-28 — battery and deep sleep.** "Low power or deep sleep" was
+> a non-goal here, deferred to M14. It is now a deliverable:
+> [ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) makes a
+> battery-powered Wi-Fi node a supported deployment, and issues M9-019…M9-021 add
+> the power mode, the peripheral rails, and the awake hold. **One firmware image
+> serves both power modes**, for the same reason there is one
+> `validate_water_command`: two images would be two safety paths, and M9-014's
+> conformance test would cover only one of them.
+>
+> The hard part is not `esp_deep_sleep`; it is that sleep destroys RAM while
+> SAFETY-015's accounting must survive it honestly. The rule is narrow and stated
+> as a single function: a **timer wake with a valid RTC checksum** credits the RTC
+> counter's measured elapsed time, and **every other reset reason, and any
+> checksum failure, credits zero** — which is SAFETY-015's existing behaviour,
+> unchanged. A deep-sleep wake is not a reboot for accounting purposes; a reboot
+> is still never a way to earn budget.
+>
+> **Additional acceptance criteria:** an absent or unrecognised `power.mode`
+> yields `AlwaysOn`; `deep_sleep` has exactly one call site, checked
+> structurally; the device does not sleep while a dose is in progress or before
+> the result is acknowledged; both power rails are off during sleep and driven
+> off in the boot-safe sequence; no stabilisation constant for any specific sensor
+> part appears in the firmware; battery fields are **absent** on hardware that
+> cannot measure them, never zero; no battery field appears in `IrrigationInputs`
+> or in any argument to `validate_water_command`.
+
 ## Summary
 
 Replace the simulator's protocol endpoint with real Rust firmware on an
@@ -51,8 +77,14 @@ sensors and a real pump deferred to M10 and M11.
 
 - Real soil sensors (M10) or a real pump (M11).
 - OTA updates, TLS, or certificates (post-V1).
-- Low power or deep sleep (M14).
-- Any irrigation intelligence on the device — that remains the edge's
+- Light sleep, dynamic frequency scaling, or any low-power technique beyond deep
+  sleep. One mechanism, measured, before a second is added.
+- Measuring what any of it draws — M10-012, on a board, with a meter. **No
+  autonomy figure is stated as a specification by this milestone.**
+- Solar, charging, or outdoor power (M14-009).
+- PCB design of any kind.
+- Any irrigation intelligence on the device beyond the shared offline evaluator —
+  that remains the edge's
   ([ADR-006](../adr/006-irrigation-state-machine-ownership.md)).
 
 ## User/system flows
@@ -127,11 +159,28 @@ edge publishes command.water
 | F-090-38 | Hardware watchdog enabled; a watchdog reset leaves the pump off |
 | F-090-39 | Every water command is refused while `clock_synced == false` |
 
+### Power (M9-019…M9-021)
+
+| ID | Requirement |
+|---|---|
+| F-090-50 | `PowerMode` read from retained config and persisted to NVS; absent or unrecognised yields `AlwaysOn` |
+| F-090-51 | Deep sleep with a timer wake source at `wake_interval_seconds`; **exactly one `deep_sleep` call site**, reachable only from the top of the wake loop |
+| F-090-52 | The sleep announcement — retained status, `reason: "sleeping"`, `power` block — published and its PUBACK observed **before** sleep is entered |
+| F-090-53 | RTC-retained sleep-cycle state with a checksum; a timer wake with a valid checksum credits measured elapsed time, every other reset reason and any checksum failure credits zero (SAFETY-015) |
+| F-090-54 | `wake_reason` reported truthfully in `device.status` |
+| F-090-55 | Separate `PowerRail`-gated supplies for the RS485 transceiver and the sensor, off during sleep, driven off in the boot-safe sequence, and released by a guard on every error path |
+| F-090-56 | `sensor_warmup_ms` taken from configuration; **no compiled-in stabilisation constant for any specific sensor part** (M10-011 measures it) |
+| F-090-57 | An awake **hold**, acquired before actuation and released after the `command.result` PUBACK, which gates sleep; `awake_budget_seconds` bounds only an idle wake |
+| F-090-58 | `FIRMWARE_MAX_RUN_SECONDS` still ends a run on a timer independent of the hold and of the wake cycle |
+| F-090-59 | `battery_voltage` published where measurable and **omitted** where not; `battery_percent` only from a configured chemistry curve; neither is ever an input to a decision |
+| F-090-60 | NVS written on change and on watering, not per wake — at ~96 wakes a day NVS endurance is the limiting component; per-wake accounting lives in RTC memory |
+| F-090-61 | Always-on behaviour is unchanged: rails enabled, session held, F-090-01…F-090-43 unaffected |
+
 ### Architecture
 
 | ID | Requirement |
 |---|---|
-| F-090-40 | Hardware behind traits: `Pump`, `SoilSensor`, `TankSensor`, `LeakSensor`, `Scale`, `Clock`, `NvsStore` |
+| F-090-40 | Hardware behind traits: `Pump`, `SoilSensor`, `TankSensor`, `LeakSensor`, `Scale`, `Clock`, `NvsStore`, `PowerRail`, `BatterySensor` |
 | F-090-41 | Fake adapters for all of them, usable on the host |
 | F-090-42 | `src/app/` contains **no `esp_idf_*` imports** and is host-testable |
 | F-090-43 | Pin assignments in one `board.rs` |
@@ -346,4 +395,9 @@ completed and reviewed before hardware arrives.
 
 - Real sensors (M10), real pump (M11).
 - OTA updates, signed firmware, TLS, per-device certificates (post-V1).
-- Deep sleep and battery operation ([PRD 140](140-field-readiness.md)).
+- Light sleep and further power techniques, if M10-012's measurements show deep
+  sleep alone does not reach the target.
+- `no_std` firmware for battery nodes, reconsiderable per
+  [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md) — though deep-sleep
+  current is dominated by board hardware rather than by whether the firmware links
+  `std`, so it is likely the wrong lever.

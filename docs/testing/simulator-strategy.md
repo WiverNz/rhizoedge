@@ -172,10 +172,23 @@ originates at the device must be reproducible on demand.
 | `--fault pump-stuck-on` | fail to de-energise (tests the run-timer guard) |
 | `--fault restart-mid-dose` | terminate during actuation |
 | `--fault restart` | full restart with a new `boot_id` |
+| `--fault miss-wake:<n>` | skip N wake cycles without announcing (M5-021) |
+| `--fault sleep-without-announcing` | disconnect uncleanly from battery mode, firing the Last Will (M5-021) |
 
 Faults are also settable at runtime through the simulator's small control API
 (`POST /sim/fault`) so scenario tests can inject mid-run without a restart. That
 control API is simulator-only and does not exist in firmware.
+
+The last two faults arrive with **battery power mode** in M5-021
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)). `--power-mode
+battery` makes the simulator sleep, wake, sample, connect, publish, and announce
+its next sleep on the accelerated clock, which is what gives SCEN-110…SCEN-117 a
+producer four milestones before firmware exists.
+
+The two faults exist because the *distinction* is what needs testing, not the
+happy path: `miss-wake` produces a device that is overdue, and
+`sleep-without-announcing` produces one that vanished. Both must reach `isolated`
+and neither may be reported as sleeping (SAFETY-021).
 
 ---
 

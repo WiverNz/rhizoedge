@@ -128,6 +128,13 @@ a pump to a program, and the limits should be visible at that moment.
 | F-120-25 | Automation toggle shows dose, daily cap, and cooldown before enabling |
 | F-120-26 | Stale data is shown as stale — a greyed value with its age, never a fresh-looking number |
 | F-120-27 | The manual/automatic privilege difference is explained where it matters (manual works with a faulty sensor; nothing works during a leak) |
+| F-120-40 | A **sleeping** device is rendered as a normal operating state — "Sleeping — next wake expected around 14:45" — with no error colour, warning icon, or offline treatment |
+| F-120-41 | An **overdue** sleeper is rendered as "Offline unexpectedly" with its missed-wake count and how long it has been overdue; the two treatments are visually distinct, not one treatment with different words |
+| F-120-42 | A held dose renders as "Pending until device wakes" with the expected delivery time — **never a spinner, never "sent"** — and the delay is stated on the control **before** the request, not after |
+| F-120-43 | A second water request renders the 409 as "a dose is already waiting for this plant", not as a generic failure; `expired_before_wake` and `refused` appear in history with their reason |
+| F-120-44 | Last-known readings for a sleeping device are shown greyed with their age, since data a few minutes old is normal here rather than suspect (F-120-26's treatment, applied) |
+| F-120-45 | **No control wakes a device, expedites a dose, or cancels an intent.** The first two have no mechanism; the third is an open question in [PRD 060](060-irrigation-control-and-safety.md) |
+| F-120-46 | A monitoring-only **battery** plant shows no watering control at all — F-120-24 and SAFETY-018 re-verified for a device class that makes the case common |
 
 ### Technical
 

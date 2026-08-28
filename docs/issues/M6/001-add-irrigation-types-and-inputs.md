@@ -1,6 +1,6 @@
 # Issue M6-001 — Define IrrigationInputs and IrrigationDecision
 
-**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M5-019
+**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M5-022
 
 ## Context
 
@@ -28,7 +28,7 @@ Define the input and decision types that the gate and machine operate on.
 
 ## Dependencies
 
-- M5-019
+- M5-022
 
 ## Implementation notes
 

@@ -1,6 +1,6 @@
 # Issue M12-001 — Create the Tauri + Leptos workspace
 
-**Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M6-022
+**Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M6-024
 
 ## Context
 
@@ -25,7 +25,7 @@ Establish the UI workspace with no JavaScript toolchain.
 
 ## Dependencies
 
-- M6-022
+- M6-024
 
 ## Implementation notes
 

@@ -119,6 +119,43 @@ Everything in the box above the dashed line: telemetry, storage,
 recommendations, automatic watering, safety lockouts, the local API, and the UI.
 This is SAFETY-008 and it is the whole point.
 
+### 2b. Battery nodes in the same deployment
+
+A household will not run mains cable to every pot. A node on a balcony, a
+bookshelf, or a bathroom windowsill runs from a battery, sleeps between samples,
+and joins the same LAN, the same broker, and the same Edge as every other node
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)).
+
+```text
+   ESP32 mains node   ──── Wi-Fi, session held ────────┐
+                                                       ├──► mosquitto ──► edge
+   ESP32 battery node ──── Wi-Fi, ~seconds per wake ───┘
+        │
+        └── deep sleep ─► wake ─► rails on ─► warm-up ─► sample ─► connect
+            ─► publish/receive ─► [stay awake for a dose] ─► announce ─► sleep
+```
+
+Nothing else in the topology changes. There is no gateway, no second broker, no
+store-and-forward tier: a battery node is an ordinary MQTT client that is
+connected less often. What differs is operational rather than architectural:
+
+- **The Edge holds a manual dose until the next wake**, up to one wake interval,
+  surfaced as `pending_for_device_wake`.
+- **Sleeping devices are not counted as offline.** A household with six battery
+  nodes has roughly six sleeping devices at any instant, and that is the healthy
+  state (M13-016).
+- **A flat battery is a maintenance event, predicted where the voltage trend
+  supports it and discovered where it does not.** It affects no watering
+  decision — a depleted device simply stops reporting and its plants lock out on
+  staleness like any other absent device.
+- **Broker keepalive and ACLs are unchanged.** The device authenticates per wake
+  with the same credentials and the same `%u` ACL.
+
+**Autonomy figures for this deployment are targets, not specifications**, until
+M10-012 has measured complete-system sleep current and wake-cycle energy on
+assembled hardware. See [PRD 140](../prd/140-field-readiness.md) for the targets
+and what settles them.
+
 ---
 
 ## 3. Device-to-broker topology
@@ -262,8 +299,19 @@ The MQTT contract is the seam: a LoRaWAN gateway translates into the same
 is the payoff of keeping transport concerns out of `rhizo-mqtt-contract`.
 
 Constraints that will force real design work later, recorded now so they are not
-a surprise: duty-cycle limits make 5-minute telemetry impossible on LoRaWAN;
-payloads must become binary rather than JSON; command TTL semantics must widen;
-and battery devices sleep, which breaks the "always connected" assumption behind
-Last Will. These are M14 planning topics, not V1 problems. See
+a surprise: duty-cycle limits make 5-minute telemetry impossible on LoRaWAN, and
+payloads must become binary rather than JSON. These are M14 planning topics, not
+V1 problems. See [PRD 140](../prd/140-field-readiness.md).
+
+**Two items were removed from that list on 2026-08-28.** "Battery devices sleep,
+which breaks the assumption behind Last Will" and "command TTL semantics must
+widen" are no longer future problems: §2b's battery node solves both inside v1,
+with an announced sleep state and commands minted at wake, and neither required a
+protocol bump or a change to command TTL
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §3, §4). What
+remains genuinely unsolved is the *radio* — a duty-cycled device that cannot be
+pushed to at all, which still needs v2 and the polling model in
 [PRD 140](../prd/140-field-readiness.md).
+
+Field power — solar, charging, enclosure, and seasonal energy arithmetic — is
+planned in M14-009 and depends on M10-012's measurements.

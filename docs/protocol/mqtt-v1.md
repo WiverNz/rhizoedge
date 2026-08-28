@@ -256,6 +256,8 @@ data the firmware can use ([ADR-017](../adr/017-extensible-measurement-model.md)
 | `tank_level` | `percent` | scalar | 0.0 – 100.0 |
 | `leak_state` | `boolean` | boolean | — |
 | `nitrate_concentration` | `mg_l` | scalar | 0.0 – 5000.0 |
+| `battery_voltage` | `volt` | scalar | 0.0 – 30.0 |
+| `battery_percent` | `percent` | scalar | 0.0 – 100.0 |
 
 Rules:
 
@@ -265,6 +267,13 @@ Rules:
 - A receiver MUST decode an unrecognised `kind` to `Unknown`, MUST store the
   sample, and MUST treat it as **advisory only** — it never gates actuation
   (SAFETY-012).
+- `battery_voltage` and `battery_percent` are **advisory telemetry and nothing
+  more**. They are chartable and alertable like any other kind, and no watering
+  or safety decision may read them
+  ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §7). A device that
+  cannot measure them omits them entirely — **absent, never zero, never a
+  guess** — and `battery_percent` is published only from a configured chemistry
+  curve, for the same reason an uncalibrated probe publishes `null`.
 - `nitrate_concentration` is publishable **only** by a genuinely calibrated ion
   sensor, and SHOULD carry `calibration_ref`. There is deliberately **no kind for
   nitrogen, phosphorus, or potassium**: cheap "NPK" probes derive those from EC by
@@ -447,6 +456,13 @@ Published retained on connect, on config change, and at least every
     "rssi_dbm": -58,
     "applied_policy_versions": { "monstera-01": 7 },
     "connectivity": { "mode": "connected", "isolated_ms": 0 },
+    "power": {
+      "mode": "battery",
+      "wake_interval_seconds": 900,
+      "wake_reason": "timer",
+      "battery_mv": 3280,
+      "awake_ms": 4120
+    },
 
     "capabilities": {
       "sensors": [
@@ -522,6 +538,33 @@ detects config drift (§5.11).
 liveness from message arrival — but it is what lets the UI say "this device ran
 alone for six hours" after a reconnection.
 
+#### Power — normative
+
+The `power` block is optional and reports the device's own view of its power
+mode, all of it **advisory** in the same sense as `connectivity`
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §2).
+
+| Field | Meaning |
+|---|---|
+| `mode` | `always_on` or `battery`, as actually applied |
+| `wake_interval_seconds` | the interval the device is actually using |
+| `expected_wake_ms` | **diagnostic only** — see below |
+| `wake_reason` | `timer`, `cold_boot`, `external`, `watchdog`, or an unrecognised value |
+| `battery_mv` | supply voltage, omitted where the hardware cannot measure it |
+| `awake_ms` | how long this wake has lasted so far |
+
+**`expected_wake_ms` MUST NOT be applied to any clock, by anything.** It appears
+on a *retained* message, and a retained timestamp applied to a clock is precisely
+the failure the `time` topic's retention prohibition exists to prevent (§3). Only
+`edge.time`, which is never retained, sets a clock. The edge derives the
+authoritative wake window from its own `received_at` plus the interval it
+configured, so a device with a wrong clock cannot make itself look punctual —
+the same reasoning that makes staleness use `received_at` (SAFETY-005).
+
+`wake_reason` is what lets the device distinguish a deep-sleep timer wake, where
+its RTC counter measured the elapsed time, from a reset, where it did not
+(SAFETY-015).
+
 ### 5.6 Last Will and Testament
 
 Every device MUST configure an LWT at connect time:
@@ -552,6 +595,26 @@ handles it correctly by ignoring the duplicate.
 On a clean disconnect a device SHOULD publish `status: offline` with
 `reason: "shutdown"` before disconnecting.
 
+#### Announced sleep — normative
+
+A device entering deep sleep MUST publish a retained `device.status` with
+`status: "offline"`, `reason: "sleeping"`, and its `power` block **before**
+disconnecting, and MUST observe the QoS 1 acknowledgement first. This replaces
+the retained online status, so a fresh subscriber sees a sleeping device rather
+than a stale online one.
+
+`reason` is therefore one of `connection_lost`, `shutdown`, or `sleeping`. A
+receiver MUST decode an unrecognised `reason` to `connection_lost`: uncertainty
+resolves to *unexpectedly absent*, never to *peacefully asleep* (SAFETY-012,
+SAFETY-021).
+
+**The Last Will stays armed regardless.** A device that drops its session without
+announcing still fires `connection_lost`, which is what keeps an announced sleep
+distinguishable from a crash, a flat battery, or an unplugged node. Only an
+announcement opens a wake window, and the window is bounded by the edge's own
+clock — so a sleeping device that stops waking surfaces as absent rather than
+hiding in the sleep state indefinitely.
+
 ### 5.7 `device.config` → `config` (retained, edge → device)
 
 ```json
@@ -564,7 +627,13 @@ On a clean disconnect a device SHOULD publish `status: offline` with
     "telemetry_interval_seconds": 300,
     "pump": { "ml_per_second": 8.2, "enabled": true },
     "tank": { "min_percent": 15.0 },
-    "sensors": { "soil": true, "weight": false, "tank": true, "leak": true }
+    "sensors": { "soil": true, "weight": false, "tank": true, "leak": true },
+    "power": {
+      "mode": "battery",
+      "wake_interval_seconds": 900,
+      "sensor_warmup_ms": 3000,
+      "awake_budget_seconds": 30
+    }
   }
 }
 ```
@@ -576,6 +645,33 @@ On a clean disconnect a device SHOULD publish `status: offline` with
 | `pump.ml_per_second` | float | 0.1 – 100.0 |
 | `pump.enabled` | boolean | — |
 | `tank.min_percent` | float | 0.0 – 100.0 |
+| `power.mode` | enum | `always_on` \| `battery` |
+| `power.wake_interval_seconds` | integer | 60 – 86400 |
+| `power.sensor_warmup_ms` | integer | 0 – 60000 |
+| `power.awake_budget_seconds` | integer | 5 – 300 |
+
+#### Power — normative
+
+The whole `power` block is **optional**, and its absence means `always_on` —
+today's behaviour, and the behaviour of every device built before the block
+existed ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §5).
+
+An **unrecognised `mode` MUST decode to `always_on`**, not to an error and not to
+`battery`. Sleeping is the branch that makes a device unreachable, so uncertainty
+must never choose it (SAFETY-012).
+
+`wake_interval_seconds` is validated against its range and **rejected, never
+clamped** — a silently clamped interval would put the Edge's computed wake window
+and the device's timer permanently out of agreement, which is exactly the
+disagreement SAFETY-021 depends on not existing.
+
+`sensor_warmup_ms` carries **no compiled-in default for any specific sensor
+part**. The correct value is a measured property of the hardware (M10-011), and a
+guess baked into firmware is how a device reads a probe that has not settled.
+
+A device in `battery` mode changes nothing about the protocol: it subscribes to
+the same seven exact topics (§3), publishes the same messages, and validates
+command TTL by the same rules. It is simply connected less often.
 
 Device behaviour:
 
@@ -1225,6 +1321,28 @@ Within `v1`:
 A `v2` uses the `rhizo/v2/` namespace, allowing v1 and v2 devices to coexist on
 one broker indefinitely. Full process in
 [versioning-policy.md](versioning-policy.md).
+
+### Change log within v1
+
+**2026-08-28 — battery and deep-sleep device mode
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)).** Additive
+throughout; **no version bump, and none was needed.** Added: the
+`battery_voltage` and `battery_percent` measurement kinds (§5.1, the designed
+extension point of [ADR-017](../adr/017-extensible-measurement-model.md)); the
+optional `power` block in `device.config` (§5.7) and in `device.status` (§5.5);
+and the `sleeping` offline reason (§5.6).
+
+No topic was added, no retention or QoS rule changed, and the device subscription
+set is still exactly seven exact topics. Holding commands for a sleeping device
+is entirely an edge-side mechanism — an intent persisted in SQLite and turned
+into an ordinary command once the device is awake — so nothing about command
+delivery, command TTL, or `edge.time` changed on the wire
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §3, §4).
+
+Both new enums resolve conservatively and in opposite directions, which is the
+point: an unrecognised `power.mode` means `always_on` (never start sleeping on a
+guess), and an unrecognised offline `reason` means `connection_lost` (never
+assume a silent device is merely asleep).
 
 ---
 

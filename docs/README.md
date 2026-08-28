@@ -53,7 +53,7 @@ normalised out of the project plan.
 | [component-model.md](architecture/component-model.md) | Per-component responsibilities, interfaces, and prohibitions |
 | [data-flow.md](architecture/data-flow.md) | Ingestion, control, and cloud pipelines with transaction boundaries |
 | [deployment-model.md](architecture/deployment-model.md) | Dev, home, and future topologies; sizing and retention |
-| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…020** — rationale, enforcement, tests, milestone |
+| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…021** — rationale, enforcement, tests, milestone |
 | [failure-model.md](architecture/failure-model.md) | Every failure: detection, expected state, recovery, safety behaviour |
 | [time-model.md](architecture/time-model.md) | Clock authority, staleness, TTL, the rolling 24-hour window |
 | [configuration-model.md](architecture/configuration-model.md) | Five configuration layers and who may change what |
@@ -82,6 +82,7 @@ normalised out of the project plan.
 | [ADR-015](adr/015-device-offline-autonomy.md) | A provisioned device may water while isolated |
 | [ADR-016](adr/016-plant-binding-and-policy-model.md) | Per-plant bindings, roles, thresholds; optional actuator |
 | [ADR-017](adr/017-extensible-measurement-model.md) | Typed measurement kinds; batched telemetry; narrow table |
+| [ADR-018](adr/018-battery-and-deep-sleep-device-mode.md) | Battery devices sleep; announced bounded wake windows; commands held as Edge-side intents |
 
 ## Product requirements
 
@@ -125,26 +126,26 @@ One PRD per milestone.
 
 ## Implementation issues
 
-239 issues across 15 milestones, each with context, scope, dependencies,
+256 issues across 15 milestones, each with context, scope, dependencies,
 acceptance criteria, and verification commands.
 
 | Milestone | Issues | Subject |
 |---|---|---|
 | [M0](issues/M0/) | 13 | Foundation and engineering baseline |
-| [M1](issues/M1/) | 14 | Domain model and MQTT protocol |
-| [M2](issues/M2/) | 15 | Device simulator |
-| [M3](issues/M3/) | 16 | Edge ingestion and SQLite |
-| [M4](issues/M4/) | 11 | Device registry and health |
-| [M5](issues/M5/) | 13 | Plant model and recommendations |
-| [M6](issues/M6/) | 19 | Irrigation control and safety |
+| [M1](issues/M1/) | 19 | Domain model and MQTT protocol |
+| [M2](issues/M2/) | 19 | Device simulator |
+| [M3](issues/M3/) | 18 | Edge ingestion and SQLite |
+| [M4](issues/M4/) | 13 | Device registry and health |
+| [M5](issues/M5/) | 22 | Plant model and recommendations |
+| [M6](issues/M6/) | 24 | Irrigation control and safety |
 | [M7](issues/M7/) | 15 | Cloud API and PostgreSQL |
-| [M8](issues/M8/) | 15 | End-to-end test environment |
-| [M9](issues/M9/) | 15 | ESP32 Rust firmware |
-| [M10](issues/M10/) | 11 | Real soil sensor |
+| [M8](issues/M8/) | 18 | End-to-end test environment |
+| [M9](issues/M9/) | 22 | ESP32 Rust firmware |
+| [M10](issues/M10/) | 13 | Real soil sensor |
 | [M11](issues/M11/) | 14 | Real pump and safety hardware |
-| [M12](issues/M12/) | 13 | Rust UI |
-| [M13](issues/M13/) | 13 | Multi-plant home system |
-| [M14](issues/M14/) | 7 | Field readiness architecture |
+| [M12](issues/M12/) | 19 | Rust UI |
+| [M13](issues/M13/) | 17 | Multi-plant home system |
+| [M14](issues/M14/) | 10 | Field readiness architecture |
 
 Issue numbering within a milestone is a valid execution order: every issue's
 dependencies have lower numbers in the same milestone, or belong to an earlier

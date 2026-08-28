@@ -1,6 +1,6 @@
 # Issue M11-006 — Implement the leak sensor adapter
 
-**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M10-011
+**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M10-013
 
 ## Context
 
@@ -25,7 +25,7 @@ Detect a leak and refuse everything.
 
 ## Dependencies
 
-- M10-011
+- M10-013
 
 ## Implementation notes
 

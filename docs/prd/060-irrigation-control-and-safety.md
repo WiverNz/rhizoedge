@@ -25,6 +25,43 @@
 > `PROPTEST_CASES=10000 cargo test safety_014` passes; an MQTT spy confirms no
 > command is published while a plant is reconciling.
 
+> **Extended 2026-08-28 — commands for sleeping devices.**
+> [ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §3 adds M6-022 and
+> M6-023: a durable **command intent**, held while a battery device sleeps and
+> turned into an ordinary command at the next wake.
+>
+> The safety argument rests on one distinction. **An intent is not a command.** No
+> `command_id` exists until delivery, so there is still exactly one
+> persist-before-publish moment per command and a delivery retry still reuses the
+> `command_id` allocated at that moment — SAFETY-001 and SAFETY-010 are untouched,
+> and `commands` gains no column. The full safety gate then **re-runs at
+> delivery** against current inputs, which makes this path stricter than the
+> immediate one: a leak, an empty tank, an exhausted rolling window, or a stale
+> required measurement that appeared while the device slept all refuse the dose
+> (SAFETY-003, -004, -005, -006, -012).
+>
+> Command TTL is **unchanged at 120 s** and needed no change, because the command
+> is minted at the wake rather than at the request. The latency lives in
+> `intent_expires_at`, an edge-side, operator-visible bound that never reaches a
+> device (SAFETY-002 intact). Nothing is retained on MQTT, no topic is added, and
+> there is no override, force, expedite, or wake parameter.
+>
+> **At most one open water intent per plant.** A second request returns 409. The
+> rolling cap would bound the total anyway, but arriving at the cap by accident is
+> not a design.
+>
+> **Additional acceptance criteria:** a `POST /water` to a sleeping device
+> publishes nothing, verified by a spy subscriber, and returns 202 with
+> `pending_for_device_wake` and **no `command_id`**; the delivered command's
+> `issued_at` is the wake instant, not the request instant; `edge.time` precedes
+> the command on every wake delivery; an edge restart between request and wake
+> still delivers exactly once; an M8 mutation that publishes immediately to a
+> sleeping device turns the suite red.
+>
+> **Open question.** Cancelling a pending intent from the API is deliberately not
+> specified: a cancel that races a wake is a consensus problem for a feature
+> nobody has asked for, and `intent_expires_at` already bounds the exposure.
+
 ## Summary
 
 The milestone where the system gains the ability to move water. Implements the

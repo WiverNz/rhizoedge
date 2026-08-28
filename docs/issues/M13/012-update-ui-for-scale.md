@@ -1,6 +1,6 @@
 # Issue M13-012 — Update the UI for a larger deployment
 
-**Milestone:** M13 · **PRD:** [PRD 130](../../prd/130-multi-plant-home.md) · **Depends on:** M13-011, M12-018
+**Milestone:** M13 · **PRD:** [PRD 130](../../prd/130-multi-plant-home.md) · **Depends on:** M13-011, M12-019
 
 ## Context
 
@@ -27,7 +27,7 @@ Keep the UI legible and safe at scale.
 ## Dependencies
 
 - M13-011
-- M12-018
+- M12-019
 
 ## Implementation notes
 

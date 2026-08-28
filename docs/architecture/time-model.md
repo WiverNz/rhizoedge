@@ -142,6 +142,46 @@ Consequences, accepted deliberately:
 - The default TTL of 120 s is short enough that a queued command is almost
   always stale by the time a reconnecting device sees it, which is the intent.
 
+### A sleeping device does not change any of this
+
+A battery device is reachable for a few seconds out of every wake interval
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)). The obvious worry
+is that a 15-minute interval makes a 120-second TTL useless.
+
+It does not, because **the command is minted when the device is awake, not when
+the operator asks.** The Edge holds the request as a durable *intent* and, at the
+next wake, re-runs the safety gate and issues a command whose `issued_at` is the
+wake instant. The device receives a command a few seconds old from an Edge it has
+just synchronised with, and evaluates it under exactly the rules above.
+
+```text
+operator request ──── minutes ────► wake ──► edge.time ──► command (fresh TTL)
+        │                                                       │
+   intent_expires_at                                       expires_at
+   edge clock, operator-visible,                     wire TTL, device-validated,
+   never on the wire                                 unchanged at 120 s
+```
+
+Two expiries, deliberately not merged into one field. `intent_expires_at`
+(default `2 × wake_interval_seconds`, floor 30 minutes) bounds how long the Edge
+will keep trying; `expires_at` is the unchanged wire TTL that SAFETY-002 rests
+on. `intent_expires_at` never reaches a device.
+
+Consequences worth stating:
+
+- **No change to TTL, to `edge.time`, or to SAFETY-002 was required.** The
+  latency lives in an Edge-side record, not on the wire.
+- The wake ordering is `edge.time` first, then the command. A `clock_unsynced`
+  refusal inside one awake window is a retryable delivery failure, not a terminal
+  one — the device is awake and has now been synchronised.
+- With a wake interval below `TIME_SYNC_MAX_AGE_SECONDS` (1800 s) a battery
+  device stays continuously synchronised. Above it, `clock_synced` ages out
+  *between* wakes, which is harmless: nothing can reach the device then, and it
+  re-synchronises on connect before any command is delivered.
+- The retained sleep announcement carries `expected_wake_ms` as a **diagnostic**.
+  It is not a time source. No field of any retained message may set a clock —
+  only `edge.time`, which is never retained, does that (§3b).
+
 ### Clock skew tolerance
 
 Devices take their wall clock directly from the edge over MQTT, so skew is

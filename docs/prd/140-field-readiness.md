@@ -54,8 +54,14 @@ new design.
 ## Non-goals
 
 **Implementing any of it.** No LoRaWAN code, no zone entities, no weather client,
-no multi-depth ingestion. M14 produces documentation and, at most, two or three
-small reserved seams.
+no multi-depth ingestion, **no PCB, no schematic, and no part numbers**. M14
+produces documentation and, at most, two or three small reserved seams.
+
+Battery operation itself is explicitly **not** deferred here any more: it landed
+in v1 across M5, M6, M9, M10, M12, and M13
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)). What remains in
+M14 is the outdoor power case — solar, charging, enclosure, and the seasonal
+arithmetic — planned in M14-009 and settled by M10-012's measurements.
 
 Also out of scope permanently: **deriving N/P/K from EC.** See §"Fertility" below.
 
@@ -92,21 +98,50 @@ version is an extension rather than a rewrite.
 
 | Assumption | Breaks because | Severity |
 |---|---|---|
-| Devices are always connected | LoRaWAN devices sleep; Last Will and online/offline become meaningless | **high** |
+| ~~Devices are always connected~~ | ~~Last Will and online/offline become meaningless~~ | **resolved in v1** |
+| ~~Command TTL of 120 s~~ | ~~a sleeping device may not wake for an hour~~ | **resolved in v1** |
+| ~~Mains power~~ | ~~battery devices must sleep and cannot hold a TCP session~~ | **resolved in v1** |
+| ~~Edge time sync~~ | ~~a sleeping device receives `edge.time` rarely~~ | **resolved in v1** |
 | JSON payloads (~300 B) | LoRaWAN payloads are ~50 B and duty-cycled | **high** |
 | Telemetry every 300 s | duty-cycle limits allow a few messages per hour | **high** |
-| Command TTL of 120 s | a sleeping device may not wake for an hour | **high** |
-| Mains power | battery devices must sleep and cannot hold a TCP session | **high** |
-| Edge time sync | a sleeping device receives `edge.time` rarely, and SAFETY-002 depends on a fresh synchronisation | **high** |
+| A device can be pushed to | a duty-cycled radio device cannot receive on demand at all | **high** |
 | One pump per device | zones use shared pumps and per-zone valves | medium |
 | A plant is the unit of irrigation | a field irrigates zones, not individuals | medium |
 | Soil moisture is one number | a root-zone profile is a curve over depth | medium |
 | Weather is irrelevant | rain forecast dominates irrigation decisions | medium |
 | The LAN is the security boundary | a field gateway is on a public network | **high** |
 
-The five "high" rows in the connectivity group are one problem wearing five
-hats: **the V1 architecture assumes a device that is awake.** That assumption is
-load-bearing for Last Will, for command TTL, and therefore for SAFETY-002.
+### Correction, 2026-08-28 — the sleep problem was not the radio problem
+
+This document previously bundled five "high" rows into one finding: *the V1
+architecture assumes a device that is awake*, load-bearing for Last Will, for
+command TTL, and therefore for SAFETY-002.
+
+**That bundling was wrong, and separating it resolved four of the five.**
+[ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) added a
+battery-powered **Wi-Fi** node inside v1, with no protocol bump and no change to
+command TTL:
+
+- Last Will still means *unexpectedly absent*, because sleep is **announced** and
+  bounded by an Edge-computed window (SAFETY-021).
+- Command TTL is unchanged at 120 s, because the command is **minted at the
+  wake**, not at the request; the latency lives in an Edge-side intent that never
+  reaches a device.
+- A waking device receives a fresh, never-retained `edge.time` before any command
+  is delivered — the mechanism F-040-17 already provided.
+- Mains power is no longer assumed.
+
+The battery Wi-Fi node was never the same problem as LoRaWAN. It is not
+duty-cycled, its payloads are not size-constrained, it speaks TCP and MQTT and
+JSON, and it can be pushed to *while awake*. It broke exactly one assumption of
+the five, and that one was solvable.
+
+**What genuinely remains is the radio**, and it is a real v2 problem: a
+duty-cycled device that cannot be pushed to at all needs the polling model in the
+design directions below, binary payloads, and a staleness model that scales with
+the duty cycle. The general lesson is worth keeping: a group of symptoms with one
+plausible shared cause is a hypothesis, not a finding, and testing it here was
+worth four rows.
 
 ### Design directions
 
@@ -117,6 +152,93 @@ knows the device will evaluate. TTL becomes a wake-count or an absolute time the
 device can verify with a slow-drift RTC. Last Will is replaced by an expected
 next-contact time — a device is "offline" when it misses its window, not when a
 TCP session drops.
+
+Half of that already exists. **The edge-side holding is built** — the durable
+command intent of
+[ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §3 — and the
+"expected next-contact time" is the wake window of SAFETY-021. What v2 still has
+to add is the *pull*: a device that cannot be pushed to must ask for its pending
+work, which needs a new topic pair and a round trip that a Wi-Fi device does not
+need and therefore does not have. The unsolved part is narrower than this
+document originally recorded, and it is specifically **TTL without a
+synchronised clock** on a device the edge cannot reach on demand.
+
+### Battery and solar power (M14-009)
+
+Battery operation is no longer a field-only topic — a balcony pot on a battery is
+an M13 home deployment. What M14-009 plans is the **outdoor** case: solar,
+charging, enclosure, and the seasonal arithmetic.
+
+```text
+solar panel → LiFePO4-compatible charger/controller → battery
+            → low-Iq regulation → load switches → ESP32 / sensors / pump
+```
+
+Solar is a power source, **not a control architecture**. The battery is the
+buffer and the fallback; the panel only refills it. **No watering or safety
+decision may read solar availability, battery voltage, or state of charge as
+permission** ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §7).
+The failure that prohibition prevents is specific: a device with a full battery
+and bright sun "having margin to spare" and watering more freely than one on a
+cloudy day, which would make irrigation a function of weather through the least
+defensible possible route.
+
+A future low-power PCB might use — and this is a block diagram, **not a design**:
+
+```text
+ESP32-C3 module
+low-Iq regulator
+load switch → RS485
+load switch → soil sensor
+MOSFET      → pump
+```
+
+Nothing is fabricated, and M14's exit criterion that `git diff` shows no
+speculative implementation covers this in full: no schematic, no part number, no
+solar field in any payload or table.
+
+### Hardware targets — targets to verify, not specifications
+
+These are the engineering targets for a later battery hardware version. **Every
+one of them is unverified**, and none may be stated as a specification until
+M10-012 has measured complete-system sleep current and wake-cycle energy on
+assembled hardware.
+
+| Target | Value | Status |
+|---|---|---|
+| Normal wake interval | ~15 min, configurable | design input |
+| Battery-only endurance | **≥ 6 months** under the defined reference workload | **target — requires M10-012** |
+| Outdoor/balcony solar | energy-neutral operation under documented assumptions | **target — requires M10-012 and M14-009** |
+
+The reference workload must be stated alongside the figure or the figure means
+nothing: wake interval, sensors sampled, warm-up duration, whether the node
+waters, and how often.
+
+**Energy-neutral** is the claim, and it is a bounded one:
+
+```text
+energy-neutral operation = measured production exceeds measured consumption
+                           over a stated period, at a stated location and
+                           season, with a stated reserve margin
+```
+
+**Indefinite or infinite autonomy is not a claim this project makes.** A panel
+sized for July at 40° is roughly a factor of ten short of the same job in
+December at 55°, so solar sizing is done for the worst realistic case — a run of
+overcast winter days — with battery days-of-autonomy covering it.
+
+The two currents that must never be conflated:
+
+| | |
+|---|---|
+| **ESP32-C3 chip deep-sleep current** | a datasheet figure for the die alone |
+| **complete board/system sleep current** | regulator quiescent current, load-switch and level-shifter leakage, the RS485 transceiver, the sensor rail, pull-ups, and any indicator LED |
+
+The second determines battery life, is typically an order of magnitude or more
+above the first, and is knowable only with a meter — and not a handheld one,
+since sleep current is microamps and wake current is hundreds of milliamps within
+the same second. **Complete-system sleep consumption is measured before any
+autonomy claim is made** (M10-012, F-100-45…F-100-49).
 
 **Payload size.** The envelope is already shaped so a binary encoding (CBOR or
 `postcard`) can be substituted behind the same Rust types. A LoRaWAN profile
@@ -195,7 +317,9 @@ Field-specific failures, documented for future design rather than handled:
 | Failure | Note |
 |---|---|
 | Radio link down for days | telemetry gaps are normal, not a fault; staleness thresholds must scale with the duty cycle |
-| Device battery depleted | must be predicted from voltage trend, not discovered |
+| Device battery depleted | predicted from the voltage trend **where the trend supports one** — a LiFePO4 curve is flat across most of its range, so a projection is reported where defensible and absent where not, never fabricated (M13-016). It grants and refuses nothing: a depleted device stops reporting and its plants lock out on staleness. |
+| Solar production below consumption for a season | the battery covers it or it does not; this is why days-of-autonomy sizing exists and why energy-neutrality is stated with a period, a location, and a reserve margin |
+| Cold charging | LiFePO4 must not be charged below freezing without protection — a **charger requirement**, not an afterthought |
 | Gateway offline | many devices vanish at once; a distinct condition from many devices failing |
 | Duty-cycle exhaustion | the device cannot transmit even when it wants to |
 | Extreme temperature | affects both sensors and battery chemistry |
@@ -251,6 +375,18 @@ M14 delivers documentation, so its verification is review-based:
 - [ ] **No speculative implementation has been added.**
 - [ ] The fertility limit is stated in both this PRD and
       [PRD 100](100-real-soil-sensor.md).
+- [ ] The solar power chain is specified at the level of part **classes**, with
+      LiFePO4 justified against named alternatives and cold-charging protection
+      stated as a charger requirement.
+- [ ] Seasonal energy arithmetic is worked for a **named** location and season,
+      with every input labelled measured, cited, or assumed, and
+      days-of-autonomy sizing covering a stated run of overcast days.
+- [ ] Energy neutrality is used as a bounded, measured claim everywhere it
+      appears; **no claim of indefinite or infinite autonomy exists anywhere.**
+- [ ] Every autonomy and battery-life figure in the repository is audited: either
+      labelled a target requiring measurement, or traceable to M10-012's results.
+- [ ] The PCB block sketch is present and explicitly **not** a design — no
+      schematic, no part number, no solar field in any payload or table.
 
 ## Dependencies
 

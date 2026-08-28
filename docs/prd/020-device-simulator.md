@@ -316,3 +316,10 @@ testable against a bare broker.
 - Multi-plant simulation within one process (M13 may prefer separate processes).
 - Replay of captured real-device telemetry as a scenario source (M10+).
 - LoRaWAN duty-cycle simulation (M14).
+- Battery power mode. Added in **M5-021**, after this milestone closed, so that
+  the sleep-aware liveness of M5-020 has a producer and SCEN-110…SCEN-112 run
+  with no hardware ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)).
+  It brings `--power-mode`, an announced sleep, a battery telemetry model, and
+  the `miss-wake` and `sleep-without-announcing` faults — and it changes nothing
+  about M2's boundary: the simulator still contains no evaluator, no decision
+  type, and no dose scheduler before M6-019.

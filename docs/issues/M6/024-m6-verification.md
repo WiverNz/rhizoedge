@@ -1,6 +1,6 @@
-# Issue M6-022 — M6 verification and exit criteria
+# Issue M6-024 — M6 verification and exit criteria
 
-**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M6-001, M6-002, M6-003, M6-004, M6-005, M6-006, M6-007, M6-008, M6-009, M6-010, M6-011, M6-012, M6-013, M6-014, M6-015, M6-016, M6-017, M6-018, M6-019, M6-020, M6-021
+**Milestone:** M6 · **PRD:** [PRD 060](../../prd/060-irrigation-control-and-safety.md) · **Depends on:** M6-001, M6-002, M6-003, M6-004, M6-005, M6-006, M6-007, M6-008, M6-009, M6-010, M6-011, M6-012, M6-013, M6-014, M6-015, M6-016, M6-017, M6-018, M6-019, M6-020, M6-021, M6-022, M6-023
 
 ## Context
 
@@ -46,6 +46,8 @@ Verify every PRD 060 acceptance criterion and every enforced invariant.
 - M6-019
 - M6-020
 - M6-021
+- M6-022
+- M6-023
 
 ## Implementation notes
 

@@ -94,6 +94,11 @@ POST /api/v1/devices/{device_id}/commands/calibrate  { "run_seconds": 10 } → 2
   "clock_synced": true,
   "last_seen_at": "2026-08-25T11:30:00Z",
   "sample_age_seconds": 42,
+  "connectivity": "connected",
+  "power_mode": "battery",
+  "wake_interval_seconds": 900,
+  "expected_wake_at": "2026-08-25T11:45:00Z",
+  "missed_wake_count": 0,
   "config": {
     "desired_version": 7,
     "applied_version": 7,
@@ -111,6 +116,19 @@ POST /api/v1/devices/{device_id}/commands/calibrate  { "run_seconds": 10 } → 2
 
 `PATCH` changes the **display name only**. `device_id` is immutable — changing
 it would orphan history ([ADR-012](../adr/012-device-identity-and-provisioning.md)).
+
+`connectivity` is one of `connected`, `sleeping`, `isolated`, or `reconciling`
+([connectivity-modes.md](../architecture/connectivity-modes.md) §1b). It is
+**derived at read time**, never stored, for the same reason `sample_age_seconds`
+is.
+
+`expected_wake_at` is present only while `connectivity` is `sleeping`, and is
+computed from the **edge's** `received_at` for the sleep announcement plus the
+configured `wake_interval_seconds`. A device past its window derives `isolated`
+with `missed_wake_count` greater than zero — never `sleeping` (SAFETY-021).
+
+`power_mode` reflects the configuration the edge published. A device that has not
+applied it yet shows ordinary config drift; there is no separate mechanism.
 
 ### 2.4 Plants
 
@@ -227,7 +245,46 @@ Behaviour:
 
 The result is asynchronous. The caller polls the command or the plant.
 
+#### A sleeping device: `pending_for_device_wake`
+
+A battery device is reachable for a few seconds per wake interval. Publishing to
+it immediately would deliver a command whose TTL expired while it slept, so the
+edge instead persists an **intent** and mints the command at the next wake, after
+re-running the full safety gate against current inputs
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §3).
+
+```json
+{
+  "intent_id": "018fd7c9-8a11-7003-b21c-5e7f80112233",
+  "status": "pending_for_device_wake",
+  "requested_ml": 30.0,
+  "expected_delivery_after": "2026-08-25T11:45:00Z",
+  "intent_expires_at": "2026-08-25T12:15:00Z"
+}
+```
+
+Still **202**, and deliberately a different shape. **There is no `command_id`**,
+because no command exists yet — the field is *absent* rather than null, so a
+client that reads it unconditionally fails loudly instead of polling a null id.
+`pending_for_device_wake` and `sent` are distinct states and must be presented
+distinctly (M12-018); a pending dose is never rendered as sent.
+
+Intent states: `pending_for_device_wake` → `sent` | `refused` |
+`expired_before_wake`. On delivery the intent gains the `command_id` that was
+allocated at that moment, so a caller can follow the handover.
+
+Two expiries, deliberately separate. `intent_expires_at` is the edge's clock and
+bounds how long it will keep trying; the wire TTL is unchanged at 120 s and is
+what the device validates (SAFETY-002). `intent_expires_at` never reaches a
+device.
+
+**At most one open water intent per plant.** A second request while one is
+pending returns **409** naming the pending intent, so an impatient operator
+cannot queue several doses that all deliver at one wake. There is no parameter
+that wakes a device, expedites a dose, or overrides any of this.
+
 ```text
+GET  /api/v1/intents/{intent_id}
 GET  /api/v1/commands/{command_id}
 POST /api/v1/plants/{plant_id}/auto-watering/enable
 POST /api/v1/plants/{plant_id}/auto-watering/disable

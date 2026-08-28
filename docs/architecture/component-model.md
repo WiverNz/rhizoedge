@@ -247,6 +247,9 @@ Owns:
 - device registry and health
 - plant state
 - irrigation execution and command lifecycle
+- **device reachability**: the announced-sleep wake window, the overdue
+  transition, and the durable command intents held for sleeping devices
+  ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md))
 - local REST API and metrics endpoint
 - the cloud outbox
 
@@ -256,6 +259,10 @@ Must never:
 - allow the API layer to publish an MQTT command without passing the domain
   safety gate
 - lose safety state across restart (all of it is in SQLite)
+- report a device as sleeping past the wake window it computed, or treat a
+  device's own claimed wake time as authoritative (SAFETY-021)
+- deliver a held intent without re-running the full safety gate against current
+  inputs, or retain anything on MQTT to reach a sleeping device
 
 Interfaces exposed: see [docs/protocol/http-api-boundaries.md](../protocol/http-api-boundaries.md).
 
@@ -311,6 +318,9 @@ Owns:
 - **hard safety limits compiled into the binary and not remotely configurable**
 - command TTL validation, command deduplication across reboot
 - boot-safe state: pump off before anything else initialises
+- power mode (`AlwaysOn` | `Battery`), the deep-sleep wake cycle, peripheral
+  power rails behind a `PowerRail` trait, and checksummed RTC-retained
+  sleep-cycle accounting ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md))
 
 Shares both `rhizo-mqtt-contract` and `rhizo-policy` with
 `default-features = false`; the latter is integrated in M9.
@@ -321,6 +331,12 @@ Must never:
 - accept any water command while its wall clock is unsynced (it cannot evaluate
   TTL, so it must refuse — see [time-model.md](time-model.md))
 - keep the pump energised across a watchdog reset
+- enter deep sleep while a dose is in progress, or before the `command.result`
+  has been acknowledged
+- credit elapsed time across a sleep from anything but a timer wake with a valid
+  RTC checksum (SAFETY-015)
+- read battery voltage, charge state, or solar availability as permission to
+  water — power is telemetry and is not an input to the gate
 
 ---
 

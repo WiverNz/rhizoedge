@@ -244,3 +244,21 @@ detectable across months.
 - **Sustained flood behaviour** — the whole design exists to prevent it; testing
   it would mean deliberately defeating SAFETY-007, which is not a test, it is a
   flood.
+
+## 6. Bench measurements — not HIL gates
+
+M10-011 and M10-012 need the same bench and the same board, and their results are
+recorded alongside HIL runs in `docs/testing/hil-runs/`. They are deliberately
+**not** numbered as HIL stages, because a HIL stage gates the next stage and
+these gate a *claim*:
+
+| Measurement | Issue | Gates |
+|---|---|---|
+| Sensor power-on → time until stable usable reading | M10-011 | the configured `sensor_warmup_ms`, and an input to the energy budget |
+| Complete-system sleep current and wake-cycle energy | M10-012 | **every autonomy figure in the repository** — until it exists, all of them stay labelled targets ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §8) |
+
+Neither involves water, and neither is on the HIL-1…HIL-7 critical path. M10-012
+does need an instrument the HIL bench does not otherwise require: sleep current
+is microamps while wake current is hundreds of milliamps within the same second,
+and a handheld multimeter either burdens the supply at the low end or averages
+the peaks away at the high end.

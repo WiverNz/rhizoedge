@@ -62,7 +62,7 @@ bug.
 **not** part of the M8 software-only acceptance environment. M8 must stay
 headless and CI-runnable.
 
-M12's first issue (`M12-001`) depends on `M6-022`, so the UI becomes buildable
+M12's first issue (`M12-001`) depends on `M6-024`, so the UI becomes buildable
 as soon as irrigation control exists. In practice it is scheduled after M11 so
 the operator sees the full picture including real hardware, but nothing forces
 that order. M13 requires both branches.
@@ -255,7 +255,11 @@ M5-005 ──┬──→ M5-006 (dry duration) ──┐
 
 M5-014 ──→ M5-017 (preset catalogue — pure, embedded, offline)
    M5-017 + M5-014 + M5-016 ──→ M5-018 (apply preset to plant)
-                                                       all ──→ M5-019 (verification)
+
+M1-019 ──→ M5-019 (power-mode + battery contract — pure, additive within v1)
+   M5-019 + M4-012 + M4-004 ──→ M5-020 (sleep-aware liveness — SAFETY-021)
+   M5-020 + M2-017 ─────────→ M5-021 (simulator battery mode)
+                                                       all ──→ M5-022 (verification)
 ```
 
 **M5-003 and M5-005 depend only on `M1-012`**, so they can be executed in
@@ -266,10 +270,21 @@ the milestone.
 in parallel with the trend and recommendation work. Only M5-018, which writes
 `MeasurementPolicy` rows, needs the policy and offline-policy issues in place.
 
+**M5-019…M5-021 are an independent chain** and can run entirely in parallel with
+the plant work — they share no file with it. `M5-019` depends only on `M1-019`,
+so it is executable from the start of the milestone.
+
+They are *device* issues in a *plant* milestone, and the reason is worth stating
+so nobody moves them: they extend the M4-owned registry model, and **M4 is DONE
+and was not reopened** — the same treatment M0 received in the 2026-08-26 pass.
+M5 is the first milestone still open, and M6-022, M9-019, and M12-018 all depend
+on this landing first. Ordering within the chain is contract → edge → producer,
+so the simulator that exercises the new liveness states comes last.
+
 ### M6 — Irrigation and safety
 
 ```text
-M5-019 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
+M5-022 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
               ▼
            M6-002 (safety gate — exhaustive, no catch-all)
               ├──→ M6-003 (leak + tank checks)
@@ -296,7 +311,10 @@ M5-019 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
         M6-002 + M6-006 + M2-017 ──→ M6-019 (shared offline evaluator)
         M3-016 + M6-019 ───────────→ M6-020 (offline reconciliation)
         M6-019 + M6-020 ───────────→ M6-021 (offline safety properties)
-                                all ──→ M6-022 (verification)
+
+  M6-008 + M6-009 + M6-011 + M6-016 + M5-020 ──→ M6-022 (pending command intents)
+                            M6-022 + M6-018 ──→ M6-023 (intent API + properties)
+                                all ──→ M6-024 (verification)
 ```
 
 **Execution order within M6 is nearly linear and should be respected.** The gate
@@ -308,10 +326,17 @@ the ordering this design exists to avoid.
 **`M6-008 → M6-009` is normative and directional:** the command row is committed
 *before* the publish. Reversing it permits a pump to run with no record.
 
+**`M6-022` comes after the whole command lifecycle, not beside it.** A pending
+intent is only safe because it reuses that lifecycle unchanged: no `command_id`
+exists until delivery, so persist-before-publish and same-`command_id` retry are
+untouched, and the full gate re-runs at delivery. Building the intent path first
+would mean inventing a second command path and then trying to make the two agree
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §3).
+
 ### M7 — Cloud
 
 ```text
-M6-022 ──→ M7-001 (cloud binary + postgres) ──→ M7-002 (schema) ──→ M7-003 (ingestion)
+M6-024 ──→ M7-001 (cloud binary + postgres) ──→ M7-002 (schema) ──→ M7-003 (ingestion)
                                                                         ├──→ M7-004
                                                                         │  (projections)
                                                     M7-003 + M3-013 ──→ M7-005
@@ -319,7 +344,7 @@ M6-022 ──→ M7-001 (cloud binary + postgres) ──→ M7-002 (schema) ─�
    M7-005 + M0-007 ──→ M7-006 (outbox drain)
         ├──→ M7-007 (batch adaptation)
         ├──→ M7-008 (cap + value-tier pruning) ──→ M7-009 (metrics)
-        │                                       └── + M6-022 ──→ M7-014 (event emission)
+        │                                       └── + M6-024 ──→ M7-014 (event emission)
         └── M7-006 + M6-018 ──→ M7-010 (cloud independence differential test)
 
    M7-004 ──┬──→ M7-012 (reprojection)
@@ -351,7 +376,8 @@ M7-015 ──→ M8-001 (Dockerfiles) ──→ M8-002 (compose topology) ──
                                                      └──→ M8-014 (e2e CI job)
   M6-019 + M6-021 ──→ M8-015 (device-isolation scenarios)
   M6-019 + M6-020 + M6-021 ──→ M8-016 (reconciliation scenarios)
-                                                 all ──→ M8-017 (verification)
+  M8-005 + M8-006 + M6-023 + M5-021 ──→ M8-017 (battery + sleep scenarios)
+                                                 all ──→ M8-018 (verification)
 ```
 
 **M8-007 through M8-011 are fully parallelisable** once the runner (M8-005) and
@@ -361,7 +387,7 @@ the whole plan.
 ### M9 — ESP32 firmware
 
 ```text
-M8-017 ──→ M9-001 (verify + correct ADR-007 toolchain)   ◄── do this first, on real hardware
+M8-018 ──→ M9-001 (verify + correct ADR-007 toolchain)   ◄── do this first, on real hardware
    ├──→ M9-002 (firmware CI job)
    └──→ M9-003 (workspace skeleton)
            ├──→ M9-004 (NVS + identity) ──┬──→ M9-008 (wifi) ──→ M9-009 (mqtt + lwt + time sync)
@@ -374,7 +400,11 @@ M8-017 ──→ M9-001 (verify + correct ADR-007 toolchain)   ◄── do this
                                                             ├──→ M9-012 (config)
                                         M9-011 + M9-007 ──→ M9-013 (interrupted dose)
                                         M9-011 + M9-013 ──→ M9-014 (conformance test)
-                                                       all ──→ M9-019 (verification)
+
+        M9-012 + M9-018 + M5-021 ──→ M9-019 (power mode + deep sleep)
+                 M9-019 + M9-005 ──→ M9-020 (power rails + sensor warm-up)
+        M9-019 + M9-020 + M9-013 ──→ M9-021 (awake hold + battery telemetry)
+                                                       all ──→ M9-022 (verification)
 ```
 
 **`M9-001` must genuinely be first.** It executes ADR-007's commands on a real
@@ -384,10 +414,17 @@ toolchain, and discovering it does not work halfway through is expensive.
 **`M9-014`** is the conformance test that validates the entire simulator-first
 strategy retrospectively.
 
+**`M9-019` depends on `M9-018`, the monotonic budget, not merely on the MQTT
+stack.** Deep sleep destroys RAM, so the first question it has to answer is how
+the budget and cooldown survive — and the answer must not become a way to earn
+water. `M5-021` is the other prerequisite: the simulator's battery mode is the
+behavioural specification the firmware matches, so M9 implements against
+something rather than inventing it.
+
 ### M10 — Real soil sensor
 
 ```text
-M9-019 ──→ M10-001 (adapter selection)
+M9-022 ──→ M10-001 (adapter selection)
    ├──→ M10-002 (Modbus RTU) ──→ M10-003 (register maps as data) ──→ M10-004 (modbus soil)
    └──→ M10-005 (analog soil)                                              │
                     └──────────────┬───────────────────────────────────────┘
@@ -398,16 +435,26 @@ M9-019 ──→ M10-001 (adapter selection)
                                    ├──→ M10-008 (config schema, + M6-013)
                                    └──→ M10-009 (metrics + events) ──→ M10-010
                                                               (gravimetric validation)
-                                                          all ──→ M10-011 (verification)
+                                            M10-010 ──→ M10-011 (sensor warm-up, measured)
+                                            M10-011 ──→ M10-012 (system sleep current
+                                                                 + energy budget)
+                                                          all ──→ M10-013 (verification)
 ```
 
 **M10-005 (analogue) depends only on M10-001**, so it can be done first as a
 cheaper path to a working real sensor while the Modbus chain is built.
 
+**M10-011 and M10-012 are bench measurements, and they gate a claim rather than a
+feature.** Until M10-012 has measured complete-system sleep current — not the
+chip figure — every autonomy number in the repository stays labelled a target
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §8). M10-011 feeds
+it directly: at a 15-minute wake interval, warm-up time is one of the largest
+terms in the budget.
+
 ### M11 — Real pump and safety hardware
 
 ```text
-M10-011 ──┬──→ M11-001 (pump driver) ──→ M11-002 (independent run guard) ──→ M11-003
+M10-013 ──┬──→ M11-001 (pump driver) ──→ M11-002 (independent run guard) ──→ M11-003
           │           └──→ M11-004 (calibration command)                     (fault)
           ├──→ M11-005 (tank sensor) ──┐
           └──→ M11-006 (leak sensor) ──┴──→ M11-008 (hardware config schema)
@@ -433,7 +480,7 @@ note. M11-009 involves no water at all; water enters the system only at M11-010.
 ### M12 — Rust UI
 
 ```text
-M6-022 ──→ M12-001 (Tauri + Leptos workspace, no Node)
+M6-024 ──→ M12-001 (Tauri + Leptos workspace, no Node)
               ▼
            M12-002 (API client + shared DTOs, 409 → Refused)
      ┌────────┼────────┬────────┬────────┐
@@ -446,7 +493,8 @@ M6-022 ──→ M12-001 (Tauri + Leptos workspace, no Node)
      └──→ M12-010 (connection state) ──→ M12-011 (packaging) ──→ M12-012 (CI)
 
   M12-013 + M12-014 + M12-002 ──→ M12-017 (preset picker + review step)
-                                                          all ──→ M12-018 (verification)
+  M12-015 + M12-006 + M12-005 ──→ M12-018 (sleeping / pending presentation)
+                                                          all ──→ M12-019 (verification)
 ```
 
 M12-003 through M12-009 are largely parallelisable after M12-002.
@@ -458,7 +506,7 @@ first would duplicate their editors.
 ### M13 — Multi-plant home
 
 ```text
-M12-018 ──→ M13-001 (multi-device operation + cross-plant isolation)
+M12-019 ──→ M13-001 (multi-device operation + cross-plant isolation)
    ├──→ M13-002 (provisioning tool)
    ├──→ M13-003 (reservoir entity) ──→ M13-004 (shared reservoir lockout)
    ├──→ M13-005 (grouping/filtering)
@@ -467,19 +515,27 @@ M12-018 ──→ M13-001 (multi-device operation + cross-plant isolation)
    └──→ M13-010 (downsampling)
 
    M13-004 + M13-007 ──→ M13-011 (multi-device scenarios)
-   M13-011 + M12-018 ──→ M13-012 (UI at scale)
-                   all ──→ M13-016 (verification)
+   M13-011 + M12-019 ──→ M13-012 (UI at scale)
+   M13-007 + M13-012 + M12-019 ──→ M13-016 (battery fleet operations)
+                   all ──→ M13-017 (verification)
 ```
 
 ### M14 — Field readiness (documentation only)
 
 ```text
-M13-016 ──→ M14-001 (verify reservations against code)
+M13-017 ──→ M14-001 (verify reservations against code)
    ├──→ M14-002 (connectivity assumption breaks) ──┬──→ M14-003 (v2 protocol requirements)
    │                                                └──→ M14-006 (security requirements)
-   └──→ M14-004 (zone + multi-depth model) ──→ M14-005 (weather boundary)
-                                          all ──→ M14-009 (verification)
+   ├──→ M14-004 (zone + multi-depth model) ──→ M14-005 (weather boundary)
+   └── M14-002 + M14-006 ──→ M14-009 (solar + field power, audits the targets)
+                                          all ──→ M14-010 (verification)
 ```
+
+**M14-009 is documentation like the rest of M14**, but it carries one obligation
+the others do not: it audits every autonomy and battery-life figure in the
+repository and confirms each is either labelled a target or traceable to
+M10-012's measurements. That audit is the mechanism that keeps
+[ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §8 honest.
 
 ---
 
@@ -523,6 +579,45 @@ M13 013 release CI ──► 014 MSRV matrix
 M14 007 Helm planning        008 future actuator model
 ```
 
+## 2c. Issues added by the 2026-08-28 battery/deep-sleep pass
+
+[ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) added 14 issues.
+They are appended at the end of their milestones, so numeric order remains a
+valid execution order, and each milestone's verification issue was renumbered to
+stay last.
+
+```text
+M5  019 power-mode + battery contract ──► 020 sleep-aware liveness (SAFETY-021)
+                                              └──► 021 simulator battery mode
+
+M6  022 pending command intents ──► 023 intent API + safety properties
+
+M8  017 battery + sleep e2e scenarios
+
+M9  019 power mode + deep sleep ──► 020 power rails + warm-up
+                                        └──► 021 awake hold + battery telemetry
+
+M10 011 sensor warm-up measured ──► 012 system sleep current + energy budget
+
+M12 018 sleeping / pending presentation
+
+M13 016 battery fleet operations
+
+M14 009 solar + field power planning
+```
+
+**The chain that matters most** runs `M5-019` (the contract, once) → `M5-020`
+(the Edge's bounded wake window, which is SAFETY-021) → `M5-021` (a producer, so
+the state is testable) → `M6-022` (commands held as intents) → `M9-019` (the
+firmware that actually sleeps). Everything downstream — the UI, the fleet views,
+the field planning — renders or reasons about what those five establish.
+
+Two properties of the shape are deliberate. **M4 was not reopened**, so the
+registry extension lives in M5, the first open milestone. And **the wire barely
+moved**: M5-019 is entirely additive within v1, and holding a command for a
+sleeping device is an Edge-side mechanism with no protocol representation at all,
+which is what kept the whole change out of a v2.
+
 **The chain that matters most** runs `M1-016` (the shared `rhizo-policy` crate)
 → `M2-017` (simulator mechanics only) → `M6-019` (the evaluator plus its sole
 simulator call site) → `M9-016` (the firmware call site). If that crate is wrong,
@@ -560,9 +655,9 @@ most easily missed, because the milestone table alone does not show them.
 | M7-005 | M3-013 | `CloudError` implements `Classify` |
 | M7-006 | M0-007 | uses the shared backoff utility |
 | M7-010 | M6-018 | needs deterministic property-test infrastructure |
-| M7-014 | M6-022 | emits events from every M6 state change |
+| M7-014 | M6-024 | emits events from every M6 state change |
 | M10-008 | M6-013 | extends the config publication path |
-| M12-001 | M6-022 | needs state and actions worth showing |
+| M12-001 | M6-024 | needs state and actions worth showing |
 | M1-016 | M1-012 | `rhizo-domain` links `rhizo-policy` to validate and predict |
 | M1-018 | M1-011 | extends the existing `no_std` CI job |
 | M2-015 | M2-003 | capabilities ride in the status payload |
@@ -578,7 +673,15 @@ most easily missed, because the milestone table alone does not show them.
 | M9-016 | M9-011 | offline dosing routes through the existing actuation gate |
 | M12-013 | M12-008 | extends the profile editor surface |
 | M13-014 | M13-013 | the MSRV matrix sits alongside release CI |
-| M13-012 | M12-018 | extends the completed UI |
+| M13-012 | M12-019 | extends the completed UI |
+| M5-019 | M1-019 | additive contract change; needs the whole M1 wire surface |
+| M5-020 | M4-012, M4-004 | extends the derived connectivity enum and the liveness timer — the M4 registry model, in the first milestone still open |
+| M5-021 | M2-017 | the simulator's isolation/runtime state is where a sleep cycle attaches |
+| M6-022 | M5-020 | routing depends on whether the device is `sleeping` |
+| M9-019 | M5-021, M9-018 | the simulator's battery mode is the behavioural spec; the monotonic budget is what must survive sleep |
+| M12-018 | M12-015, M12-006, M12-005 | extends the connectivity views and the watering action with a fourth device condition |
+| M8-017 | M6-023, M5-021 | needs the intent lifecycle to assert on and a simulator that sleeps |
+| M13-016 | M12-019 | fleet views extend the completed UI |
 
 ---
 
@@ -592,11 +695,11 @@ M0-001 → M0-002 → M0-003 → M0-012 → M0-013
        → M2-001 → M2-002 → M2-003 → M2-006 → M2-008 → M2-019
        → M3-001 → M3-002 → M3-003 → M3-008 → M3-009 → M3-018
        → M4-001 → M4-008 → M4-013
-       → M5-001 → M5-005 → M5-009 → M5-012 → M5-019
+       → M5-001 → M5-005 → M5-009 → M5-012 → M5-022
        → M6-001 → M6-002 → M6-004 → M6-005 → M6-006 → M6-007
-                → M6-008 → M6-009 → M6-010 → M6-012 → M6-018 → M6-022
+                → M6-008 → M6-009 → M6-010 → M6-012 → M6-018 → M6-024
        → M7-001 → M7-002 → M7-003 → M7-005 → M7-006 → M7-015
-       → M8-001 → M8-002 → M8-003 → M8-004 → M8-005 → M8-006 → M8-012 → M8-017
+       → M8-001 → M8-002 → M8-003 → M8-004 → M8-005 → M8-006 → M8-012 → M8-018
 ```
 
 Roughly 60 issues on the critical path out of 153 in M0–M8. The remainder are

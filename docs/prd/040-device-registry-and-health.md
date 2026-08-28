@@ -167,6 +167,53 @@ read time from `last_seen_at` means it cannot be wrong.
 The timer in F-040-09 exists only to emit *events* and update metrics — the
 authoritative answer is always computed.
 
+### Amendment, 2026-08-28 — expected sleep
+
+[ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) adds a device that
+disconnects cleanly around a hundred times a day, on purpose. The model above
+has exactly one gap for it: **every one of those disconnects would be reported as
+an offline device**, and a badge that appears a hundred times a day is a badge
+its owner stops reading — including on the day a device actually dies.
+
+**M4 was not reopened for this**, in the same way M0 was not reopened by the
+2026-08-26 architecture pass. M4's delivered exit criteria stand, and this
+amendment records what the delivered model must *accommodate* and where the
+extension lands: **M5-020**, in the first milestone still open, with the
+simulator that can produce the behaviour in M5-021.
+
+What M4 already got right, and why nothing here is a correction:
+
+- `connectivity` is a derived enum (M4-012), so `sleeping` is one more variant
+  rather than a parallel model.
+- `stale` is derived, not stored — so the sleep state can be derived too, and
+  cannot rot.
+- Staleness is `max(15 min, 3 × telemetry_interval)` from the **edge**
+  `received_at`. At a 900-second wake interval that yields 45 minutes, which
+  already tolerates one missed wake. Only *which* interval feeds the formula
+  changes for a battery device.
+- F-040-09's liveness timer is what notices an overdue sleeper, because a device
+  that stopped waking produces no message to react to — the same reasoning that
+  made the timer necessary in the first place.
+- F-040-17 already publishes `edge.time` on **any** status receipt, so a waking
+  device is synchronised without a new mechanism.
+
+What M5-020 must add:
+
+| ID | Requirement |
+|---|---|
+| F-040-20 | `power_mode` and `wake_interval_seconds` persisted per device from the config the edge published |
+| F-040-21 | `connectivity` gains `sleeping`, derived — never stored — alongside `connected`, `isolated`, and `reconciling` |
+| F-040-22 | `expected_wake_at = received_at(announcement) + wake_interval_seconds`, and `overdue_at = expected_wake_at + max(wake_interval_seconds, 300 s)`, both on the **edge** clock |
+| F-040-23 | Past `overdue_at` the device derives `isolated`, with the transition made **by the liveness timer** and no inbound message required |
+| F-040-24 | A device's own `expected_wake_ms` is advisory and never extends the edge's window; an LWT and an unrecognised offline `reason` both derive `isolated` |
+| F-040-25 | `missed_wake_count` stored — it counts events rather than describing the present — and reset on a successful wake |
+| F-040-26 | A battery device's effective staleness interval is its wake interval |
+| F-040-27 | `devices_sleeping` gauge and `device_wake_missed_total` counter; sleeping devices are not counted as offline |
+
+The invariant this creates is **SAFETY-021**: expected sleep is bounded and never
+masks an unexpected absence. It is what makes the new state safe to add — it can
+only ever *defer* the offline indication, never suppress it.
+
 ## Failure modes
 
 | Failure | Behaviour |
@@ -177,6 +224,8 @@ authoritative answer is always computed.
 | Device never echoes `applied_config_version` | `config_drift` event after 2 intervals; drift exposed in the API |
 | Broker down | all devices eventually stale; `/health/ready` reports not-ready |
 | Clock step on the edge | `sample_age` computed from the stepped clock; the clock-step handling in M6 covers the safety consequence |
+| Battery device misses an expected wake | derives `isolated` from the timer past `overdue_at`; `missed_wake_count` increments; `device_wake_missed` raised; samples then age out normally (SAFETY-021, [failure-model.md](../architecture/failure-model.md) §2.6) |
+| Battery device announces a wake time far in the future | ignored — the window is the edge's, computed from `received_at`; the device's value is advisory |
 
 ## Safety implications
 

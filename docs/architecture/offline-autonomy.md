@@ -198,6 +198,47 @@ device can demonstrate that the window elapsed — either from monotonic time it
 actually observed, or from a wall clock it trusts. A device that reboots
 repeatedly does not thereby earn more water (SAFETY-014, SAFETY-015).
 
+### 5b. The same state across deep sleep
+
+A battery device ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md))
+sleeps around a hundred times a day, and deep sleep destroys RAM. Applied
+naively, §5's "a reboot cannot shorten a cooldown" would make every wake look
+like a reboot and freeze the evaluator permanently — a cooldown that never
+elapses and a budget that never replenishes.
+
+That rule does not have to be weakened, because it is a rule about **clock
+uncertainty**, not about reboots. The ESP32's RTC timer keeps running through
+deep sleep and is a genuine monotonic source, so the elapsed time is measured
+rather than assumed:
+
+```text
+credit_elapsed(wake_reason, rtc_state) -> Duration
+    Timer  if checksum_valid(rtc_state)  → rtc_counter_now − rtc_state.slept_at
+    _                                    → Duration::ZERO
+```
+
+`Duration::ZERO` is §5's existing behaviour, unchanged. There is no third branch.
+
+The split of storage follows from what each medium survives:
+
+| Medium | Holds | Survives |
+|---|---|---|
+| NVS | policy, dedup ring, `in_flight_dose`, the budget floor | power loss |
+| RTC memory (checksummed) | sleep-cycle accounting, `slept_at`, cooldown remainder | deep sleep, **not** power loss |
+
+The checksum is the discriminator between "we know how long we slept" and "we do
+not", so it is load-bearing rather than defensive: a corrupted RTC word that was
+trusted would become free watering budget. Any reset reason other than a timer
+wake, and any checksum failure, falls back to assuming no time has passed.
+
+Writing the accounting to NVS on every wake is not an option — at ~96 wakes a day
+the NVS write endurance becomes the limiting component of the device. NVS is
+written on change and on watering; the per-wake accounting lives in RTC memory
+and is treated as a cache that may vanish.
+
+A deep-sleep wake is therefore not a reboot for accounting purposes, and a reboot
+is still never a way to earn water (SAFETY-014, SAFETY-015).
+
 ## 6. Event buffering while isolated
 
 An ESP32 cannot retain unbounded history, and pretending otherwise would be a
@@ -331,6 +372,9 @@ was away — is worse. But this is a considered trade, not a free feature.
 - **M6-019:** implements the single `rhizo-policy::evaluate_offline` function and
   extends the M2 simulator with exactly one call site and autonomous scheduling.
 - **M9:** integrates that same function into firmware from exactly one call site.
+  **M9-019 adds deep sleep around it, changing none of it**: §5b's
+  `credit_elapsed` supplies the elapsed time the evaluator already took as a
+  parameter, and the evaluator remains pure, `no_std`, and clock-free.
 
 Thus M8 can test full autonomy because it follows M6; no M8 autonomy claim rests
 on M2 alone.

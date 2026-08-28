@@ -25,6 +25,36 @@
 > `POST /water` on an actuator-less plant returns **422**, distinguishable from a
 > 409 safety refusal; no threshold crossing of any kind triggers actuation.
 
+> **Extended 2026-08-28 — battery devices.**
+> [ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) adds a device that
+> sleeps between samples. M5 gains three issues, M5-019…M5-021, which are
+> *device* work in a *plant* milestone and are here for a specific reason: they
+> extend the M4-owned registry model, and **M4 is DONE and was not reopened**,
+> exactly as M0 was not reopened by the 2026-08-26 pass. M5 is the first
+> milestone still open, and every later milestone — M6's pending commands, M9's
+> firmware, M12's presentation — depends on this landing first.
+>
+> - **M5-019** adds the wire surface once, in `rhizo-mqtt-contract`: two battery
+>   measurement kinds, the optional `power` blocks, and the `sleeping` offline
+>   reason. Entirely additive within v1; no version bump
+>   ([versioning-policy.md](../protocol/versioning-policy.md) §1).
+> - **M5-020** teaches the registry to tell an announced, bounded sleep from a
+>   device that stopped waking — the new **SAFETY-021**.
+> - **M5-021** gives the simulator a battery mode, so SCEN-110…SCEN-112 run with
+>   no hardware and M9 has a specification to match rather than to invent.
+>
+> Nothing about the plant model changes. A sleeping device's samples are ordinary
+> samples, its thresholds are ordinary thresholds, and **a monitoring-only
+> battery plant is a first-class monitoring plant** — the same rule SAFETY-018
+> already states, applied to a device class that makes it more common rather than
+> less.
+>
+> **Additional acceptance criteria:** a battery device inside its window derives
+> `sleeping`, not `offline`; a device past `overdue_at` derives `isolated` **from
+> the timer, with no inbound message**; an announced wake time far in the future
+> does not extend the edge's window; an always-on device's liveness behaviour is
+> unchanged from M4's.
+
 ## Summary
 
 Introduce plants, reusable plant profiles, moisture trends, manual-watering

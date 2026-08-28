@@ -1,6 +1,6 @@
-# Issue M13-016 — M13 verification and exit criteria
+# Issue M13-017 — M13 verification and exit criteria
 
-**Milestone:** M13 · **PRD:** [PRD 130](../../prd/130-multi-plant-home.md) · **Depends on:** M13-001, M13-002, M13-003, M13-004, M13-005, M13-006, M13-007, M13-008, M13-009, M13-010, M13-011, M13-012, M13-013, M13-014, M13-015
+**Milestone:** M13 · **PRD:** [PRD 130](../../prd/130-multi-plant-home.md) · **Depends on:** M13-001, M13-002, M13-003, M13-004, M13-005, M13-006, M13-007, M13-008, M13-009, M13-010, M13-011, M13-012, M13-013, M13-014, M13-015, M13-016
 
 ## Context
 
@@ -39,6 +39,7 @@ Verify every PRD 130 acceptance criterion.
 - M13-013
 - M13-014
 - M13-015
+- M13-016
 
 ## Implementation notes
 

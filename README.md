@@ -46,7 +46,7 @@ watering input has no cloud-derived field.
 **Safety-first.** When any input is missing, stale, invalid, or contradictory,
 the answer is *do not water*, plus a visible lockout — never *water anyway*.
 Twenty numbered invariants
-([SAFETY-001…020](docs/architecture/safety-invariants.md)) state this precisely,
+([SAFETY-001…021](docs/architecture/safety-invariants.md)) state this precisely,
 each with named automated tests and the milestone where it becomes enforced.
 From M6 onward, `cargo test safety_` is the executable safety-invariant gate.
 
@@ -93,6 +93,42 @@ Crucially, it does **not** improvise:
 Details: [connectivity modes](docs/architecture/connectivity-modes.md) ·
 [offline autonomy](docs/architecture/offline-autonomy.md) ·
 [ADR-015](docs/adr/015-device-offline-autonomy.md)
+
+## A sleeping device is not an offline device
+
+A node on a balcony has no socket, so it runs from a battery: it sleeps, wakes
+every ten to fifteen minutes, powers its sensors, samples, connects, exchanges
+data, and sleeps again. It is unreachable almost all the time **by design**.
+
+Reporting that as "offline" would be a lie a hundred times a day, and it would
+train its owner to ignore the one indicator that says a device has actually
+died. So sleep is **announced** by the device and **bounded** by the Edge:
+
+```text
+Connected                        awake and reachable
+Sleeping { expected_wake_at }    announced, bounded, expected back
+Isolated                         absent without an announcement, or overdue
+Reconciling                      replaying buffered history after an absence
+```
+
+The window is computed from the Edge's own clock, so a device cannot make itself
+look punctual, and a device that stops waking becomes `Isolated` — the new state
+can only ever *defer* the offline indication, never suppress it.
+
+Manual watering on such a device has honest latency. The Edge holds the request
+as a durable **intent**, re-runs the full safety gate when the device wakes, and
+only then issues the command — so a leak that appeared while the device slept
+still refuses the dose. The UI shows `Pending until device wakes`, not a spinner.
+
+Nothing on the wire changed to make this work: no protocol bump, no retained
+commands, and the same 120-second command TTL, because the command is minted at
+the wake rather than at the request.
+
+**Battery life figures are targets, not specifications**, until they are measured
+on assembled hardware — and the number that matters is complete-system sleep
+current, which is not the chip's datasheet figure.
+
+Details: [ADR-018](docs/adr/018-battery-and-deep-sleep-device-mode.md)
 
 ## Configuration flows down, versioned
 
@@ -360,8 +396,8 @@ Start here: **[docs/README.md](docs/README.md)** — the documentation index.
 | | |
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | Milestones, exit criteria, conventions |
-| [Safety invariants](docs/architecture/safety-invariants.md) | SAFETY-001…020 |
-| [Connectivity modes](docs/architecture/connectivity-modes.md) | Cloud offline vs site offline vs device isolated |
+| [Safety invariants](docs/architecture/safety-invariants.md) | SAFETY-001…021 |
+| [Connectivity modes](docs/architecture/connectivity-modes.md) | Cloud offline vs site offline vs device isolated vs sleeping |
 | [Offline autonomy](docs/architecture/offline-autonomy.md) | The offline policy model and reconciliation |
 | [MQTT protocol v1](docs/protocol/mqtt-v1.md) | Normative wire specification |
 | [Dependency graph](docs/architecture/dependency-graph.md) | What to implement next |

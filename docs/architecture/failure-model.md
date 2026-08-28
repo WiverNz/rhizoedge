@@ -71,6 +71,14 @@ LWT identity. Replayed current-boot LWT, equivalent status with a new
 same-boot sequence is eligible for M4 registry mutation. Every otherwise-valid
 status receipt still prompts M4's live, non-retained `edge.time` response.
 
+A **battery** device's clean disconnect is a different event and must not be
+confused with this one. It publishes a retained status with
+`reason: "sleeping"` before disconnecting, which replaces the retained online
+status and opens an Edge-computed wake window; the LWT stays armed and still
+fires on an unclean drop. So `connection_lost` always means *unexpectedly
+absent*, for every device, and an unrecognised `reason` resolves to
+`connection_lost` rather than to sleep (SAFETY-012, SAFETY-021).
+
 ### 1.5 Malformed payload
 
 - **Detection:** `serde_json` error, or envelope/topic `device_id` mismatch.
@@ -163,6 +171,57 @@ status receipt still prompts M4's live, non-retained `edge.time` response.
 Covered by 2.1. The distinguishing requirement: the NVS write of
 `(command_id, started_at, requested_ml)` happens **before** the GPIO goes
 active, so an interruption is always detectable on the next boot.
+
+### 2.6 Battery device misses an expected wake
+
+- **Detection:** the liveness timer, with **no inbound message** — the device
+  passes `overdue_at` and nothing arrives (F-040-09).
+- **Expected state:** connectivity derives `isolated`, not `sleeping`;
+  `missed_wake_count` increments per missed window; `device_wake_missed` raised.
+- **Recovery:** the device wakes late and publishes status; the count resets.
+- **Data loss:** telemetry for the missed windows, replayed from the device's
+  buffer if it was awake and merely unable to reach the broker.
+- **Safety:** SAFETY-021 — an announced sleep can only defer the offline
+  indication, never suppress it. Samples then age out and lock the plant out on
+  staleness exactly as for any other absent device (SAFETY-005).
+- **Observability:** `devices_sleeping` gauge, `device_wake_missed_total`.
+
+The failure this handles is the one a naive sleep state creates: a flat battery,
+a failed wake timer, and a device somebody unplugged all look identical to
+ordinary sleep, and without a bound they would sit in `sleeping` indefinitely.
+
+### 2.7 Battery depletion
+
+- **Detection:** `battery_voltage` telemetry trending down; `battery_low` and
+  `battery_critical` events; eventually 2.6, when the device stops waking.
+- **Expected state:** notifications dispatched and coalesced per device
+  (M13-016); the plant continues to be monitored until the device stops.
+- **Recovery:** a human replaces or charges a cell. There is no software
+  recovery, and the design does not pretend otherwise.
+- **Safety:** **battery state grants nothing and refuses nothing.** It is not an
+  input to the safety gate ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)
+  §7). A depleted device stops reporting, its samples go stale, and the plant
+  locks out through the ordinary staleness path.
+- **Observability:** battery measurement kinds; `battery_low` device events.
+
+Prediction is preferred to discovery — but only where the voltage trend supports
+one. On LiFePO4 the discharge curve is flat across most of its range, so a
+projection is reported where it is defensible and **absent** where it is not,
+rather than fabricated (M13-016).
+
+### 2.8 Device sleeps with work outstanding
+
+- **Detection:** a `command.result` that never arrives; M6-017's no-delivery
+  detection.
+- **Expected state:** cannot occur by construction — an awake hold is acquired
+  before actuation and released only after the result's PUBACK, and the wake
+  cycle has one sleep call site which the hold gates (M9-021).
+- **Recovery:** if it occurs anyway, the interrupted-dose path (2.1/2.5) applies
+  at the next wake, and the Edge conservatively credits the full `requested_ml`.
+- **Safety:** SAFETY-011 — the pump is de-energised before any sleep is entered,
+  and `FIRMWARE_MAX_RUN_SECONDS` bounds the run on a timer independent of the
+  wake cycle regardless.
+- **Observability:** `command_no_delivery_total`, interrupted-dose events.
 
 ---
 

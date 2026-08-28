@@ -1,6 +1,6 @@
-# Issue M14-009 — M14 verification and exit criteria
+# Issue M14-010 — M14 verification and exit criteria
 
-**Milestone:** M14 · **PRD:** [PRD 140](../../prd/140-field-readiness.md) · **Depends on:** M14-001, M14-002, M14-003, M14-004, M14-005, M14-006, M14-007, M14-008
+**Milestone:** M14 · **PRD:** [PRD 140](../../prd/140-field-readiness.md) · **Depends on:** M14-001, M14-002, M14-003, M14-004, M14-005, M14-006, M14-007, M14-008, M14-009
 
 ## Context
 
@@ -33,6 +33,7 @@ Verify PRD 140's acceptance criteria and close the roadmap.
 - M14-006
 - M14-007
 - M14-008
+- M14-009
 
 ## Implementation notes
 

@@ -34,6 +34,16 @@ nothing had ever spoken v1.
 Invoking this clause after M1 completes would be a mistake, and the reviewer's
 question is simply: *has anything ever spoken this version?*
 
+**It was correctly not used on 2026-08-28.** Battery and deep-sleep device mode
+([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)) landed after M1,
+M2, M3, and M4 had shipped, and every part of it fits §1's additive list: two new
+`MeasurementKind` variants, optional `power` blocks in `device.config` and
+`device.status`, and one new offline `reason` whose `Unknown` resolves
+conservatively. Holding a command for a sleeping device is an **edge-side**
+mechanism with no wire representation at all, which is what kept the change
+additive — a retained command topic, or a widened TTL, would have been neither
+additive nor safe. Recorded in [mqtt-v1.md](mqtt-v1.md) §9.
+
 ---
 
 ## 1. MQTT protocol versioning

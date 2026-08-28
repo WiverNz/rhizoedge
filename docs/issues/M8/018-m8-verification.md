@@ -1,6 +1,6 @@
-# Issue M8-017 — M8 verification and exit criteria
+# Issue M8-018 — M8 verification and exit criteria
 
-**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-001, M8-002, M8-003, M8-004, M8-005, M8-006, M8-007, M8-008, M8-009, M8-010, M8-011, M8-012, M8-013, M8-014, M8-015, M8-016
+**Milestone:** M8 · **PRD:** [PRD 080](../../prd/080-end-to-end-test-environment.md) · **Depends on:** M8-001, M8-002, M8-003, M8-004, M8-005, M8-006, M8-007, M8-008, M8-009, M8-010, M8-011, M8-012, M8-013, M8-014, M8-015, M8-016, M8-017
 
 ## Context
 
@@ -15,7 +15,7 @@ Verify every PRD 080 acceptance criterion.
 ## Scope
 
 - Full gate plus the complete scenario suite
-- Run the six mutations and record results
+- Run the seven mutations and record results (six from M8-013, one from M8-017)
 - Update safety-invariants.md, ROADMAP.md, and README status
 - Record the milestone report
 
@@ -41,6 +41,7 @@ Verify every PRD 080 acceptance criterion.
 - M8-014
 - M8-015
 - M8-016
+- M8-017
 
 ## Implementation notes
 
@@ -58,7 +59,8 @@ that the safety suite detects the removal of each safety mechanism.
 - [ ] Total runtime is under 10 minutes.
 - [ ] Every `e2e` scenario in failure-scenarios.md is implemented and green.
 - [ ] `scenario_first_demo` reproduces all eighteen steps.
-- [ ] **Each of the six mutations turns the suite red.**
+- [ ] **Each of the seven mutations turns the suite red** — the six from M8-013
+      and M8-017's immediate-publish-to-a-sleeping-device mutation.
 - [ ] CI runs the suite.
 - [ ] A failing scenario prints database state and MQTT traffic.
 - [ ] safety-invariants.md, ROADMAP.md, and README updated; report recorded.

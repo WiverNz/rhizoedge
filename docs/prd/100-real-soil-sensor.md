@@ -98,6 +98,30 @@ probe in known soil → optional two-point check
 | F-100-31 | Drift observed over ≥ 4 weeks and recorded |
 | F-100-32 | Documented error bounds feed the recommendation `confidence` |
 
+### Power and stabilization (M10-011, M10-012)
+
+| ID | Requirement |
+|---|---|
+| F-100-40 | **Sensor power-on → time until stable usable reading** measured per supported sensor, over ≥ 20 power-on cycles, reported as a distribution rather than a single number |
+| F-100-41 | The definition of "stable" written down **before** data collection and recorded with the results |
+| F-100-42 | Measured in dry and saturated soil and at cold as well as room temperature — a bench figure at 22 °C is not a balcony figure in February |
+| F-100-43 | Time to first valid Modbus response reported **separately** from time to stable value; electrical settling reported separately from sensor settling |
+| F-100-44 | A recommended `sensor_warmup_ms` derived from the measured distribution with a stated margin and its reasoning; the firmware takes it from configuration (F-090-56) and hardcodes nothing |
+| F-100-45 | **Complete-system sleep current** measured on the assembled device with sensor and RS485 attached, at a stated supply voltage, with the instrument named |
+| F-100-46 | **Chip deep-sleep current reported separately and explicitly labelled as not being the system figure** — the two are routinely confused and differ by an order of magnitude or more |
+| F-100-47 | Wake-cycle energy integrated and broken into named phases (rail-on and warm-up, sampling, Wi-Fi association, MQTT, receive window, sleep entry); a watering wake measured separately |
+| F-100-48 | The energy-budget model recorded with **every input labelled measured or assumed**, the dominant term identified, and a sensitivity statement per input |
+| F-100-49 | An explicit verdict on the ≥ 6-month target at a 15-minute wake interval, with the numbers behind it; until it exists, every autonomy figure in the repository stays labelled a target |
+
+F-100-40 is here rather than in M9 because it directly sets the battery energy
+budget: at a 15-minute wake interval, every extra second of warm-up is roughly 96
+extra seconds of powered sensor per day, against a daily budget measured in
+single-digit milliamp-hours ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)
+§8). Reading too early is the worse failure of the two — a probe that has not
+settled returns a *plausible* wrong value, not an obviously bad one — so the
+answer is measured, and if it turns out to be uncomfortably long that is a
+finding for the budget rather than a reason to shorten the wait.
+
 ## Interfaces
 
 ```rust
@@ -237,6 +261,17 @@ Device events: `sensor_invalid`, `sensor_stuck`, `sensor_unhealthy`,
 - [ ] Readings match a gravimetric reference within documented bounds at three
       levels.
 - [ ] Four weeks of drift observation are recorded in `docs/testing/hil-runs/`.
+- [ ] **Sensor power-on → time until stable usable reading** is measured per
+      sensor over ≥ 20 cycles and reported as a distribution, with the stability
+      definition written down beforehand.
+- [ ] A recommended `sensor_warmup_ms` with a stated margin exists, and no
+      stabilisation constant for any specific part appears in the firmware.
+- [ ] **Complete-system sleep current** is measured on the assembled device, and
+      the chip deep-sleep figure is reported separately and labelled as such.
+- [ ] The energy budget is recorded with every input labelled measured or
+      assumed, and the dominant term identified.
+- [ ] An explicit verdict on ≥ 6 months at a 15-minute interval is recorded, with
+      numbers — or the target remains labelled unverified.
 - [ ] **No edge-side code changed** to accommodate real sensors.
 
 That last criterion is the real test of M9's abstraction.
@@ -247,6 +282,11 @@ That last criterion is the real test of M9's abstraction.
 - Hardware: an RS485 soil probe **or** a capacitive sensor, an RS485
   transceiver if applicable, and a means of gravimetric reference (a kitchen
   scale and an oven).
+- Hardware for M10-012: a current-measurement instrument with a **wide dynamic
+  range** — sleep current is microamps and wake current is hundreds of
+  milliamps within the same second, and a handheld multimeter either burdens the
+  supply at the low end or averages the peaks away at the high end. It cannot do
+  this measurement.
 
 ## Open questions
 

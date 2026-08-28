@@ -606,35 +606,134 @@ them must be runnable against the simulator with no hardware.
 
 ---
 
+## K. Battery and deep-sleep device mode (M5 edge, M6 delivery, M8 e2e, M9 firmware)
+
+[ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md): a device in
+`PowerMode::Battery` is absent most of the time by design. These scenarios exist
+to keep the two kinds of absence apart — announced and bounded, versus overdue
+and unexplained — and to prove that holding a command for a sleeping device did
+not weaken the command pipeline. All of them run against the simulator's battery
+mode with no hardware.
+
+### SCEN-110 Battery device sleeps and wakes on schedule
+- **Level** integration · **Milestone** M5 · **Proves** SAFETY-021
+- **Setup** simulator in `PowerMode::Battery`, `wake_interval_seconds` 900,
+  accelerated clock
+- **Actions** run for six wake cycles
+- **Assertions** connectivity is `sleeping` between wakes and `connected` during
+  them; `expected_wake_at` is `received_at(announcement) + 900 s` on the **edge**
+  clock; the device is never `isolated`; `sample_age_seconds` never crosses the
+  staleness threshold; `devices_sleeping` gauge tracks reality
+
+### SCEN-111 A sleeper that misses its wake becomes isolated
+- **Level** integration · **Milestone** M5 · **Proves** SAFETY-021
+- **Setup** as SCEN-110, one full cycle observed
+- **Actions** announce sleep, then never wake the simulator again; advance past
+  `overdue_at` with **no inbound message at all**
+- **Assertions** the transition to `isolated` is made by the liveness timer, not
+  by an arriving message (F-040-09); `missed_wake_count` increments per missed
+  window; a `device_wake_missed` event is raised; the device is not reported as
+  `sleeping` at any point after `overdue_at`
+
+### SCEN-112 Unannounced absence is never reported as sleep
+- **Level** integration · **Milestone** M5 · **Proves** SAFETY-021, SAFETY-012
+- **Setup** battery-mode device, awake
+- **Actions** three variants — (a) kill the session so the LWT fires with
+  `connection_lost`; (b) publish an offline status with an unrecognised `reason`;
+  (c) publish a sleep announcement whose `expected_wake_ms` is a year ahead
+- **Assertions** (a) and (b) derive `isolated` immediately; (c) derives
+  `sleeping` bounded by the **edge-computed** window and becomes `isolated` at
+  `overdue_at`, proving the device's own wake time is advisory
+
+### SCEN-113 Manual water for a sleeping device is held and delivered at wake
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-001, SAFETY-010
+- **Setup** battery device asleep, plant with an actuator binding, no lockout
+- **Actions** `POST /water`; observe; wake the device; let the cycle complete;
+  restart the edge between the request and the wake
+- **Assertions** the response is 202 with `status: "pending_for_device_wake"`,
+  `expected_delivery_after`, and **no `command_id`**; no MQTT publish occurs on
+  any `commands/*` topic while the device sleeps, verified by a spy subscriber;
+  at wake exactly one `command.water` is published; the intent survives the edge
+  restart and still delivers exactly once; exactly one `watering_event` results
+
+### SCEN-114 A leak that appears during sleep refuses the pending intent at wake
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-003, SAFETY-012
+- **Setup** battery device asleep with a pending water intent
+- **Actions** raise the leak state before the wake; wake the device
+- **Assertions** the safety gate is re-run at delivery and refuses; the intent
+  moves to `refused` with reason `leak`; **nothing is published** on
+  `commands/water`; the plant is in a leak lockout with no clear path from the
+  API; the same holds for tank-below-minimum and for a rolling-cap exhaustion
+  that occurred while the device slept
+
+### SCEN-115 Budget and cooldown across deep sleep while isolated
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-014, SAFETY-015
+- **Setup** battery device, valid enabled offline policy, isolated, bone-dry soil
+- **Actions** run 48 h virtual across roughly 190 sleep/wake cycles; force a cold
+  reset (not a timer wake) mid-cooldown; corrupt the RTC-retained checksum on one
+  wake
+- **Assertions** across ordinary timer wakes the RTC monotonic elapsed time is
+  credited, so cooldowns expire and the rolling budget accrues normally; the cold
+  reset and the failed checksum each fall back to "no time has passed" — the
+  cooldown is not shortened and the budget is not replenished; total delivered
+  never exceeds the policy budget or `FIRMWARE_MAX_DAILY_ML`
+
+### SCEN-116 An undelivered intent expires, and a delivered one carries a fresh TTL
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-002
+- **Setup** battery device with `wake_interval_seconds` 900
+- **Actions** (a) request a dose and never wake the device, past
+  `intent_expires_at`; (b) request a dose and wake the device normally
+- **Assertions** (a) the intent becomes `expired_before_wake`, nothing is
+  published, and the plant is untouched; (b) the delivered `command.water` has
+  `issued_at` within seconds of the wake — **not** of the operator's request —
+  and its `expires_at` is `issued_at + command_ttl`; the device accepts it with
+  `clock_synced: true`, having received a fresh `edge.time` first
+
+### SCEN-117 The device stays awake for a whole watering cycle
+- **Level** e2e · **Milestone** M8 · **Proves** SAFETY-001, SAFETY-011
+- **Setup** battery device, dose delivered at wake, `awake_budget_seconds`
+  deliberately shorter than the dose duration
+- **Actions** run the dose to completion; then cut power mid-dose on a second run
+- **Assertions** the device does not sleep while the pump is energised — the
+  awake budget does not truncate an active cycle; `command.result` is published
+  and acknowledged **before** the sleep announcement; on the power-cut run the
+  device boots pump-off and reports `status: "interrupted"` with
+  `delivered_ml: null` at its next wake, and no second dose is issued for it
+
+---
+
 ## Coverage matrix
 
 | Invariant | Scenarios |
 |---|---|
-| SAFETY-001 | SCEN-010, SCEN-011 |
-| SAFETY-002 | SCEN-025, SCEN-030, SCEN-031, SCEN-073, SCEN-074, SCEN-075, SCEN-076, SCEN-077, SCEN-078, SCEN-079 |
-| SAFETY-003 | SCEN-040, SCEN-041 |
+| SAFETY-001 | SCEN-010, SCEN-011, SCEN-113, SCEN-117 |
+| SAFETY-002 | SCEN-025, SCEN-030, SCEN-031, SCEN-073, SCEN-074, SCEN-075, SCEN-076, SCEN-077, SCEN-078, SCEN-079, SCEN-116 |
+| SAFETY-003 | SCEN-040, SCEN-041, SCEN-114 |
 | SAFETY-004 | SCEN-042, SCEN-043, SCEN-081 |
 | SAFETY-005 | SCEN-022, SCEN-023, SCEN-024, SCEN-070 |
 | SAFETY-006 | SCEN-034, SCEN-071, SCEN-072 |
 | SAFETY-007 | SCEN-032, SCEN-033, SCEN-045 |
 | SAFETY-008 | SCEN-012, SCEN-060, SCEN-062, SCEN-082 |
 | SAFETY-009 | SCEN-061 |
-| SAFETY-010 | SCEN-051, SCEN-052 |
-| SAFETY-011 | SCEN-026 |
-| SAFETY-012 | SCEN-014, SCEN-023, SCEN-025, SCEN-041, SCEN-043, SCEN-074, SCEN-075 |
+| SAFETY-010 | SCEN-051, SCEN-052, SCEN-113 |
+| SAFETY-011 | SCEN-026, SCEN-117 |
+| SAFETY-012 | SCEN-014, SCEN-023, SCEN-025, SCEN-041, SCEN-043, SCEN-074, SCEN-075, SCEN-112, SCEN-114 |
 | SAFETY-013 | SCEN-090, SCEN-093, SCEN-094, SCEN-107 |
-| SAFETY-014 | SCEN-091, SCEN-096, SCEN-097, SCEN-107 |
-| SAFETY-015 | SCEN-097, SCEN-098, SCEN-077 |
+| SAFETY-014 | SCEN-091, SCEN-096, SCEN-097, SCEN-107, SCEN-115 |
+| SAFETY-015 | SCEN-097, SCEN-098, SCEN-077, SCEN-115 |
 | SAFETY-016 | SCEN-092, SCEN-100, SCEN-101, SCEN-102 |
 | SAFETY-017 | SCEN-099, SCEN-105 |
 | SAFETY-018 | SCEN-106 |
 | SAFETY-019 | SCEN-094, SCEN-095, SCEN-103 |
 | SAFETY-020 | SCEN-104 |
+| SAFETY-021 | SCEN-110, SCEN-111, SCEN-112 |
 
 SAFETY-018 and SAFETY-020 have one scenario each, because each states a single
 crisp property with no interesting variations; the rest carry two or more.
 
-Every invariant has at least two scenarios except SAFETY-009, SAFETY-011,
-SAFETY-018, and SAFETY-020, which have one each by nature — SAFETY-009 is a differential test that
-subsumes every other scenario, and SAFETY-011 is a single device behaviour
-verified again physically in M11.
+Every invariant has at least two scenarios except SAFETY-009, SAFETY-018, and
+SAFETY-020, which have one each by nature — SAFETY-009 is a differential test
+that subsumes every other scenario. SAFETY-011 gained a second in SCEN-117,
+where converging to pump-off has to survive a power cut inside a battery
+device's awake window as well as an ordinary reset, and is still verified
+physically in M11.

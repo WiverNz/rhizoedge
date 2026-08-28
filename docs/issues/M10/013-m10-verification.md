@@ -1,6 +1,6 @@
-# Issue M10-011 — M10 verification and exit criteria
+# Issue M10-013 — M10 verification and exit criteria
 
-**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-001, M10-002, M10-003, M10-004, M10-005, M10-006, M10-007, M10-008, M10-009, M10-010
+**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-001, M10-002, M10-003, M10-004, M10-005, M10-006, M10-007, M10-008, M10-009, M10-010, M10-011, M10-012
 
 ## Context
 
@@ -33,6 +33,8 @@ Verify every PRD 100 acceptance criterion.
 - M10-008
 - M10-009
 - M10-010
+- M10-011
+- M10-012
 
 ## Implementation notes
 
