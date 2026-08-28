@@ -395,8 +395,12 @@ red**, including the one that publishes immediately to a sleeping device.
 and pump, so the simulator's fidelity claim is tested.
 
 **Deliverables.** Verified toolchain (M9-001 executes and corrects ADR-007) ·
-firmware CI job · own workspace with the contract crate by **path** · NVS and
-MAC-derived identity · hardware traits with `Clock::now_ms() -> Option` · the
+firmware CI job · own workspace with the contract crate by **path** ·
+**a board layer isolating every GPIO, polarity, and peripheral construction
+behind a compile-time board profile, with `ESP32-C3-DevKitC-02` as the initial
+reference board and a second ESP32-C3 board a profile addition rather than a
+refactor** ([ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md)) · NVS
+and MAC-derived identity · hardware traits with `Clock::now_ms() -> Option` · the
 simulator/firmware conformance test · **pump off as the first statement in
 `main`** · Wi-Fi · MQTT with LWT · **wall clock synchronised from `edge.time`
 over that same MQTT connection — no SNTP client — with strictly-increasing
@@ -413,6 +417,9 @@ telemetry** (M9-019…M9-021) · interrupted-dose reporting · serial provisioni
 
 **Exit criteria.** Builds for the ESP target with no board. Conformance test
 shows identical behaviour to the simulator, including the offline evaluator.
+No GPIO number, pin polarity, or board-specific peripheral construction appears
+outside `src/board/`; exactly one board profile per build, with zero or two a
+compile error; the `app/` host tests are board-independent.
 One firmware image serves both power modes;
 `deep_sleep` has exactly one call site; the device never sleeps mid-dose or before
 the result is acknowledged; no stabilisation constant for any specific sensor part
@@ -427,8 +434,9 @@ missed wake and no watchdog reset.
 real silicon; SAFETY-001 gains its device-side enforcement point; SAFETY-013,
 -015, -019, -020 on the device that actually owns them.
 
-**External dependency.** One ESP32-C3 board; ADR-007's toolchain verified on the
-development machine.
+**External dependency.** One **ESP32-C3-DevKitC-02** (the reference board);
+ADR-007's toolchain verified on the development machine. A battery board is not
+required here — M9 delivers the board seam, not a second profile.
 
 **PRD.** [090](docs/prd/090-esp32-rust-firmware.md)
 

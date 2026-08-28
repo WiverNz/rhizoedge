@@ -389,7 +389,7 @@ the whole plan.
 ```text
 M8-018 ──→ M9-001 (verify + correct ADR-007 toolchain)   ◄── do this first, on real hardware
    ├──→ M9-002 (firmware CI job)
-   └──→ M9-003 (workspace skeleton)
+   └──→ M9-003 (workspace skeleton + board layer)
            ├──→ M9-004 (NVS + identity) ──┬──→ M9-008 (wifi) ──→ M9-009 (mqtt + lwt + time sync)
            │                               ├──→ M9-006 (serial provisioning)   │
            │                               │                                    ▼
@@ -410,6 +410,17 @@ M8-018 ──→ M9-001 (verify + correct ADR-007 toolchain)   ◄── do this
 **`M9-001` must genuinely be first.** It executes ADR-007's commands on a real
 machine and corrects them. Every other issue in the milestone assumes a working
 toolchain, and discovering it does not work halfway through is expensive.
+
+**`M9-003` now also establishes the board layer**, and that is why it sits where
+it does rather than being widened. `M9-005` (traits), `M9-007` (boot-safe pump),
+and `M9-020` (power rails) all take their pins and polarities from the board
+profile, so the profile has to exist before any of them names a peripheral.
+Building the board seam after those three would mean editing safety code to
+change hardware, which is the outcome
+[ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md) rejects. No
+dependency **edge** changed for this — M9-003 already preceded all three; what
+changed is that the edge is now load-bearing for portability as well as for
+compilation.
 
 **`M9-014`** is the conformance test that validates the entire simulator-first
 strategy retrospectively.

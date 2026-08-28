@@ -1,4 +1,4 @@
-# ADR-007 — ESP32 chip, Rust framework, and toolchain
+# ADR-007 — ESP32 chip, board portability, Rust framework, and toolchain
 
 ## Status
 
@@ -6,6 +6,12 @@ Accepted — 2026-08-25. Planned for M9. **Toolchain commands verified against
 upstream documentation on 2026-08-25; re-verify at the start of M9 (issue
 M9-001).** The firmware Rust version is an explicit exception to the host
 workspace's 1.98.0 pin — see "Rust version: the embedded toolchain exception".
+
+**Amended 2026-08-28 — board portability.** The chip commitment (ESP32-C3) and
+the *development board* commitment (ESP32-C3-DevKitC-02) are separated, and
+board wiring is moved behind a compile-time-selected board profile. See
+"Board: development board versus product board" and the revised firmware
+structure. No other part of this ADR changed.
 
 ## Context
 
@@ -15,7 +21,9 @@ over MQTT — [ADR-013](013-clock-and-time-semantics.md) — so no SNTP client i
 required, though ESP-IDF provides one.) It must be written in Rust
 (hard project constraint) and must not block M0–M8.
 
-Two axes to decide: **which chip** and **which Rust stack**.
+Three axes to decide: **which chip**, **which board**, and **which Rust stack**.
+The first and third were decided in August 2026; the second was left implicit,
+which is the gap the 2026-08-28 amendment closes.
 
 The Rust-on-ESP ecosystem offers two distinct paths:
 
@@ -48,6 +56,91 @@ publishes small JSON messages, and toggles a GPIO.
 ESP32-S3 remains a documented fallback if a future requirement needs more RAM,
 PSRAM, or a second core; that switch is an `espup install` and a target change,
 not a rewrite, because `esp-idf-svc` covers both.
+
+### Board: development board versus product board
+
+The chip is a commitment. The **board** is not, and the two were previously
+conflated. Four distinct things:
+
+```text
+MCU / platform choice:              ESP32-C3               committed
+development board:                  ESP32-C3-DevKitC-02    initial, reference
+possible battery deployment board:  Seeed XIAO ESP32-C3    candidate, unpurchased
+future:                             custom ESP32-C3 PCB    must remain possible
+```
+
+**ESP32-C3-DevKitC-02 is the initial development and reference board.** It is
+chosen for bring-up convenience, not for deployment: a full pin header for
+breadboarding, an on-board USB-to-UART bridge for serial provisioning and
+`espflash --monitor`, exposed strapping pins, and a form factor that tolerates
+a multimeter probe on the pump driver input — which is exactly what HIL-1
+requires.
+
+None of those properties matter in a sealed battery enclosure, and some of them
+are actively wrong there: the DevKitC-02's regulator and USB bridge draw current
+that a device sleeping fourteen minutes out of every fifteen
+([ADR-018](018-battery-and-deep-sleep-device-mode.md)) cannot afford. The
+**Seeed XIAO ESP32-C3** is the candidate replacement for that deployment, and a
+custom ESP32-C3 PCB is the plausible end state.
+
+**The XIAO is not mandatory and is not a commitment.** It has not been purchased
+or measured. This ADR names it as a candidate so the architecture is built to
+accept it; it does not select it. That selection happens when the hardware
+exists and M10-012 has measured something.
+
+Therefore: **board selection belongs at the HAL/wiring boundary, and nowhere
+else.** All three of those boards are ESP32-C3. They differ in pin mapping,
+available GPIOs, peripheral construction, signal polarity, and low-power
+hardware — and in nothing above that line. Changing the board must therefore be
+a board-profile change, never a firmware refactor.
+
+What a board change **may** alter:
+
+- GPIO numbers, including UART and RS485 DE/RE pins
+- pump-control GPIO, sensor power-enable / load-switch GPIO, tank and leak inputs
+- active-high versus active-low polarity
+- board-specific peripheral construction and board-specific power-control pins
+- which GPIOs exist at all, and board power characteristics
+
+What a board change **must not** alter:
+
+- the MQTT contract, device identity semantics, or configuration semantics
+- the NVS data model
+- `validate_water_command`, `rhizo_policy::evaluate_offline`, or any watering
+  safety rule
+- the sensor traits, the pump abstraction, or the application state machine
+- the Edge Controller, in any respect whatsoever
+
+The physical board is a hardware adapter. It is not a domain architecture
+choice, and the moment a GPIO number appears in `src/app/` or `src/safety/` it
+has quietly become one.
+
+### Board selection is compile-time, not runtime
+
+Exactly one board profile is selected per firmware build, by a Cargo feature:
+
+```text
+board-devkitc02        # ESP32-C3-DevKitC-02 — the first supported profile
+board-xiao-esp32c3     # Seeed XIAO ESP32-C3 — added with the battery hardware
+```
+
+Zero features selected, or two, is a **compile error** with a message naming the
+available profiles — a `compile_error!` in `src/board/mod.rs`, not a runtime
+panic and not a silent default. A device that boots with the wrong pin map
+drives the pump GPIO as something else, which is the one failure class this
+project refuses to discover on hardware.
+
+Compile-time rather than a runtime pin table because a runtime table is
+configuration, and configuration for pin mapping would be remotely reachable
+state that decides which pin energises a pump. ADR-011 keeps hard limits out of
+messages for the same reason. It also costs nothing here: the board is soldered
+in place, so nothing legitimate ever changes it after flashing.
+
+**M9 ships `board-devkitc02` only.** The XIAO profile is written when the board
+is purchased and tested. What M9 must deliver is the *seam*: adding the second
+profile is a new file under `src/board/` and a feature entry, with no change to
+`app/`, `safety/`, `sensors/`, `pump/`, or `net/`. That is a structural
+property, and M9-003 and M9-022 check it structurally rather than trusting it.
 
 ### Stack: `std` via ESP-IDF
 
@@ -186,14 +279,17 @@ runs only when `firmware/**` or `crates/mqtt-contract/**` changes.
 
 ```text
 firmware/esp32-node/
-├── Cargo.toml            # own workspace
+├── Cargo.toml            # own workspace; board-* features declared here
 ├── rust-toolchain.toml
 ├── build.rs              # embuild / esp-idf-sys
 ├── sdkconfig.defaults
 ├── .cargo/config.toml    # target, linker = ldproxy, runner = espflash
 └── src/
     ├── main.rs           # pump-off FIRST, then init
-    ├── board.rs          # pin assignments in one place
+    ├── board/            # THE ONLY place a GPIO number may appear
+    │   ├── mod.rs        # profile selection, the board trait/struct, compile_error!
+    │   ├── devkitc02.rs  # ESP32-C3-DevKitC-02 pin map and peripheral construction
+    │   └── xiao_esp32c3.rs   # added with the battery hardware, not before
     ├── net/              # wifi.rs, mqtt.rs, time_sync.rs
     ├── sensors/          # trait defs + fake/ + real/
     ├── pump/             # trait def + fake/ + real/
@@ -204,6 +300,18 @@ firmware/esp32-node/
 
 The `app/` module contains no `esp_idf_*` imports and is compiled and tested on
 the host with fake adapters. That is where the safety-relevant logic lives.
+
+`src/board/` is the board layer, and it is the **only** place a literal GPIO
+number, a pin polarity, or a board-specific peripheral construction may appear.
+Everything above it receives already-constructed trait objects — `Pump`,
+`SoilSensor`, `PowerRail`, and the rest of M9-005's set — and cannot observe
+which board it is running on. The exact file names above are illustrative: a
+cleaner separation that achieves the same isolation is acceptable, and the
+isolation is the requirement.
+
+This is one board layer with two profiles, **not two firmwares**. Duplicating
+the firmware per board would duplicate the safety path, which is the same
+mistake as a second `validate_water_command`.
 
 ### Hard limits live in the shared contract crate
 
@@ -232,6 +340,30 @@ needs.
 **ESP32-S3 as primary.** Rejected for the same toolchain reason, but retained as
 the documented fallback if RAM or a second core is ever needed.
 
+**Committing to one board and hardcoding its pins.** Rejected. It is the cheapest
+thing to do in M9 and the most expensive thing to undo in M10–M14: the pin
+constants would be read by the pump driver, the rail control, the RS485 setup,
+and the boot-safe sequence, so moving to a battery board would edit safety code
+to change hardware. The board layer costs one indirection now and makes that
+move a new file later.
+
+**Starting on the XIAO ESP32-C3 directly.** Rejected for now. It is the likely
+deployment board, but it is not purchased, and bringing up unfamiliar firmware
+on a board with few exposed pins, no header, and no comfortable place to attach
+a multimeter would make HIL-1 — the one gate that genuinely matters in M9 —
+harder for no gain. Develop on the DevKitC-02, deploy on whatever measures best.
+
+**A runtime pin table in NVS or in device config.** Rejected. It makes the
+mapping between a GPIO and the pump a remotely reachable value, which is
+precisely the category ADR-011 keeps out of messages. The board does not change
+after it is soldered, so the flexibility buys nothing and the risk is real.
+
+**Building a separate firmware image per board.** Rejected for the same reason
+there is one `validate_water_command` and one image across power modes
+([ADR-018](018-battery-and-deep-sleep-device-mode.md)): two images are two safety
+paths, and M9-014's conformance test would cover only one of them. One image,
+one board profile chosen at compile time.
+
 ## Consequences
 
 Positive:
@@ -242,6 +374,12 @@ Positive:
   `cargo test` rather than by a plant.
 - The identical hard-limit validator runs in the simulator, making SAFETY-007
   meaningful from M6.
+- Development happens on convenient hardware while the deployment board stays
+  an open question that can be answered with measurements rather than guessed
+  now.
+- Adding a board is a new file under `src/board/` and a feature entry; no
+  application, safety, or protocol code is touched, and the host tests for
+  `app/` are board-independent by construction.
 
 Negative, accepted:
 
@@ -251,6 +389,12 @@ Negative, accepted:
   pinning exact versions and bumping deliberately.
 - Larger binary and higher idle power than `no_std`. Irrelevant for a
   mains-powered indoor node.
+- One indirection between the application and its pins, and a small amount of
+  duplicated shape per board profile. Accepted: it is the price of not editing
+  safety code to change hardware.
+- The XIAO profile is unverified until the board exists, so the second-profile
+  claim is architectural until then. M9-022 checks the seam structurally; only
+  buying the board proves it.
 
 ## Risks
 
@@ -266,6 +410,16 @@ Negative, accepted:
   *Mitigation:* the firmware workspace pins its own toolchain version, which is
   exactly why it is a separate workspace. A regression there cannot affect host
   development or CI.
+- **The board layer leaking.** A GPIO number reaches `app/` or `safety/` in a
+  hurry, and the abstraction is decorative from then on. *Mitigation:* M9-003
+  adds a structural check that fails the firmware test suite when a literal pin
+  assignment appears outside `src/board/`, and M9-022 makes it an exit
+  criterion. A convention nobody checks is not a boundary.
+- **The second board profile never being exercised** and rotting until the
+  battery hardware arrives. *Mitigation:* the requirement is the seam, not the
+  second profile; once `board-xiao-esp32c3` exists, M9-002's CI job builds both
+  profiles from the same application code, and a profile that stops compiling
+  fails the build rather than surfacing on a board.
 - **The firmware toolchain diverging from host 1.98.0** and the two drifting
   apart over time. *Mitigation:* the only shared code is the `no_std`,
   dependency-light contract crate; M1-011 checks its bare-metal build on the
@@ -278,7 +432,14 @@ Negative, accepted:
 - [PRD 090](../prd/090-esp32-rust-firmware.md) — firmware requirements.
 - M9-001 verifies and corrects the toolchain section on real hardware, and
   resolves the Rust-version exception one way or the other.
-- M9-002 adds the CI firmware-build job.
+- M9-002 adds the CI firmware-build job, and builds every board profile that
+  exists.
+- M9-003 creates `src/board/`, the `board-devkitc02` profile, the
+  exactly-one-profile compile error, and the pin-leak check.
+- M9-005, M9-007, and M9-020 take their pins, polarities, and rail control from
+  the board profile rather than defining them.
+- [ADR-018](018-battery-and-deep-sleep-device-mode.md) — the battery deployment
+  this board seam exists to serve.
 
 ## References
 
@@ -287,3 +448,7 @@ Negative, accepted:
 - `esp-idf-template`: <https://github.com/esp-rs/esp-idf-template>
 - `esp-idf-svc`: <https://github.com/esp-rs/esp-idf-svc>
 - `esp-idf-hal`: <https://github.com/esp-rs/esp-idf-hal>
+- ESP32-C3-DevKitC-02 user guide:
+  <https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/hw-reference/esp32c3/user-guide-devkitc-02.html>
+- Seeed XIAO ESP32-C3 (candidate battery board, unpurchased):
+  <https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/>

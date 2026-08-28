@@ -321,6 +321,11 @@ Owns:
 - power mode (`AlwaysOn` | `Battery`), the deep-sleep wake cycle, peripheral
   power rails behind a `PowerRail` trait, and checksummed RTC-retained
   sleep-cycle accounting ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md))
+- **the board layer** (`src/board/`): every GPIO number, pin polarity, and
+  board-specific peripheral construction, behind a compile-time board profile.
+  ESP32-C3-DevKitC-02 is the reference board; a battery board (Seeed XIAO
+  ESP32-C3, or a custom ESP32-C3 PCB) is a profile addition
+  ([ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md))
 
 Shares both `rhizo-mqtt-contract` and `rhizo-policy` with
 `default-features = false`; the latter is integrated in M9.
@@ -337,6 +342,10 @@ Must never:
   RTC checksum (SAFETY-015)
 - read battery voltage, charge state, or solar availability as permission to
   water — power is telemetry and is not an input to the gate
+- name a GPIO number, a pin polarity, or a board-specific peripheral outside
+  `src/board/` — a board is a hardware adapter, and the moment a pin number
+  reaches `app/` or `safety/` it has become a domain architecture choice
+- select a board profile at runtime, or default to one when none is chosen
 
 ---
 

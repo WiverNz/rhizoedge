@@ -48,6 +48,26 @@
 > cannot measure them, never zero; no battery field appears in `IrrigationInputs`
 > or in any argument to `validate_water_command`.
 
+> **Revised 2026-08-28 — board portability.** F-090-43 previously said only "pin
+> assignments in one `board.rs`", which is a filing convention rather than a
+> requirement. It is now an explicit portability requirement
+> ([ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md), amended):
+> **ESP32-C3-DevKitC-02 is the initial development and reference board**, the
+> Seeed XIAO ESP32-C3 is a candidate battery-deployment board, and a custom
+> ESP32-C3 PCB must stay possible. All three are ESP32-C3, so **changing the
+> board must not change application logic, MQTT behaviour, offline policy
+> evaluation, command validation, persistence semantics, sensor logic, or any
+> safety state machine.**
+>
+> Board wiring lives behind a board layer selected by a Cargo feature
+> (`board-devkitc02`, later `board-xiao-esp32c3`); exactly one profile per build,
+> enforced at compile time. **M9 ships the DevKitC-02 profile only** — what M9
+> must deliver is the seam, so that adding the XIAO is a board-profile addition
+> rather than a firmware refactor.
+>
+> **Additional acceptance criteria:** F-090-43…F-090-48 below, checked
+> structurally rather than by convention.
+
 ## Summary
 
 Replace the simulator's protocol endpoint with real Rust firmware on an
@@ -69,9 +89,10 @@ sensors and a real pump deferred to M10 and M11.
 4. Command handling using the **shared** validator.
 5. Boot-safe pump state and interrupted-dose reporting.
 6. Fake sensor and pump adapters behind traits.
-7. Host-testable application logic.
-8. A conformance test proving the firmware and simulator behave identically.
-9. Verified, actually-executed build and flash instructions.
+7. Host-testable application logic, independent of any particular board.
+8. A board layer that makes a second ESP32-C3 board a profile addition.
+9. A conformance test proving the firmware and simulator behave identically.
+10. Verified, actually-executed build and flash instructions.
 
 ## Non-goals
 
@@ -83,6 +104,12 @@ sensors and a real pump deferred to M10 and M11.
   autonomy figure is stated as a specification by this milestone.**
 - Solar, charging, or outdoor power (M14-009).
 - PCB design of any kind.
+- **A working Seeed XIAO ESP32-C3 profile.** The board is not purchased and
+  nothing about it is measured, so M9 delivers `board-devkitc02` and the seam
+  that makes `board-xiao-esp32c3` a new file. Writing an unverifiable pin map is
+  not the same as portability.
+- Supporting a non-ESP32-C3 chip. The board layer is a board abstraction, not a
+  chip abstraction; ESP32-S3 remains ADR-007's separate, documented fallback.
 - Any irrigation intelligence on the device beyond the shared offline evaluator —
   that remains the edge's
   ([ADR-006](../adr/006-irrigation-state-machine-ownership.md)).
@@ -174,7 +201,7 @@ edge publishes command.water
 | F-090-58 | `FIRMWARE_MAX_RUN_SECONDS` still ends a run on a timer independent of the hold and of the wake cycle |
 | F-090-59 | `battery_voltage` published where measurable and **omitted** where not; `battery_percent` only from a configured chemistry curve; neither is ever an input to a decision |
 | F-090-60 | NVS written on change and on watering, not per wake — at ~96 wakes a day NVS endurance is the limiting component; per-wake accounting lives in RTC memory |
-| F-090-61 | Always-on behaviour is unchanged: rails enabled, session held, F-090-01…F-090-43 unaffected |
+| F-090-61 | Always-on behaviour is unchanged: rails enabled, session held, F-090-01…F-090-48 unaffected |
 
 ### Architecture
 
@@ -183,7 +210,12 @@ edge publishes command.water
 | F-090-40 | Hardware behind traits: `Pump`, `SoilSensor`, `TankSensor`, `LeakSensor`, `Scale`, `Clock`, `NvsStore`, `PowerRail`, `BatterySensor` |
 | F-090-41 | Fake adapters for all of them, usable on the host |
 | F-090-42 | `src/app/` contains **no `esp_idf_*` imports** and is host-testable |
-| F-090-43 | Pin assignments in one `board.rs` |
+| F-090-43 | **ESP32-C3-DevKitC-02 is the initial development and reference board**, and `board-devkitc02` is the first supported board profile |
+| F-090-44 | All board-specific detail is isolated behind the board layer (`src/board/`): GPIO numbers, UART pins, RS485 DE/RE pins, pump-control GPIO, sensor power-enable / load-switch GPIO, tank and leak input pins, active-high/active-low polarity, board-specific peripheral construction, and any board-specific power-control pin |
+| F-090-45 | **No file under `src/app/`, `src/safety/`, `src/sensors/`, `src/pump/`, or `src/net/` contains a concrete GPIO number or pin polarity.** Everything above the board layer receives constructed trait objects and cannot observe which board it runs on |
+| F-090-46 | Board selection is **compile-time**, by Cargo feature; **exactly one** profile per build, with zero or more than one a `compile_error!` naming the available profiles — never a runtime default and never a runtime pin table |
+| F-090-47 | Adding a second ESP32-C3 board is a new board mapping plus a feature entry, with **no change** to application, safety, sensor, pump, or networking code, and no change to the MQTT contract, identity semantics, configuration semantics, or the NVS data model |
+| F-090-48 | Once `board-xiao-esp32c3` exists, **both profiles compile against the same application code**, CI builds both, and the host `app/` tests — which are board-independent — produce identical results under either profile |
 
 ## Interfaces
 
@@ -326,14 +358,20 @@ HTTP server on a constrained device would be surface area for no benefit.
 
 ## Testing strategy
 
-Three layers, only one needing a board:
+Four layers, only one needing a board:
 
 1. **Host unit tests** of `src/app/` with fake adapters: boot sequence ordering,
    interrupted-dose detection, dedup ring eviction and persistence, command
    validation dispatch, config version handling, NVS round trip, daily-total
    rollover. This covers SAFETY-002, -007, -011 with no hardware.
-2. **Compile verification** for the ESP target on every relevant change.
-3. **Conformance (M9-014)** — the same scenario script drives the simulator and
+2. **Compile verification** for the ESP target on every relevant change, for
+   every board profile that exists — one in M9, two once the XIAO profile is
+   added.
+3. **Structural board-isolation check**, run as an ordinary test in the
+   firmware workspace: a literal GPIO number or pin polarity outside
+   `src/board/` fails the suite. Board isolation that is only a convention stops
+   being true the first time somebody is in a hurry.
+4. **Conformance (M9-014)** — the same scenario script drives the simulator and
    firmware-with-fake-adapters, asserting identical published message sequences
    modulo ids and timestamps. This is what catches behavioural divergence the
    type system cannot.
@@ -345,6 +383,20 @@ With a board attached: HIL-1 and HIL-2 from
 
 - [ ] `cargo build --release` succeeds for `riscv32imc-esp-espidf` with no board.
 - [ ] The CI firmware job passes.
+- [ ] ESP32-C3-DevKitC-02 is the initial development/reference board, and
+      `board-devkitc02` builds.
+- [ ] All board-specific GPIO/peripheral mapping is isolated behind the board
+      layer.
+- [ ] No file under application, safety, sensor, pump, or networking code
+      contains a concrete GPIO number, and the structural check proves it.
+- [ ] Firmware application logic does not depend on a specific ESP32-C3
+      development board.
+- [ ] Selecting zero or two board features fails the build with a clear message.
+- [ ] Adding a second ESP32-C3 board requires a new board mapping/profile, not
+      changes to application logic.
+- [ ] Both supported board profiles compile against the same application code
+      once the second board is introduced, and switching profiles changes no
+      MQTT, domain, or safety test result.
 - [ ] [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md)'s toolchain
       section has been **executed** and corrected, including on Windows.
 - [ ] Host tests cover boot safety, interrupted dose, dedup ring, and command
@@ -374,7 +426,9 @@ completed and reviewed before hardware arrives.
 
 - M8 (a proven software system to compare against).
 - M1 (the shared contract and validator).
-- Hardware: one ESP32-C3 board and a USB cable. Nothing analogue.
+- Hardware: one **ESP32-C3-DevKitC-02** and a USB cable. Nothing analogue. Any
+  ESP32-C3 board works for the host and compile criteria; the board-dependent
+  criteria — HIL-1 in particular — assume the DevKitC-02's exposed pins.
 
 ## Open questions
 
@@ -390,10 +444,16 @@ completed and reviewed before hardware arrives.
    the host.
 4. **Telemetry ring size (16)** — a balance between RAM and gap tolerance. Easily
    tuned; nothing depends on it.
+5. **Which board actually gets deployed on battery.** The XIAO ESP32-C3 is the
+   candidate; a custom ESP32-C3 PCB is the plausible end state. Deliberately
+   unresolved here — M10-012 measures, and the board layer means the answer
+   costs a file rather than a refactor.
 
 ## Future work
 
 - Real sensors (M10), real pump (M11).
+- A `board-xiao-esp32c3` profile, written when the board is purchased and
+  measured, and a custom ESP32-C3 PCB after that.
 - OTA updates, signed firmware, TLS, per-device certificates (post-V1).
 - Light sleep and further power techniques, if M10-012's measurements show deep
   sleep alone does not reach the target.

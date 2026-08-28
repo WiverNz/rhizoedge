@@ -15,6 +15,9 @@ Build the firmware in CI on relevant changes.
 ## Scope
 
 - A job triggered by `firmware/**` or `crates/mqtt-contract/**`
+- **A build per board profile**: `board-devkitc02` in M9, and every profile that
+  exists thereafter, from the same application code. A matrix over one entry now
+  is what makes the second entry a one-line change
 - Aggressive caching of the ESP-IDF toolchain
 - Separate from the host test job so its slowness does not gate everything
 - A documented Linux-container fallback for local Windows builds
@@ -36,9 +39,18 @@ Keep the job non-blocking for host tests but blocking for merge. The contract
 crate's `no_std` check (M1-011) already runs on every change and is fast; this
 job is the deeper verification.
 
+Enumerate the board profiles in a matrix even while there is one of them. The
+point of ADR-007's board layer is that a second ESP32-C3 board costs a profile
+and not a refactor, and a CI job that hardcodes `--features board-devkitc02`
+quietly makes the second profile someone's problem later. The ESP-IDF cache is
+shared across matrix legs, so the marginal cost of a leg is a compile, not a
+toolchain download.
+
 ## Acceptance criteria
 
 - [ ] The job builds the firmware for `riscv32imc-esp-espidf`.
+- [ ] It builds every declared board profile, from the same application code.
+- [ ] Adding a board profile is a one-line matrix change.
 - [ ] It triggers on the specified paths.
 - [ ] Caching keeps warm builds under 5 minutes.
 - [ ] A contract change that breaks the firmware fails it.

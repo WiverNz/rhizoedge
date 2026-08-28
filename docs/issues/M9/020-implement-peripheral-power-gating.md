@@ -22,6 +22,10 @@ settled.
 
 - A `PowerRail` trait with `enable()`, `disable()`, and `is_enabled()`, and fake
   and GPIO implementations, in the style of M9-005's other traits
+- Rail pins, polarity, and whether a given rail exists at all supplied by the
+  **board profile** (M9-003), never by this module: a load switch that is
+  active-low on one board and active-high on another is a board fact, and
+  getting it backwards powers a rail through a whole sleep
 - Separate rails for the RS485 transceiver and the sensor supply, so a device
   with an analogue probe does not power a transceiver it has no use for
 - Rail control in the wake cycle: enable, wait `sensor_warmup_ms`, sample,
@@ -49,6 +53,12 @@ settled.
 - M9-005
 
 ## Implementation notes
+
+A board that has no RS485 rail says so in its own profile, and the sampling code
+asks the board rather than assuming. This is the first place the board seam earns
+its keep: the DevKitC-02's spare header pins and a XIAO's much smaller pin budget
+will not agree on which rails exist, and that disagreement must stay inside
+`src/board/`.
 
 The pump is deliberately **not** a `PowerRail`. It is an actuator with a hard
 run limit, a boot-safe requirement, and an independent run guard, and giving it
@@ -82,6 +92,8 @@ and the whole reason M10-011 exists is that nobody knows the real number yet.
 - [ ] No stabilisation constant for any specific sensor part appears in the
       firmware source.
 - [ ] A device with no RS485 capability never enables that rail.
+- [ ] Rail pins and polarity come from the board profile; `src/app/` and the
+      sampling code name no GPIO and no active level.
 
 ## Verification
 
@@ -109,5 +121,6 @@ grep -rniE 'sen0601|warmup_ms *[:=] *[0-9]' src/   # expect no hardcoded value
 ```text
 firmware/esp32-node/src/hal/rail.rs
 firmware/esp32-node/src/app/sampling.rs
-firmware/esp32-node/src/board.rs
+firmware/esp32-node/src/board/mod.rs
+firmware/esp32-node/src/board/devkitc02.rs
 ```

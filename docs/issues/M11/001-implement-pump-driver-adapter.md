@@ -33,7 +33,8 @@ Drive a real pump safely.
 MOSFET over relay: no contacts to weld, faster turn-off, and a gate
 pull-down is trivial. A relay is acceptable only if the pump needs AC.
 
-Document the wiring requirement in `board.rs` alongside the pin definition, so
+Document the wiring requirement in the board profile alongside the pin
+definition, so
 whoever wires the next board reads it at the right moment.
 
 Measuring actual duration rather than assuming it is what makes overrun
@@ -61,11 +62,11 @@ cd firmware/esp32-node && cargo test pump::real
 
 ## Documentation impact
 
-- board.rs wiring requirements.
+- Board-profile wiring requirements.
 
 ## Files likely affected
 
 ```text
 firmware/esp32-node/src/pump/real.rs
-firmware/esp32-node/src/board.rs
+firmware/esp32-node/src/board/devkitc02.rs
 ```

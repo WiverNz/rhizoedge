@@ -15,7 +15,8 @@ Guarantee the pump is off from the earliest possible moment.
 ## Scope
 
 - `pump_off()` as the first statement in `main`, before Wi-Fi, before MQTT, before NVS
-- A documented hardware requirement: gate pull-down so an un-driven pin is off
+- A documented hardware requirement: gate pull-down so an un-driven pin is off,
+  recorded in the board profile next to the pin it constrains
 - Hardware watchdog enabled
 - A watchdog reset leaves the pump off
 - Host tests asserting the boot ordering
@@ -37,13 +38,20 @@ M11-009 (HIL-1) puts a multimeter on the line across twenty resets.
 Assert the ordering in a host test by recording the sequence of adapter calls —
 an ordering regression is otherwise invisible until hardware exists.
 
+`main` calls `pump_off()` on the board-supplied pump; it does not name a pin.
+The pull-down requirement is a property of a specific board's wiring, so it is
+documented in `src/board/devkitc02.rs` beside that board's pump pin, and every
+future board profile carries the same note for its own pin. A board profile that
+cannot satisfy it is not a supported board.
+
 ## Acceptance criteria
 
 - [ ] `pump_off()` is the first statement in `main`.
 - [ ] A host test asserts the call ordering.
 - [ ] The watchdog is enabled.
 - [ ] A watchdog reset path leaves the pump off.
-- [ ] The hardware pull-down requirement is documented in `board.rs`.
+- [ ] The hardware pull-down requirement is documented in the board profile,
+      beside the pump pin it constrains.
 - [ ] No initialisation path can energise the pump.
 
 ## Verification
@@ -60,11 +68,11 @@ cargo test safety_011_boot_state_pump_off
 
 ## Documentation impact
 
-- board.rs documents the pull-down requirement.
+- The board profile documents the pull-down requirement.
 
 ## Files likely affected
 
 ```text
 firmware/esp32-node/src/main.rs
-firmware/esp32-node/src/board.rs
+firmware/esp32-node/src/board/devkitc02.rs
 ```

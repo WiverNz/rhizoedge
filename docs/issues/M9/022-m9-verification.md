@@ -47,6 +47,13 @@ Verify every PRD 090 acceptance criterion.
 
 ## Implementation notes
 
+**Board portability is verified structurally, not by owning two boards.** The
+XIAO ESP32-C3 is not purchased, so nothing here waits on it. What is checked is
+the seam: one board profile builds, zero or two fail loudly, no GPIO number
+exists outside `src/board/`, and the `app/` host tests never mention a board.
+If those hold, adding the XIAO is a file. If they do not, M9 shipped a
+convention rather than a boundary, and the cost lands in M10–M14.
+
 **HIL-1 is the gate that matters.** Put a multimeter on the pump driver input
 and confirm it never asserts across twenty resets, a watchdog reset, and ten
 mid-boot power cuts. If the pump so much as twitches, the hardware pull-down is
@@ -59,6 +66,14 @@ Everything else in M9 can be verified on the host.
 - [ ] `cargo build --release` succeeds for the ESP target with no board.
 - [ ] The CI firmware job passes.
 - [ ] ADR-007's toolchain section has been executed and corrected.
+- [ ] ADR-007's firmware-structure section matches the board layer as built.
+- [ ] `board-devkitc02` builds; zero or two board features fail with a clear
+      `compile_error!` naming the available profiles.
+- [ ] The structural board-isolation check passes: no GPIO number, pin polarity,
+      or board-specific peripheral construction outside `src/board/`.
+- [ ] The `app/` host tests are board-independent — they pass with no board
+      profile selected, and their results do not vary by profile.
+- [ ] CI builds every declared board profile from the same application code.
 - [ ] Host tests cover boot safety, interrupted dose, dedup ring, and command validation.
 - [ ] The conformance test shows identical behaviour to the simulator.
 - [ ] **With a board:** it connects, appears online, publishes telemetry, applies config.
@@ -72,6 +87,8 @@ Everything else in M9 can be verified on the host.
 
 ```bash
 cd firmware/esp32-node && cargo build --release && cargo test
+cargo test board_isolation
+grep -rnE "(Gpio|gpio)[0-9]+" src/ --include=*.rs | grep -v "^src/board/"   # expect nothing
 espflash flash target/riscv32imc-esp-espidf/release/esp32-node --monitor
 ```
 
