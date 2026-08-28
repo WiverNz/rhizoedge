@@ -219,7 +219,7 @@ silently break SAFETY-005 three milestones later.
 ### M4 — Registry and health
 
 ```text
-M3-018 ──→ M4-001 (status ingestion)
+M3-018 ──→ M4-001 (apply ingested status to registry)
    ├──→ M4-002 (LWT)
    ├──→ M4-003 (auto-registration — device only, never a plant)
    ├──→ M4-004 (staleness + liveness timer)      ◄── SAFETY-005 input

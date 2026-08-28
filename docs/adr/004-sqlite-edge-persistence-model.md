@@ -122,12 +122,17 @@ CREATE TABLE measurements (
     boot_id         TEXT,
     sequence        INTEGER,
     batch_id        TEXT NOT NULL,          -- groups one sampling cycle
-    origin          TEXT NOT NULL DEFAULT 'live'   -- live|offline_replay
+    origin          TEXT NOT NULL DEFAULT 'live',  -- live|offline_replay
+    source_message_id TEXT,                -- stable transport effect identity
+    sample_index    INTEGER                -- position within telemetry.batch
 );
 -- The safety-critical lookup: latest control sample for a plant binding.
 CREATE INDEX idx_meas_lookup ON measurements(device_id, point, kind, received_at DESC);
 CREATE INDEX idx_meas_time   ON measurements(received_at);
 CREATE INDEX idx_meas_batch  ON measurements(batch_id);
+CREATE UNIQUE INDEX uq_measurement_batch_sample
+    ON measurements(device_id, batch_id, sample_index)
+    WHERE sample_index IS NOT NULL;
 
 CREATE TABLE device_events (
     event_id    TEXT PRIMARY KEY,
@@ -332,17 +337,22 @@ someone writes the check-then-insert race.
 
 ### Retention
 
-`processed_messages` older than 7 days, `pending_cloud_events` with
-`status='synced'` older than 24 hours, and `quarantined_messages` beyond 1000
-rows are pruned by a periodic task. `measurements` are pruned at 90 days.
+Transport markers older than 7 days are pruned only when the durable effect has
+its own stable uniqueness: telemetry uses `(device_id, batch_id, sample_index)`,
+actuator state retains `message_id`, command results use `command_id`, and replay
+uses `event_id`. `device.status` is a mutable projection with no separate effect row,
+and retained status or a fixed LWT can be redelivered indefinitely, so its
+transport marker is retained. `pending_cloud_events` with `status='synced'`
+older than 24 hours and `quarantined_messages` beyond 1000 rows are pruned by a
+periodic task. `measurements` are pruned at 90 days.
 
 `watering_events`, `commands`, and `device_events` are **never auto-pruned** —
 they are the record of what the machine did to a living thing.
 
-The 7-day dedup horizon must exceed the longest plausible redelivery window. A
-broker holds QoS 1 messages only for the duration of a session, so the real
-window is minutes; 7 days is deliberate over-provisioning at a cost of a few
-megabytes.
+The seven-day transport horizon is not itself the correctness boundary. Late
+duplicates are stopped by stable effect uniqueness, while the status exception
+preserves its marker. This covers application replay and retained/LWT delivery,
+not merely normal QoS session timing.
 
 ### Migrations
 

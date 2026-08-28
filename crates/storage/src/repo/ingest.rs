@@ -84,6 +84,19 @@ pub async fn persist_telemetry(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok((Dedup::Duplicate, 0));
     }
+    if sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM measurements WHERE device_id=? AND batch_id=?)",
+    )
+    .bind(&device)
+    .bind(envelope.data.batch_id.to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?
+        != 0
+    {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok((Dedup::Duplicate, 0));
+    }
     touch_device(
         &mut tx,
         &device,
@@ -94,7 +107,7 @@ pub async fn persist_telemetry(
     .await?;
     let batch_id = envelope.data.batch_id.to_string();
     let mut accepted = 0;
-    for sample in &envelope.data.samples {
+    for (sample_index, sample) in envelope.data.samples.iter().enumerate() {
         let valid = sample.validate().is_valid();
         insert_sample(
             &mut tx,
@@ -107,6 +120,8 @@ pub async fn persist_telemetry(
             envelope.boot_id.as_ref().map(ToString::to_string),
             envelope.sequence,
             "live",
+            Some(&message),
+            Some(sample_index as i64),
         )
         .await?;
         if valid {
@@ -135,6 +150,8 @@ async fn insert_sample(
     boot: Option<String>,
     sequence: Option<u64>,
     origin: &str,
+    source_message_id: Option<&str>,
+    sample_index: Option<i64>,
 ) -> Result<(), StorageError> {
     let (num, bval) = if valid {
         match s.value {
@@ -145,8 +162,8 @@ async fn insert_sample(
     } else {
         (None, None)
     };
-    sqlx::query("INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,calibration_ref,received_at,device_time_ms,boot_id,sequence,batch_id,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(device).bind(s.sensor_id.as_ref().map(|v|v.as_str())).bind(s.point.as_str()).bind(json_name(&s.kind)?).bind(num).bind(bval).bind(json_name(&s.unit)?).bind(json_name(&s.quality)?).bind(s.calibration_ref.as_ref().map(|v|v.as_str())).bind(received).bind(device_time).bind(boot).bind(sequence.map(|v|v as i64)).bind(batch).bind(origin).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
+    sqlx::query("INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,calibration_ref,received_at,device_time_ms,boot_id,sequence,batch_id,origin,source_message_id,sample_index) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(device).bind(s.sensor_id.as_ref().map(|v|v.as_str())).bind(s.point.as_str()).bind(json_name(&s.kind)?).bind(num).bind(bval).bind(json_name(&s.unit)?).bind(json_name(&s.quality)?).bind(s.calibration_ref.as_ref().map(|v|v.as_str())).bind(received).bind(device_time).bind(boot).bind(sequence.map(|v|v as i64)).bind(batch).bind(origin).bind(source_message_id).bind(sample_index).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
     Ok(())
 }
 async fn record_invalid(
@@ -189,6 +206,18 @@ pub async fn persist_actuator(
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
+    if sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM actuator_states WHERE message_id=?)",
+    )
+    .bind(&id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?
+        != 0
+    {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok(Dedup::Duplicate);
+    }
     touch_device(
         &mut tx,
         &dev,
@@ -212,6 +241,18 @@ pub async fn persist_command_result(
     let id = e.message_id.to_string();
     let dev = e.device_id.to_string();
     if mark_processed(&mut tx, &id, &dev, "command.result", at).await? == Dedup::Duplicate {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok(Dedup::Duplicate);
+    }
+    if sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM command_results WHERE command_id=?)",
+    )
+    .bind(e.data.command_id.to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?
+        != 0
+    {
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
         return Ok(Dedup::Duplicate);
     }
@@ -257,6 +298,31 @@ pub async fn persist_replay(
             through_device_seq: through,
             complete: e.data.complete,
         });
+    }
+    if !e.data.events.is_empty() {
+        let mut all_events_exist = true;
+        for event in &e.data.events {
+            let exists = sqlx::query_scalar::<_, i64>(
+                "SELECT EXISTS(SELECT 1 FROM device_events WHERE event_id=?)",
+            )
+            .bind(event.event_id.to_string())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+            if exists == 0 {
+                all_events_exist = false;
+                break;
+            }
+        }
+        if all_events_exist {
+            tx.rollback().await.map_err(StorageError::from_sqlx)?;
+            let through = replay_through(db, &dev, &boot).await?;
+            return Ok(ReplayCommit {
+                dedup: Dedup::Duplicate,
+                through_device_seq: through,
+                complete: e.data.complete,
+            });
+        }
     }
     for event in &e.data.events {
         let eid = event.event_id.to_string();

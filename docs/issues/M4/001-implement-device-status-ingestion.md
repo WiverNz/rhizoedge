@@ -1,4 +1,4 @@
-# Issue M4-001 — Implement device status ingestion
+# Issue M4-001 — Apply ingested device status to the registry
 
 **Milestone:** M4 · **PRD:** [PRD 040](../../prd/040-device-registry-and-health.md) · **Depends on:** M3-018
 
@@ -9,11 +9,13 @@ without waiting for the next heartbeat.
 
 ## Goal
 
-Ingest status messages into the device registry.
+Apply already-ingested status messages to the device registry and publish the
+Edge time response.
 
 ## Scope
 
-- Handle `device.status` in the pipeline
+- Extend the existing M3 `device.status` pipeline branch after validation and
+  durable raw-status persistence; do not add another MQTT consumer or decoder
 - Record status, firmware and protocol version, `boot_id`, `clock_synced`, `applied_config_version`, uptime, heap, RSSI
 - Update `last_seen_at`
 - Record `online`/`offline` transitions as device events
@@ -21,6 +23,8 @@ Ingest status messages into the device registry.
 
 ## Non-goals
 
+- MQTT subscription, envelope decoding, identity validation, `received_at`
+  stamping, quarantine, and raw durable status persistence (M3).
 - LWT specifics (M4-002).
 - Auto-registration (M4-003).
 
@@ -33,6 +37,11 @@ Ingest status messages into the device registry.
 Status resolution must be **order-insensitive**: take the status from the
 message with the greater `received_at`. A late-arriving LWT must not be able to
 mark a live device dead (failure-model 1.4).
+
+Registry projection changes apply only after the existing M3 persistence path
+accepts a new status effect. F-040-17 is intentionally per validated receipt:
+even an exact transport duplicate still triggers a fresh, non-retained
+`edge.time` response without reapplying the registry effect.
 
 Only log a transition at INFO; a heartbeat that confirms the existing state is
 not news.

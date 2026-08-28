@@ -110,7 +110,7 @@ start → run migrations (Fatal on failure) → open pool (WAL)
 | ID | Requirement |
 |---|---|
 | F-030-40 | Graceful shutdown: stop accepting, finish the in-flight transaction, close the pool, exit 0 |
-| F-030-41 | Retention task prunes `processed_messages` > 7 d, synced outbox rows > 24 h, quarantine > 1000 rows |
+| F-030-41 | Retention prunes transport markers older than 7 d only where durable effects have independent stable uniqueness; `device.status` markers are retained because retained/LWT messages can be redelivered indefinitely. Synced outbox rows older than 24 h and quarantine beyond 1000 rows are pruned. |
 | F-030-42 | Every long-running task is supervised; a panic logs, increments `task_panics_total`, and **exits the process non-zero** |
 
 ## Interfaces

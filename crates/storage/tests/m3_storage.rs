@@ -1,8 +1,8 @@
 //! M3 persistence integration tests.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use rhizo_mqtt_contract::{
-    Envelope,
-    payload::{DeviceEventBatch, TelemetryBatch},
+    Envelope, MessageKind,
+    payload::{ActuatorState, CommandResult, DeviceEventBatch, DeviceStatus, TelemetryBatch},
 };
 use rhizo_storage::{
     EdgeDb,
@@ -16,6 +16,14 @@ async fn db() -> EdgeDb {
     let db = EdgeDb::in_memory().await.unwrap();
     db.migrate().await.unwrap();
     db
+}
+
+async fn remove_marker(db: &EdgeDb, message_id: impl ToString) {
+    sqlx::query("DELETE FROM processed_messages WHERE message_id=?")
+        .bind(message_id.to_string())
+        .execute(db.pool())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -139,6 +147,162 @@ async fn replay_and_gap_are_idempotent_by_event_id() {
         .await
         .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn telemetry_effect_identity_survives_transport_marker_pruning() {
+    let db = db().await;
+    let e = Envelope::<TelemetryBatch>::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/telemetry-batch.json"
+    ))
+    .unwrap();
+    let first = ingest::persist_telemetry(&db, &e, 10).await.unwrap();
+    remove_marker(&db, e.message_id).await;
+    let mut resealed = e.clone();
+    resealed.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+    let replay = ingest::persist_telemetry(&db, &resealed, 20).await.unwrap();
+    assert_eq!((first.0, replay.0), (Dedup::New, Dedup::Duplicate));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM measurements")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        e.data.samples.len() as i64
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT last_seen_at FROM devices WHERE device_id=?")
+            .bind(e.device_id.to_string())
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        10
+    );
+}
+
+#[tokio::test]
+async fn actuator_effect_identity_survives_transport_marker_pruning() {
+    let db = db().await;
+    let e = Envelope::<ActuatorState>::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/actuator.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        ingest::persist_actuator(&db, &e, 10).await.unwrap(),
+        Dedup::New
+    );
+    remove_marker(&db, e.message_id).await;
+    assert_eq!(
+        ingest::persist_actuator(&db, &e, 20).await.unwrap(),
+        Dedup::Duplicate
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM actuator_states")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn command_result_effect_identity_survives_transport_marker_pruning() {
+    let db = db().await;
+    let e = Envelope::<CommandResult>::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/command-result.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        ingest::persist_command_result(&db, &e, 10).await.unwrap(),
+        Dedup::New
+    );
+    remove_marker(&db, e.message_id).await;
+    let mut resealed = e.clone();
+    resealed.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+    assert_eq!(
+        ingest::persist_command_result(&db, &resealed, 20)
+            .await
+            .unwrap(),
+        Dedup::Duplicate
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM command_results")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn replay_effect_identities_survive_transport_marker_pruning() {
+    let db = db().await;
+    let e = Envelope::<DeviceEventBatch>::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/events-replay-gap.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        ingest::persist_replay(&db, &e, 10).await.unwrap().dedup,
+        Dedup::New
+    );
+    remove_marker(&db, e.message_id).await;
+    assert_eq!(
+        ingest::persist_replay(&db, &e, 20).await.unwrap().dedup,
+        Dedup::Duplicate
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM device_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        e.data.events.len() as i64
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM history_gaps")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM watering_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn retained_status_marker_is_not_pruned_or_reapplied() {
+    let db = db().await;
+    let e = Envelope::<DeviceStatus>::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        ingest::persist_raw(&db, &e, MessageKind::DeviceStatus, 10)
+            .await
+            .unwrap(),
+        Dedup::New
+    );
+    let pruned = retention::run_batch(&db, 8 * 86_400_000, 500)
+        .await
+        .unwrap();
+    assert_eq!(pruned.processed, 0);
+    assert_eq!(
+        ingest::persist_raw(&db, &e, MessageKind::DeviceStatus, 20)
+            .await
+            .unwrap(),
+        Dedup::Duplicate
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT last_seen_at FROM devices WHERE device_id=?")
+            .bind(e.device_id.to_string())
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        10
     );
 }
 

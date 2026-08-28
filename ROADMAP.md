@@ -757,7 +757,7 @@ Recorded so their absence is a decision rather than an oversight:
 **M0, M1, M2, and M3 are `DONE`.** The next unstarted issue is:
 
 ```text
-M4-001 — Implement device status ingestion
+M4-001 — Apply ingested device status to the registry
 ```
 
 It depends on M3-018, which is complete, so it is executable now. See

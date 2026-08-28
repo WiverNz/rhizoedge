@@ -4,7 +4,7 @@ Rhizo Edge is an offline-first Rust platform for plant monitoring and fail-safe 
 
 ## Current project state
 
-Planning and M0–M3 are complete. M4 is READY; the next executable issue is **M4-001 — Implement device status ingestion**. Verify this from `ROADMAP.md`, the dependency graph, Git history, and the working tree at the start of every implementation session. Status summaries in navigation or agent files can become stale.
+Planning and M0–M3 are complete. M4 is READY; the next executable issue is **M4-001 — Apply ingested device status to the registry**. Verify this from `ROADMAP.md`, the dependency graph, Git history, and the working tree at the start of every implementation session. Status summaries in navigation or agent files can become stale.
 
 Do not begin a milestone merely because its predecessor is complete. Implement only the milestone and issues the user requested, then stop after reporting completion.
 
