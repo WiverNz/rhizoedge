@@ -120,6 +120,8 @@ docs/
 ├── prd/               PRD 000…140 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
 ├── testing/           strategy, 80 scenarios, simulator, HIL, local dev
+├── hardware/          home-node-hardware-guide.md — BOM, enclosure, wiring,
+│                      power, assembly order (practical, NOT normative)
 └── issues/M0…M14/     256 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
@@ -138,6 +140,14 @@ a cross build. See ADR-001.
 Each crate's responsibilities and its explicit prohibitions are in
 [docs/architecture/component-model.md](docs/architecture/component-model.md) —
 read the relevant section before adding code to a crate.
+
+`docs/hardware/home-node-hardware-guide.md` is the odd one out: a procurement and
+assembly guide with parts, prices, and ratings, useful from M9 onward and
+irrelevant before it. **Nothing in it is normative.** Its numbers are starting
+points its own §20 lists as needing measurement, so never derive a constant, a
+threshold, or a firmware default from it — required behaviour lives in the ADRs,
+PRDs, safety invariants, and the MQTT contract. It names boards; ADR-007 governs
+what that means in code.
 
 ---
 

@@ -20,11 +20,15 @@ Use each source for its intended question:
 6. Other architecture and testing documents define component boundaries and validation strategy.
 7. `ROADMAP.md` defines milestone state, exit criteria, and the current starting point; the dependency graph defines executable order.
 
+`docs/hardware/home-node-hardware-guide.md` is practical procurement and assembly guidance for building a physical node from M9 onward, and is not normative. Do not derive constants, thresholds, limits, or firmware defaults from its parts, prices, or ratings; its own "decisions still requiring measurement" section lists what must be measured rather than copied. Board naming there is governed by `docs/adr/007-esp32-rust-framework-and-toolchain.md`.
+
 Historical prompt and project-plan documents are provenance, not current specifications. If issue prose conflicts with a later accepted ADR or normative protocol, verify the contradiction, update the stale planning text, and implement one consistent current design. Never implement both versions.
 
 ## Required reading before implementation
 
 Before coding, read `ROADMAP.md`, `docs/architecture/dependency-graph.md`, the complete current issue and its dependencies, and the milestone PRD. Read the relevant crate boundary in `docs/architecture/component-model.md`.
+
+For M9-M11 hardware work, also read `docs/testing/hardware-in-the-loop.md` and, for what is physically being built and wired, `docs/hardware/home-node-hardware-guide.md`.
 
 Before changing protocol, safety, actuation, persistence semantics, clocks, or offline behavior, also read the relevant protocol specification, ADRs, safety invariants, failure/time/connectivity model, and existing tests. Use actual shared contract APIs and fixtures; do not reconstruct wire formats from memory.
 

@@ -318,8 +318,14 @@ later calls that same implementation; there is never a simulator-specific copy.
 This keeps the full control plane — including offline autonomy after M6 —
 buildable and testable before electronics exist.
 
-**Milestones M0–M8 require no hardware at all.** M8 delivers the complete
-software system, verified end to end by one command:
+**Milestones M0–M8 require no hardware at all.** When hardware does arrive at M9,
+the [home node hardware guide](docs/hardware/home-node-hardware-guide.md) is the
+bill of materials, wiring, power, and assembly order for building one — bench
+bring-up on an ESP32-C3-DevKitC-02 through a battery and solar deployment. It is
+practical guidance, not a specification: its parts and values are starting points
+to be measured.
+
+M8 delivers the complete software system, verified end to end by one command:
 
 ```bash
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
@@ -404,6 +410,7 @@ Start here: **[docs/README.md](docs/README.md)** — the documentation index.
 | [Failure model](docs/architecture/failure-model.md) | Every failure and its expected behaviour |
 | [Testing strategy](docs/testing/strategy.md) | How the safety claims are proven |
 | [Local development](docs/testing/local-development.md) | Running and debugging |
+| [Home node hardware guide](docs/hardware/home-node-hardware-guide.md) | What to buy and how to build one physical node |
 
 ## Known V1 limitations
 

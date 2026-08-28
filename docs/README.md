@@ -124,6 +124,20 @@ One PRD per milestone.
 | [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | HIL-1…HIL-7 gated checklists for real hardware |
 | [local-development.md](testing/local-development.md) | Running, debugging, inspecting, common problems |
 
+## Hardware
+
+| Document | Contents |
+|---|---|
+| [home-node-hardware-guide.md](hardware/home-node-hardware-guide.md) | Bill of materials, enclosure, wiring, power, and assembly order for one physical node — bench bring-up on the ESP32-C3-DevKitC-02 through a battery/solar deployment |
+
+Practical procurement and assembly guidance, and the only document here that
+quotes prices. **It is not normative**: parts, ratings, and values are starting
+points to be measured, while required behaviour stays in the ADRs, PRDs,
+[safety invariants](architecture/safety-invariants.md), and
+[MQTT v1](protocol/mqtt-v1.md). Where it names a board, the binding rule is
+[ADR-007](adr/007-esp32-rust-framework-and-toolchain.md): ESP32-C3 is committed,
+the board is a compile-time profile.
+
 ## Implementation issues
 
 256 issues across 15 milestones, each with context, scope, dependencies,
