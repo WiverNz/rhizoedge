@@ -6,17 +6,18 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 and M1 complete. M2 ready.**
+> **Status: M0, M1, M2, and M3 complete. M4 ready.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
-> The engineering baseline and M1 foundation are implemented and green. M1
-> delivered the `no_std` MQTT contract, typed batched measurements, capabilities,
-> device/plant policy contracts, shared water-command validator, clock/domain
-> primitives, fixtures, and the pure `rhizo-policy` state/contract crate.
-> Runtime components remain milestone work.
+> The engineering baseline, shared contracts/domain, device simulator, and Edge
+> ingestion/SQLite foundation are implemented and green. M3 delivered the
+> supervised `edge-controller`, real-Mosquitto ingestion with reconnect and
+> re-subscription, edge-stamped receipt time, bounded quarantine, crash-safe
+> deduplication, typed persistence, replay acknowledgement, and retention.
+> Device registry and health behavior remains M4 work.
 > Start at [ROADMAP.md](ROADMAP.md); the next issue is
-> [M2-001](docs/issues/M2/001-add-simulator-skeleton.md).
+> [M4-001](docs/issues/M4/001-implement-device-status-ingestion.md).
 
 ---
 
@@ -230,7 +231,7 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 | `rhizo-domain` | Pure M1 plant, binding, policy, state, validation, and clock abstractions; later milestones add recommendation and irrigation behaviour |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
 | `edge-controller` | The control plane — the only component that decides while connected |
-| `device-simulator` | Planned reference device: M2 adds protocol mechanics, persistence, isolation/replay, virtual time, and faults; M6 connects the shared evaluator |
+| `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, and faults; M6 connects the shared evaluator |
 | `cloud-api` | Idempotent event ingestion into PostgreSQL |
 | `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |

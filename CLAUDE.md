@@ -6,8 +6,8 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0, M1 and M2 are implemented and green. M3 has not
-started.**
+**Planning is complete. M0, M1, M2, and M3 are implemented and green. M4 is
+READY and has not started.**
 
 | | State |
 |---|---|
@@ -17,7 +17,8 @@ started.**
 | M1 | 19 issues, **DONE** |
 | M2 | 19 issues, **DONE** — report in [docs/reports/M2.md](docs/reports/M2.md) |
 | Protocol seam cleanup | ✅ done (2026-08-28) — exact device subscriptions, `event.ack`, sealed gap markers; report in [docs/reports/M2.md](docs/reports/M2.md) §Amendment |
-| M3-001 | ⬜ **next** — create the edge-controller binary and task supervisor |
+| M3 | 18 issues, **DONE** — report in [docs/reports/M3.md](docs/reports/M3.md) |
+| M4-001 | ⬜ **next** — implement device status ingestion |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
