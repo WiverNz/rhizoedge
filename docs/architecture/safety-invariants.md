@@ -46,7 +46,7 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 | SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | PLANNED |
 | SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
-| SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M5 | PLANNED |
+| SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | ENFORCED |
 
 Milestone M8 re-verifies SAFETY-001 … SAFETY-010 and SAFETY-012 end-to-end in
 the full Docker environment, and SAFETY-013 … SAFETY-020 in its network-isolation
@@ -243,11 +243,25 @@ manual watering is permitted under sensor fault, because a human has taken
 responsibility — but it is still subject to SAFETY-003, -004, -006, and -007.
 This asymmetry is intentional and must be visible in the UI.
 
+**No power field may widen this window.** `max_sample_age` derives from the
+configured telemetry interval and from per-plant `MeasurementPolicy.stale_after`,
+and from nothing else. A battery device's `wake_interval_seconds` is a
+*device-declared* field admitting values up to 86 400 seconds; it feeds the
+registry's connectivity/liveness indication and is bounded there
+([PRD 040](../prd/040-device-registry-and-health.md) F-040-26), but it must never
+reach this threshold. Otherwise a device could advertise itself a three-day
+freshness window and make an old moisture reading look like grounds for watering
+— SAFETY-021's failure arriving through the staleness door. The two calculations
+are deliberately separate functions, `max_sample_age_seconds` and
+`liveness_interval_seconds`, so that using the wrong one is a visible choice.
+
 **Failure scenarios covered.** Sensor unplugged; device offline; probe returning
-a constant; NaN readings.
+a constant; NaN readings; a battery device declaring a very long wake interval.
 
 **Planned tests.**
 - `safety_005_stale_sample_blocks_auto` (property over random sample ages).
+- `safety_005_control_freshness_cannot_be_widened_by_a_declared_wake_interval`
+  (unit, already green in M4's registry).
 - `safety_005_invalid_sample_blocks_auto` (unit: NaN, out-of-range, absent).
 - M8 scenarios `stale-sensor`, `invalid-sensor-value`.
 
@@ -834,20 +848,46 @@ announces sleep and is then unplugged; a device whose announced
 `expected_wake_ms` is years in the future; a device that announces sleep with an
 unrecognised reason; a device that misses one wake and returns on the next.
 
-**Planned tests.**
-- `safety_021_overdue_sleeper_becomes_isolated` (unit): a device past
-  `overdue_at` derives `isolated`, not `sleeping`.
-- `safety_021_device_wake_time_is_advisory` (unit): an announced
-  `expected_wake_ms` far in the future does not extend the edge-computed window.
+**The reported state is derived, not read back.** `connectivity_mode` is stored,
+because the liveness timer needs somewhere to record the transition it makes, the
+event it emits, and the counter it increments. What is *reported* re-checks
+`overdue_at` against the edge clock on every read. The distinction is the
+invariant's whole margin of safety: a stored state needs a writer, and a writer
+that dies leaves a device permanently asleep — which is exactly the failure the
+invariant exists to prevent, reintroduced by the mechanism meant to enforce it.
+So the timer is what makes the transition durable and observable, and the
+derivation is what makes it true in the meantime.
+
+**Tests.**
+- `safety_021_overdue_sleeper_becomes_isolated` (unit,
+  `edge-controller::device::connectivity`): a device past `overdue_at` derives
+  `isolated`, not `sleeping`, and carries no `expected_wake_at`.
+- `safety_021_an_incomplete_sleep_window_is_never_reachable` (unit): a
+  `sleeping` row missing either half of its window derives `isolated`, never a
+  reachable state (SAFETY-012).
+- `safety_021_device_wake_time_is_advisory` (unit,
+  `edge-controller::device::status`): an announced `expected_wake_ms` of
+  `u64::MAX` does not extend the edge-computed window.
 - `safety_021_unannounced_absence_is_never_sleeping` (unit): an LWT with
-  `connection_lost`, and an offline status with an unrecognised `reason`, both
-  derive `isolated`.
-- `safety_021_sleep_window_detected_by_timer` (integration): the liveness timer
-  transitions an overdue sleeper with no inbound message, per F-040-09.
+  `connection_lost`, an offline status with an unrecognised `reason`, a sleep
+  claim without a battery declaration, and a sleep claim with an out-of-range
+  interval all derive `isolated`.
+- `safety_021_sleep_window_detected_by_timer` (`edge-controller::device::health`):
+  the liveness timer transitions an overdue sleeper with no inbound message, per
+  F-040-09.
+- `safety_021_an_overdue_sleeper_reports_isolated_with_no_expected_wake` and
+  `safety_021_an_overdue_sleeper_is_isolated_after_a_restart_with_no_timer`: the
+  REST projection is `isolated` across a process restart with the timer never
+  run.
+- `safety_021_a_retained_sleep_redelivered_after_a_broker_restart_extends_nothing`
+  (integration, live Mosquitto): a retained announcement replayed on re-subscribe
+  moves neither the window nor `last_seen_at`.
 - SCEN-111, SCEN-112.
 
-**Becomes enforced.** M5 (edge derivation and timer); re-verified in M8 against a
-sleeping simulator and in M12's presentation.
+**Becomes enforced.** M4 — the edge derivation and the liveness timer landed in
+the dated 2026-08-28 post-M4 battery-compatibility correction and its 2026-08-28
+post-M4 review, not in M5. Re-verified in M8 against a sleeping simulator (which
+M5-021 still owes) and in M12's presentation.
 
 ---
 

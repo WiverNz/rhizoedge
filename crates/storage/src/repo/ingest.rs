@@ -744,19 +744,31 @@ pub async fn persist_status(
     let sensors_json = serde_json::to_string(&e.data.capabilities.sensors)
         .map_err(|x| StorageError::Serialization(x.to_string()))?;
     let status = json_name(&e.data.status)?;
-    let declared_battery = e.data.power.as_ref().is_some_and(|power| {
-        power.mode.effective() == rhizo_mqtt_contract::payload::PowerMode::Battery
-    });
-    let wake_interval = e
-        .data
-        .power
-        .as_ref()
-        .and_then(|power| power.wake_interval_seconds)
-        .filter(|seconds| (60..=86_400).contains(seconds));
-    let announced_sleep = e.data.status == DeviceStatusValue::Offline
-        && e.data.reason.as_deref() == Some("sleeping")
-        && declared_battery
-        && wake_interval.is_some();
+    // A Last Will is composed once, at connect, and delivered by the broker at
+    // an arbitrary later moment. It is evidence that the session dropped and
+    // nothing else, so it may not restate the device's power configuration --
+    // otherwise a will written before a mode change would silently reinstate the
+    // old mode long after the device stopped using it.
+    let declared_mode = if is_lwt {
+        None
+    } else {
+        e.data.declared_power_mode()
+    };
+    let declared_battery = declared_mode == Some(rhizo_mqtt_contract::payload::PowerMode::Battery);
+    // One rule, one place: the contract decides what a sleep announcement is.
+    let wake_interval = if is_lwt {
+        None
+    } else {
+        e.data.announced_sleep_interval_seconds()
+    };
+    let announced_sleep = wake_interval.is_some();
+    // An explicit always-on declaration retires any battery state the device
+    // used to have. Uncertainty resolves the same way: an unrecognised mode is
+    // an explicit declaration and `declared_power_mode` has already resolved it
+    // to always-on (SAFETY-012). Only an *absent* `power` block changes nothing,
+    // because a pre-ADR-018 payload declares nothing at all.
+    let retired_battery_state =
+        declared_mode == Some(rhizo_mqtt_contract::payload::PowerMode::AlwaysOn);
     let preserve_expected_sleep = is_lwt
         && prior_connectivity.as_deref() == Some("sleeping")
         && prior_expected_wake.is_some();
@@ -800,17 +812,21 @@ pub async fn persist_status(
         "always_on"
     };
     let waking = e.data.status == DeviceStatusValue::Online && prior_expected_wake.is_some();
-    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=?,status=?,firmware_version=?,protocol_version=?,boot_id=?,last_sequence=?,clock_synced=?,last_seen_at=COALESCE(?,last_seen_at),applied_config_version=?,uptime_ms=?,free_heap_bytes=?,rssi_dbm=?,sensors_json=?,connectivity_mode=?,power_mode=CASE WHEN ? THEN ? ELSE power_mode END,wake_interval_seconds=CASE WHEN ? THEN ? ELSE wake_interval_seconds END,sleep_received_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE sleep_received_at END,expected_wake_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE expected_wake_at END,overdue_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE overdue_at END,missed_wake_count=CASE WHEN ? THEN 0 ELSE missed_wake_count END WHERE device_id=?")
+    // The wake window is cleared both by a genuine wake and by a device that has
+    // stopped being a battery device. A window left behind by a retired mode
+    // would keep answering "asleep" for a device that no longer sleeps.
+    let close_window = waking || retired_battery_state;
+    sqlx::query("UPDATE devices SET status_json=?,status_boot_generation=?,status_sequence=?,status_lwt_message_id=?,status=?,firmware_version=?,protocol_version=?,boot_id=?,last_sequence=?,clock_synced=?,last_seen_at=COALESCE(?,last_seen_at),applied_config_version=?,uptime_ms=?,free_heap_bytes=?,rssi_dbm=?,sensors_json=?,connectivity_mode=?,power_mode=CASE WHEN ? THEN ? ELSE power_mode END,wake_interval_seconds=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE wake_interval_seconds END,sleep_received_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE sleep_received_at END,expected_wake_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE expected_wake_at END,overdue_at=CASE WHEN ? THEN ? WHEN ? THEN NULL ELSE overdue_at END,missed_wake_count=CASE WHEN ? THEN 0 ELSE missed_wake_count END WHERE device_id=?")
     .bind(status_json).bind(generation).bind(stored_sequence).bind(lwt_id)
     .bind(&status).bind(firmware).bind(protocol).bind(&boot).bind(seq)
     .bind(e.clock_synced.unwrap_or(false)).bind(last_seen).bind(applied).bind(uptime)
     .bind(heap).bind(rssi).bind(sensors_json).bind(connectivity)
-    .bind(declared_battery).bind(power_mode)
-    .bind(announced_sleep).bind(wake_interval.map(i64::from))
-    .bind(announced_sleep).bind(at).bind(waking)
-    .bind(announced_sleep).bind(expected_wake_at).bind(waking)
-    .bind(announced_sleep).bind(overdue_at).bind(waking)
-    .bind(waking).bind(&dev)
+    .bind(declared_mode.is_some()).bind(power_mode)
+    .bind(announced_sleep).bind(wake_interval.map(i64::from)).bind(retired_battery_state)
+    .bind(announced_sleep).bind(at).bind(close_window)
+    .bind(announced_sleep).bind(expected_wake_at).bind(close_window)
+    .bind(announced_sleep).bind(overdue_at).bind(close_window)
+    .bind(close_window).bind(&dev)
     .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;

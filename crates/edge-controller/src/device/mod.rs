@@ -151,6 +151,216 @@ mod status {
         );
     }
 
+    /// SAFETY-021: the device's own `expected_wake_ms` is a diagnostic. Here it
+    /// claims a wake `u64::MAX` milliseconds away, and the window must still be
+    /// exactly the edge's `received_at` plus the relative interval.
+    #[tokio::test]
+    async fn safety_021_device_wake_time_is_advisory() {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let online = envelope();
+        ingest::persist_status(&db, &online, 1_000).await.unwrap();
+        let sleeping = sleep(online.clone(), online.sequence.unwrap() + 1);
+        assert_eq!(
+            sleeping.data.power.as_ref().unwrap().expected_wake_ms,
+            Some(u64::MAX),
+            "the fixture must actually claim an absurd wake for this to prove anything"
+        );
+        ingest::persist_status(&db, &sleeping, 500_000)
+            .await
+            .unwrap();
+        let row = sqlx::query("SELECT expected_wake_at,overdue_at,sleep_received_at FROM devices")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<Option<i64>, _>("sleep_received_at"),
+            Some(500_000)
+        );
+        assert_eq!(
+            row.get::<Option<i64>, _>("expected_wake_at"),
+            Some(1_400_000),
+            "expected_wake_at must be the edge received_at plus wake_interval_seconds"
+        );
+        assert_eq!(row.get::<Option<i64>, _>("overdue_at"), Some(2_300_000));
+        assert_eq!(
+            crate::device::connectivity::from_projection(
+                "sleeping",
+                Some(1_400_000),
+                Some(2_300_000),
+                2_300_000,
+            ),
+            crate::device::connectivity::State::OfflineUnexpectedly,
+            "the claimed wake must not hold the window open past the edge deadline"
+        );
+    }
+
+    /// SAFETY-021: silence the device did not announce is never expected. A Last
+    /// Will, an unrecognised reason, a sleep claim without a battery
+    /// declaration, and an out-of-range interval all derive `isolated`.
+    #[tokio::test]
+    async fn safety_021_unannounced_absence_is_never_sleeping() {
+        use rhizo_mqtt_contract::payload::{DeviceStatusValue, PowerMode, PowerStatus};
+        fn power(mode: PowerMode, wake_interval_seconds: u32) -> Option<PowerStatus> {
+            Some(PowerStatus {
+                mode,
+                wake_interval_seconds: Some(wake_interval_seconds),
+                expected_wake_ms: None,
+                wake_reason: None,
+                battery_mv: None,
+                awake_ms: None,
+            })
+        }
+        for (label, reason, declared) in [
+            ("last will", "connection_lost", None),
+            ("unrecognised reason", "hibernating", None),
+            (
+                "sleep claim with no battery declaration",
+                "sleeping",
+                power(PowerMode::Unknown, 900),
+            ),
+            (
+                "sleep claim with an out-of-range interval",
+                "sleeping",
+                power(PowerMode::Battery, 86_401),
+            ),
+        ] {
+            let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+            db.migrate().await.unwrap();
+            let online = envelope();
+            ingest::persist_status(&db, &online, 1_000).await.unwrap();
+            let mut absent = online.clone();
+            absent.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+            absent.sequence = Some(online.sequence.unwrap() + 1);
+            absent.data.status = DeviceStatusValue::Offline;
+            absent.data.reason = Some(reason.into());
+            absent.data.power = declared.map(Box::new);
+            ingest::persist_status(&db, &absent, 2_000).await.unwrap();
+            let row =
+                sqlx::query("SELECT connectivity_mode,expected_wake_at,overdue_at FROM devices")
+                    .fetch_one(db.pool())
+                    .await
+                    .unwrap();
+            assert_eq!(
+                row.get::<String, _>("connectivity_mode"),
+                "isolated",
+                "{label} must derive isolated"
+            );
+            assert_eq!(
+                row.get::<Option<i64>, _>("expected_wake_at"),
+                None,
+                "{label} must open no window"
+            );
+            assert_eq!(
+                crate::device::connectivity::from_projection(
+                    &row.get::<String, _>("connectivity_mode"),
+                    row.get("expected_wake_at"),
+                    row.get("overdue_at"),
+                    2_000,
+                )
+                .api_name(),
+                "isolated",
+                "{label}"
+            );
+        }
+    }
+
+    /// An explicit always-on declaration retires the battery state; an *absent*
+    /// `power` block, which is what a pre-ADR-018 payload carries, changes
+    /// nothing.
+    #[tokio::test]
+    async fn an_explicit_always_on_declaration_retires_the_battery_state() {
+        use rhizo_mqtt_contract::payload::{PowerMode, PowerStatus};
+        for (label, mode, expected_mode) in [
+            ("absent", None, "battery"),
+            ("always_on", Some(PowerMode::AlwaysOn), "always_on"),
+            ("unknown", Some(PowerMode::Unknown), "always_on"),
+        ] {
+            let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+            db.migrate().await.unwrap();
+            let online = envelope();
+            ingest::persist_status(&db, &online, 1_000).await.unwrap();
+            let sleeping = sleep(online.clone(), online.sequence.unwrap() + 1);
+            ingest::persist_status(&db, &sleeping, 2_000).await.unwrap();
+            assert_eq!(
+                sqlx::query_scalar::<_, String>("SELECT power_mode FROM devices")
+                    .fetch_one(db.pool())
+                    .await
+                    .unwrap(),
+                "battery",
+                "{label}: precondition"
+            );
+            let mut wake = online.clone();
+            wake.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+            wake.sequence = Some(sleeping.sequence.unwrap() + 1);
+            wake.data.power = mode.map(|mode| {
+                Box::new(PowerStatus {
+                    mode,
+                    wake_interval_seconds: Some(900),
+                    expected_wake_ms: None,
+                    wake_reason: None,
+                    battery_mv: None,
+                    awake_ms: None,
+                })
+            });
+            ingest::persist_status(&db, &wake, 3_000).await.unwrap();
+            let row = sqlx::query(
+                "SELECT power_mode,wake_interval_seconds,expected_wake_at,overdue_at FROM devices",
+            )
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+            assert_eq!(row.get::<String, _>("power_mode"), expected_mode, "{label}");
+            assert_eq!(
+                row.get::<Option<i64>, _>("wake_interval_seconds"),
+                (expected_mode == "battery").then_some(900),
+                "{label}: a retired mode must leave no widened liveness cadence behind"
+            );
+            assert_eq!(
+                row.get::<Option<i64>, _>("expected_wake_at"),
+                None,
+                "{label}"
+            );
+            assert_eq!(row.get::<Option<i64>, _>("overdue_at"), None, "{label}");
+        }
+    }
+
+    /// A Last Will is composed at connect and delivered at an arbitrary later
+    /// moment, so it must not restate the device's power configuration.
+    #[tokio::test]
+    async fn a_last_will_never_redeclares_the_power_mode() {
+        use rhizo_mqtt_contract::payload::{DeviceStatusValue, PowerMode, PowerStatus};
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let online = envelope();
+        ingest::persist_status(&db, &online, 1_000).await.unwrap();
+        let mut will = online.clone();
+        will.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+        will.sequence = Some(0);
+        will.data.status = DeviceStatusValue::Offline;
+        will.data.reason = Some("connection_lost".into());
+        will.data.power = Some(Box::new(PowerStatus {
+            mode: PowerMode::Battery,
+            wake_interval_seconds: Some(900),
+            expected_wake_ms: None,
+            wake_reason: None,
+            battery_mv: None,
+            awake_ms: None,
+        }));
+        ingest::persist_status(&db, &will, 2_000).await.unwrap();
+        let row = sqlx::query("SELECT power_mode,connectivity_mode,expected_wake_at FROM devices")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<String, _>("power_mode"),
+            "always_on",
+            "a will must not turn a device into a battery device"
+        );
+        assert_eq!(row.get::<String, _>("connectivity_mode"), "isolated");
+        assert_eq!(row.get::<Option<i64>, _>("expected_wake_at"), None);
+    }
+
     #[tokio::test]
     async fn always_on_unexpected_disconnect_remains_offline() {
         use rhizo_mqtt_contract::payload::DeviceStatusValue;

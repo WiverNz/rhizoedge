@@ -124,11 +124,24 @@ is.
 
 `expected_wake_at` is present only while `connectivity` is `sleeping`, and is
 computed from the **edge's** `received_at` for the sleep announcement plus the
-configured `wake_interval_seconds`. A device past its window derives `isolated`
-with `missed_wake_count` greater than zero — never `sleeping` (SAFETY-021).
+announced `wake_interval_seconds`. Every other state reports `null`, including a
+device that has just woken and one that went overdue: a wake instant that has
+already been missed is not an expectation. A device past its window derives
+`isolated` — never `sleeping` (SAFETY-021).
 
-`power_mode` reflects the configuration the edge published. A device that has not
-applied it yet shows ordinary config drift; there is no separate mechanism.
+The deadline is re-checked on **every read**, so an overdue sleeper reports
+`isolated` whether or not the liveness timer has run. `missed_wake_count` is the
+one stored half, because it counts events rather than describing the present, and
+it may therefore still be zero on the first read after a missed wake.
+
+`power_mode` is `always_on` or `battery`. Until the edge publishes device
+configuration (M5-019), its source is the device's own `power` declaration on
+`device.status`: `battery` while the device declares it, `always_on` on any
+other explicit declaration, and unchanged when a status carries no `power` block
+at all. `wake_interval_seconds` is the interval of the most recent accepted sleep
+announcement and is cleared when the device stops declaring battery mode. Neither
+field is a safety input, and neither widens the freshness threshold the
+irrigation gate uses (SAFETY-005).
 
 ### 2.4 Plants
 

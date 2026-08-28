@@ -8,13 +8,56 @@ use tokio::sync::watch;
 /// The protocol's conservative minimum freshness window.
 pub const STALE_FLOOR_SECONDS: i64 = 15 * 60;
 
-/// Calculates the threshold without consulting device time.
-pub const fn stale_after_seconds(telemetry_interval_seconds: i64) -> i64 {
+/// The largest cadence the edge will ever *configure* for a device.
+///
+/// `DeviceConfig::validate` accepts `telemetry_interval_seconds` in
+/// `10..=3600`, so nothing the edge publishes can ask for a slower cadence than
+/// this. It is the ceiling on how far a device-declared field may widen a
+/// freshness window — see [`liveness_interval_seconds`].
+pub const MAX_CONFIGURABLE_INTERVAL_SECONDS: i64 = 3_600;
+
+/// SAFETY-005's control-freshness formula: `max(15 min, 3 x telemetry interval)`.
+///
+/// This is the threshold that decides whether a measurement is fresh enough to
+/// *act on*. It takes the telemetry cadence and nothing else. **No power field,
+/// no `wake_interval_seconds`, and no device timestamp may ever reach it** — a
+/// device that could widen this window could make a three-day-old moisture
+/// reading look like grounds for watering, which is precisely what SAFETY-005
+/// exists to forbid. M6's gate calls this function; the liveness flag below is a
+/// different question with a different answer, and the two are kept apart on
+/// purpose (PRD 040 F-040-26).
+pub const fn max_sample_age_seconds(telemetry_interval_seconds: i64) -> i64 {
     let tripled = telemetry_interval_seconds.saturating_mul(3);
     if tripled > STALE_FLOOR_SECONDS {
         tripled
     } else {
         STALE_FLOOR_SECONDS
+    }
+}
+
+/// The cadence the *liveness* indication uses, which is where — and only where —
+/// a battery device's wake interval widens anything.
+///
+/// A battery device that samples every 15 minutes genuinely has a 15-minute
+/// cadence, and reporting it as silent between wakes would produce the badge
+/// nobody reads (PRD 040 §Battery amendment). But `wake_interval_seconds` is a
+/// *device-declared* field admitting values up to 86 400 seconds, and an
+/// unbounded device-controlled freshness window is exactly the shape SAFETY-021
+/// forbids. It is therefore capped at the slowest cadence the edge itself would
+/// ever configure. Above that cap the answer is unchanged from an always-on
+/// device, and the device's honest connectivity state stays `sleeping` until its
+/// edge-computed `overdue_at` — the two indications answer different questions
+/// and are allowed to disagree.
+pub fn liveness_interval_seconds(
+    power_mode: &str,
+    telemetry_interval_seconds: i64,
+    wake_interval_seconds: Option<i64>,
+) -> i64 {
+    match wake_interval_seconds {
+        Some(wake) if power_mode == "battery" => wake
+            .min(MAX_CONFIGURABLE_INTERVAL_SECONDS)
+            .max(telemetry_interval_seconds),
+        _ => telemetry_interval_seconds,
     }
 }
 
@@ -40,7 +83,14 @@ pub async fn run(
     }
 }
 
-async fn tick(
+/// One timer step: staleness events, the durable missed-wake transition,
+/// drift, the lifecycle gauges, and the periodic `edge.time` refresh.
+///
+/// Public so a restart/replay test can drive it deterministically instead of
+/// waiting on wall-clock ticks. It is idempotent by construction: the missed-wake
+/// transition is a conditional `UPDATE` inside a transaction with its event, so
+/// running it repeatedly -- or again after a process restart -- counts once.
+pub async fn tick(
     db: &rhizo_storage::EdgeDb,
     clock: &dyn Clock,
     client: &rumqttc::AsyncClient,
@@ -61,13 +111,9 @@ async fn tick(
         let telemetry: i64 = row.get("telemetry_interval_seconds");
         let power_mode: String = row.get("power_mode");
         let wake_interval: Option<i64> = row.get("wake_interval_seconds");
-        let effective_interval = if power_mode == "battery" {
-            wake_interval.unwrap_or(telemetry)
-        } else {
-            telemetry
-        };
+        let liveness_interval = liveness_interval_seconds(&power_mode, telemetry, wake_interval);
         let stale = last_seen.is_some_and(|seen| {
-            sample_age_seconds(now, seen) >= stale_after_seconds(effective_interval)
+            sample_age_seconds(now, seen) >= max_sample_age_seconds(liveness_interval)
         });
         if stale {
             let id = format!("edge:{device}:stale:{}", last_seen.unwrap_or_default());
@@ -187,15 +233,43 @@ mod staleness {
     use super::*;
     #[test]
     fn floor_and_interval() {
-        assert_eq!(stale_after_seconds(10), 900);
-        assert_eq!(stale_after_seconds(400), 1200);
+        assert_eq!(max_sample_age_seconds(10), 900);
+        assert_eq!(max_sample_age_seconds(400), 1200);
+    }
+    /// SAFETY-005's formula takes a cadence and nothing else, and the battery
+    /// widening it must never inherit is bounded where it lives.
+    #[test]
+    fn safety_005_control_freshness_cannot_be_widened_by_a_declared_wake_interval() {
+        // The documented battery example is untouched: 900 s -> 45 minutes.
+        assert_eq!(liveness_interval_seconds("battery", 300, Some(900)), 900);
+        assert_eq!(max_sample_age_seconds(900), 2_700);
+        // A device declaring the protocol maximum cannot buy itself a
+        // three-day freshness window; the cap is the slowest cadence the edge
+        // would ever configure.
+        assert_eq!(
+            liveness_interval_seconds("battery", 300, Some(86_400)),
+            MAX_CONFIGURABLE_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            max_sample_age_seconds(liveness_interval_seconds("battery", 300, Some(86_400))),
+            3 * MAX_CONFIGURABLE_INTERVAL_SECONDS
+        );
+        // Negative controls: nothing widens for an always-on device, a stale
+        // interval left on a device retired from battery mode is inert, and a
+        // wake interval below the telemetry cadence never *narrows* the window.
+        assert_eq!(
+            liveness_interval_seconds("always_on", 300, Some(86_400)),
+            300
+        );
+        assert_eq!(liveness_interval_seconds("battery", 300, None), 300);
+        assert_eq!(liveness_interval_seconds("battery", 300, Some(60)), 300);
     }
     #[test]
     fn edge_receipt_time_only() {
         assert_eq!(sample_age_seconds(20_000, 5_000), 15);
     }
     #[tokio::test]
-    async fn safety_021_overdue_sleeper_becomes_isolated_without_inbound_message() {
+    async fn safety_021_sleep_window_detected_by_timer() {
         use chrono::{TimeZone, Utc};
         use rhizo_mqtt_contract::payload::{
             DeviceStatus, DeviceStatusValue, PowerMode, PowerStatus,

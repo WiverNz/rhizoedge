@@ -1,9 +1,26 @@
 # Issue M5-019 — Add power mode, sleep announcement, and battery measurement kinds to the contract
 
-**Status:** PARTIALLY SUPERSEDED before M5 started. The minimal status
-power/sleep contract needed by registry liveness was delivered as the 2026-08-28
-post-M4 correction recorded in `docs/reports/M4.md`. Battery measurement kinds
-and desired-config power fields remain M5 scope; M5 has not started.
+**Status:** REDUCED before M5 started. The `device.status` half of this issue —
+`PowerMode`, `PowerStatus`, the `sleeping` reason, the bounded sleep-announcement
+rule, and their fixtures — was delivered by the 2026-08-28 post-M4 correction and
+its dated review, both recorded in `docs/reports/M4.md`. **The Scope section below
+is what is left**, and it is genuinely unimplemented. M5 has not started.
+
+Delivered, and therefore *not* M5 work:
+
+- `PowerMode` with `#[serde(other)] Unknown` and `PowerMode::effective`
+- `device.status.data.power` (`mode`, `wake_interval_seconds`,
+  `expected_wake_ms`, `wake_reason`, `battery_mv`, `awake_ms`)
+- `reason: "sleeping"`, with anything unrecognised resolving to
+  `connection_lost`
+- `DeviceStatus::announces_sleep`, `announced_sleep_interval_seconds`,
+  `declared_power_mode`, and `validate` — the single place the sleep rule lives
+- fixtures `valid/status-sleeping.json` and the three under
+  `invalid/status_sleep_wake_interval/`, with their `Expected` arm
+
+`wake_reason` shipped as an `Option<String>` rather than the enum this issue
+originally specified. Typing it stays in scope below: nothing reads it yet, so
+the change is additive and costs one fixture.
 
 **Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M1-019
 
@@ -34,18 +51,19 @@ that every consumer decodes the same thing.
 - `device.config.data.power`: `mode` (`always_on` | `battery`),
   `wake_interval_seconds`, `sensor_warmup_ms`, `awake_budget_seconds` — all
   optional, with an absent block meaning `always_on`
-- `PowerMode` with `#[serde(other)] Unknown`, and the documented rule that
-  `Unknown` and absent both resolve to `AlwaysOn`
-- `device.status.data.power`: `mode`, `wake_interval_seconds`,
-  `expected_wake_ms`, `wake_reason` (`timer` | `cold_boot` | `external` |
-  `watchdog` | `Unknown`), `battery_mv`, `awake_ms` — all optional, all advisory
-- `reason: "sleeping"` as an additional variant of the offline-status reason,
-  with `Unknown` resolving to `connection_lost`
-- Config validation: `wake_interval_seconds` within a documented range, rejected
-  rather than clamped
-- Fixtures: valid `status_sleeping`, valid `config_battery_mode`, valid
-  `telemetry_battery_kinds`; invalid `config_wake_interval_out_of_range`,
-  invalid `status_sleeping_without_wake_interval`
+- Config validation: `wake_interval_seconds` within the same
+  `SLEEP_WAKE_INTERVAL_MIN_SECONDS..=SLEEP_WAKE_INTERVAL_MAX_SECONDS` range the
+  status side already publishes, rejected rather than clamped
+- `wake_reason` promoted from `Option<String>` to a typed
+  `timer | cold_boot | external | watchdog | Unknown`, `Unknown` being the
+  forward-compatible variant
+- Once the edge publishes `device.config`, the registry's `power_mode` and
+  `wake_interval_seconds` take that as their source instead of the device's own
+  declaration, and PRD 040 F-040-20 and
+  [http-api-boundaries.md](../../protocol/http-api-boundaries.md) §2.3 are
+  updated in the same change
+- Fixtures: valid `config_battery_mode`, valid `telemetry_battery_kinds`;
+  invalid `config_wake_interval_out_of_range`
 
 ## Non-goals
 
@@ -93,11 +111,14 @@ failure and needs its match arm in `crates/mqtt-contract/tests/fixtures.rs`.
 - [ ] The two battery `MeasurementKind` variants exist with correct specs and
       round-trip through the telemetry batch.
 - [ ] An absent `power` block in `device.config` decodes to `AlwaysOn`.
-- [ ] An unrecognised `mode` string decodes to `AlwaysOn`, not to an error.
-- [ ] An unrecognised offline `reason` decodes to `connection_lost`.
-- [ ] `wake_interval_seconds` outside its documented range is **rejected** with a
-      named typed error, not clamped.
-- [ ] Every new fixture behaves as its directory name states.
+- [ ] An unrecognised `mode` string in `device.config` decodes to `AlwaysOn`.
+- [ ] `device.config`'s `wake_interval_seconds` outside its documented range is
+      **rejected** with a named typed error, not clamped, and shares its bounds
+      with the status side rather than restating them.
+- [ ] `wake_reason` is typed, and an unrecognised value decodes to `Unknown`
+      rather than failing.
+- [ ] Every new fixture behaves as its directory name states, and the delivered
+      status fixtures stay green unchanged.
 - [ ] `cargo build -p rhizo-mqtt-contract --no-default-features --target
       thumbv7em-none-eabi` still succeeds.
 - [ ] The device subscription set is still exactly seven topics.
@@ -113,8 +134,9 @@ cargo run -p rhizo-docscheck
 
 ## Tests required
 
-- `Unknown` conservative resolution for both enums.
-- Range rejection for `wake_interval_seconds`.
+- `Unknown` conservative resolution for `PowerMode` in `device.config` and for
+  the new `wake_reason` enum.
+- Range rejection for `device.config`'s `wake_interval_seconds`.
 - Round-trip of both battery measurement kinds inside a batch.
 - The full fixture corpus, including the new files.
 

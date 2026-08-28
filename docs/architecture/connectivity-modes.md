@@ -82,7 +82,9 @@ same way:
 | device's announced `expected_wake_ms` | advisory only; never extends the Edge's window |
 | Last Will (`connection_lost`) | `Isolated` — a will is not an announcement |
 | offline status with an unrecognised `reason` | `Isolated` (SAFETY-012) |
-| `power.mode` absent or unrecognised in config | `always_on` — never start sleeping on a guess |
+| `power.mode` unrecognised, anywhere | `always_on` — never start sleeping on a guess |
+| `power` block absent from a status | a declaration was not made; the Edge keeps what it already knew |
+| sleep announced with an interval outside `60 – 86400` | rejected, so `Isolated` — never clamped to a default |
 
 A device with a wrong clock cannot make itself look punctual, for the same reason
 it cannot make stale data look fresh (SAFETY-005).

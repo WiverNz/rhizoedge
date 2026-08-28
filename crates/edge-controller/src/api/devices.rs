@@ -42,12 +42,10 @@ async fn one(
     let now = Utc::now().timestamp_millis();
     let last_seen: Option<i64> = row.get("last_seen_at");
     let interval: i64 = row.get("telemetry_interval_seconds");
-    let effective_interval = if row.get::<String, _>("power_mode") == "battery" {
-        row.get::<Option<i64>, _>("wake_interval_seconds")
-            .unwrap_or(interval)
-    } else {
-        interval
-    };
+    let power_mode: String = row.get("power_mode");
+    let wake_interval: Option<i64> = row.get("wake_interval_seconds");
+    let liveness_interval =
+        crate::device::health::liveness_interval_seconds(&power_mode, interval, wake_interval);
     let desired: i64 = row.get("desired_config_version");
     let applied: Option<i64> = row.get("applied_config_version");
     let drift_since: Option<i64> = row.get("drift_since");
@@ -59,22 +57,28 @@ async fn one(
         .unwrap_or(serde_json::Value::Null);
     let capabilities = sqlx::query("SELECT capability_id,class,kinds_json,point FROM device_capabilities WHERE device_id=? ORDER BY class,capability_id").bind(id).fetch_all(db.pool()).await?
         .into_iter().map(|r| serde_json::json!({"id":r.get::<String,_>("capability_id"),"class":r.get::<String,_>("class"),"kinds":serde_json::from_str::<serde_json::Value>(r.get::<&str,_>("kinds_json")).unwrap_or_else(|_|serde_json::json!([])),"point":r.get::<Option<String>,_>("point")})).collect::<Vec<_>>();
+    // Derived at read time against the edge's own clock, so an overdue sleeper
+    // reports `isolated` even if the liveness timer has not run (SAFETY-021).
     let mode: String = row.get("connectivity_mode");
-    let expected_wake_at: Option<i64> = row.get("expected_wake_at");
-    let connectivity = crate::device::connectivity::from_projection(&mode, expected_wake_at);
+    let connectivity = crate::device::connectivity::from_projection(
+        &mode,
+        row.get("expected_wake_at"),
+        row.get("overdue_at"),
+        now,
+    );
     Ok(Some(serde_json::json!({
         "device_id": row.get::<String,_>("device_id"), "name": row.get::<Option<String>,_>("name"),
         "status": row.get::<String,_>("status"), "firmware_version": row.get::<Option<String>,_>("firmware_version"),
         "protocol_version": row.get::<Option<i64>,_>("protocol_version"), "clock_synced": row.get::<i64,_>("clock_synced") != 0,
         "last_seen_at": timestamp(last_seen), "sample_age_seconds": last_seen.map(|seen| crate::device::health::sample_age_seconds(now, seen)),
-        "stale": last_seen.is_some_and(|seen| crate::device::health::sample_age_seconds(now, seen) >= crate::device::health::stale_after_seconds(effective_interval)),
+        "stale": last_seen.is_some_and(|seen| crate::device::health::sample_age_seconds(now, seen) >= crate::device::health::max_sample_age_seconds(liveness_interval)),
         "config":{"desired_version":desired,"applied_version":applied,"drift":applied != Some(desired) && drift_since.is_some_and(|since| now.saturating_sub(since) >= interval.saturating_mul(2000))},
         "sensors": sensors, "capabilities": capabilities,
         "limits": status_snapshot.get("limits").cloned().unwrap_or(serde_json::Value::Null),
         "connectivity": connectivity.api_name(),
-        "expected_wake_at": timestamp(expected_wake_at),
-        "power_mode": row.get::<String,_>("power_mode"),
-        "wake_interval_seconds": row.get::<Option<i64>,_>("wake_interval_seconds"),
+        "expected_wake_at": timestamp(connectivity.expected_wake_at()),
+        "power_mode": power_mode,
+        "wake_interval_seconds": wake_interval,
         "missed_wake_count": row.get::<i64,_>("missed_wake_count"),
         "plant_id": serde_json::Value::Null
     })))
@@ -186,8 +190,9 @@ mod tests {
     fn rfc3339_is_utc() {
         assert!(super::timestamp(Some(0)).unwrap().ends_with('Z'));
     }
-    #[tokio::test]
-    async fn battery_state_exposes_expected_wake_without_device_time() {
+    /// Builds a device whose sleep announcement was received `age_ms` ago on the
+    /// edge clock, so the derived window is open or closed on purpose.
+    async fn sleeping_device(age_ms: i64, wake_interval_seconds: u32) -> rhizo_storage::EdgeDb {
         use rhizo_mqtt_contract::payload::{
             DeviceStatus, DeviceStatusValue, PowerMode, PowerStatus,
         };
@@ -204,19 +209,80 @@ mod tests {
         status.data.reason = Some("sleeping".into());
         status.data.power = Some(Box::new(PowerStatus {
             mode: PowerMode::Battery,
-            wake_interval_seconds: Some(60),
+            wake_interval_seconds: Some(wake_interval_seconds),
+            // Advisory only, and deliberately absurd: it must extend nothing.
             expected_wake_ms: Some(u64::MAX),
             wake_reason: None,
             battery_mv: None,
             awake_ms: None,
         }));
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "test fixture anchored to the host clock the endpoint reads"
+        )]
+        let received_at = chrono::Utc::now().timestamp_millis() - age_ms;
+        rhizo_storage::repo::ingest::persist_status(&db, &status, received_at)
+            .await
+            .unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn battery_state_exposes_expected_wake_without_device_time() {
+        let db = sleeping_device(1_000, 900).await;
+        let value = super::one(&db, "plant-node-01").await.unwrap().unwrap();
+        assert_eq!(value["connectivity"], "sleeping");
+        assert_eq!(value["power_mode"], "battery");
+        assert_eq!(value["wake_interval_seconds"], 900);
+        assert!(
+            value["expected_wake_at"].is_string(),
+            "an open window must publish its edge-computed wake instant"
+        );
+        assert_eq!(value["missed_wake_count"], 0);
+    }
+
+    /// SAFETY-021 read-side, and the negative control for the field above: the
+    /// row still says `sleeping` and the liveness timer has never run, yet the
+    /// endpoint must report `isolated` and must not advertise a wake instant.
+    #[tokio::test]
+    async fn safety_021_an_overdue_sleeper_reports_isolated_with_no_expected_wake() {
+        // 900 s window, so `overdue_at` is 1800 s after receipt.
+        let db = sleeping_device(1_801_000, 900).await;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT connectivity_mode FROM devices")
+                .fetch_one(db.pool())
+                .await
+                .unwrap(),
+            "sleeping",
+            "the stored projection is deliberately left untouched by this test"
+        );
+        let value = super::one(&db, "plant-node-01").await.unwrap().unwrap();
+        assert_eq!(value["connectivity"], "isolated");
+        assert_eq!(
+            value["expected_wake_at"],
+            serde_json::Value::Null,
+            "a missed wake is not an expected one"
+        );
+    }
+
+    /// An always-on device never carries a wake instant, whatever else is in the
+    /// row -- the second negative control for the same field.
+    #[tokio::test]
+    async fn an_always_on_device_publishes_no_expected_wake() {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let status: rhizo_mqtt_contract::Envelope<rhizo_mqtt_contract::payload::DeviceStatus> =
+            rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+                "../../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+            ))
+            .unwrap();
         rhizo_storage::repo::ingest::persist_status(&db, &status, 1_000)
             .await
             .unwrap();
         let value = super::one(&db, "plant-node-01").await.unwrap().unwrap();
-        assert_eq!(value["connectivity"], "sleeping");
-        assert_eq!(value["power_mode"], "battery");
-        assert_eq!(value["wake_interval_seconds"], 60);
-        assert_eq!(value["expected_wake_at"], "1970-01-01T00:01:01.000Z");
+        assert_eq!(value["connectivity"], "connected");
+        assert_eq!(value["power_mode"], "always_on");
+        assert_eq!(value["expected_wake_at"], serde_json::Value::Null);
+        assert_eq!(value["wake_interval_seconds"], serde_json::Value::Null);
     }
 }

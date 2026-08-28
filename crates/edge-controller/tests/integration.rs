@@ -290,6 +290,176 @@ async fn intentional_sleep_and_duplicate_each_receive_edge_time() {
     );
 }
 
+/// SAFETY-021 against a real broker: a retained sleep announcement redelivered
+/// after a broker restart must not buy the device another wake interval.
+///
+/// This is the transport half of the restart story. `persistence true` means
+/// Mosquitto keeps the retained status across the restart and hands it to the
+/// edge again the moment it re-subscribes, so the edge sees a second copy of a
+/// message it has already acted on. The dedup ledger is what stops that copy
+/// from re-opening the window, and it is worth proving over the wire rather
+/// than by calling `persist_status` twice: the redelivery here is produced by
+/// the broker, on reconnect, exactly as it will be in the field.
+#[tokio::test]
+async fn safety_021_a_retained_sleep_redelivered_after_a_broker_restart_extends_nothing() {
+    use rhizo_mqtt_contract::payload::{DeviceStatus, DeviceStatusValue, PowerMode, PowerStatus};
+    use sqlx::Row as _;
+    if std::env::var("RHIZO_REQUIRE_BROKER").is_err() {
+        eprintln!("SKIPPING retained-sleep broker restart unless RHIZO_REQUIRE_BROKER=1");
+        return;
+    }
+    let Some(b) = support::broker("retained_sleep_broker_restart").await else {
+        return;
+    };
+    // A sibling test's retained online status would be replayed to this edge on
+    // connect *and* again after the restart, and whichever of the two carries
+    // the higher `(boot_generation, sequence)` would win the ordering -- a flake
+    // whose cause appears nowhere in the assertion that reports it. The whole
+    // point here is what the broker replays, so the retained state has to start
+    // known.
+    support::clear_device_retained(&b, "plant-node-01").await;
+    let edge = EdgeHarness::start(&b).await;
+    let mut device = support::Subscriber::connect(
+        &b,
+        &format!("sleep-restart-{}", uuid::Uuid::new_v4()),
+        "plant-node-01",
+        &b.device_password("plant-node-01"),
+        "rhizo/v1/devices/plant-node-01/time",
+    )
+    .await;
+    let mut status: rhizo_mqtt_contract::Envelope<DeviceStatus> =
+        rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+            "../../../test/fixtures/protocol/valid/status-sleeping.json"
+        ))
+        .unwrap();
+    status.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+    assert_eq!(status.data.status, DeviceStatusValue::Offline);
+    assert_eq!(
+        status.data.declared_power_mode(),
+        Some(PowerMode::Battery),
+        "the fixture must be a battery sleep announcement"
+    );
+    assert!(
+        matches!(
+            status.data.power.as_deref(),
+            Some(PowerStatus {
+                wake_interval_seconds: Some(900),
+                ..
+            })
+        ),
+        "the fixture must declare the 900 s interval this test asserts on"
+    );
+    device
+        .client()
+        .publish(
+            "rhizo/v1/devices/plant-node-01/status",
+            QoS::AtLeastOnce,
+            true,
+            status.to_json().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        device
+            .next_matching(Duration::from_secs(3), |m| m.topic.ends_with("/time"))
+            .await
+            .is_some(),
+        "an accepted sleep announcement still gets a live edge.time"
+    );
+
+    let snapshot = |db: rhizo_storage::EdgeDb| async move {
+        let row = sqlx::query(
+            "SELECT connectivity_mode,expected_wake_at,overdue_at,sleep_received_at FROM devices",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        (
+            row.get::<String, _>("connectivity_mode"),
+            row.get::<Option<i64>, _>("expected_wake_at"),
+            row.get::<Option<i64>, _>("overdue_at"),
+            row.get::<Option<i64>, _>("sleep_received_at"),
+        )
+    };
+    let before = snapshot(edge.db.clone()).await;
+    assert_eq!(
+        before.0, "sleeping",
+        "the announcement must have opened a window before the restart is meaningful"
+    );
+    assert!(before.1.is_some() && before.2.is_some());
+
+    assert!(restart_broker().success());
+    // Wait through rumqttc's bounded first retry, then let the broker replay the
+    // retained status to the re-subscribed edge.
+    tokio::time::sleep(Duration::from_secs(8)).await;
+
+    // Without this the test could pass by the redelivery never happening, which
+    // would prove nothing at all. A fresh subscriber gets exactly what the
+    // reconnecting edge got: the announcement is still retained on the restarted
+    // broker and is handed out on subscribe.
+    let mut fresh = support::Subscriber::connect(
+        &b,
+        &format!("sleep-restart-witness-{}", uuid::Uuid::new_v4()),
+        "plant-node-01",
+        &b.device_password("plant-node-01"),
+        "rhizo/v1/devices/plant-node-01/status",
+    )
+    .await;
+    let replayed = fresh
+        .next_matching(Duration::from_secs(5), |m| m.topic.ends_with("/status"))
+        .await
+        .expect("the restarted broker must still hold the retained announcement");
+    let replayed = rhizo_mqtt_contract::Envelope::<DeviceStatus>::from_json(&replayed.payload)
+        .expect("the replayed retained message must still decode");
+    assert_eq!(replayed.message_id, status.message_id, "same message");
+    assert_eq!(replayed.data.announced_sleep_interval_seconds(), Some(900));
+    assert_eq!(
+        edge_controller::metrics::Metrics::new()
+            .unwrap()
+            .connection
+            .get(),
+        3,
+        "the edge must have reconnected and re-subscribed, so it received it too"
+    );
+
+    assert_eq!(
+        snapshot(edge.db.clone()).await,
+        before,
+        "a redelivered retained announcement must not move the window"
+    );
+    for (kind, expected) in [("device_slept", 1), ("offline", 0)] {
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM device_events WHERE kind=? AND device_id='plant-node-01'"
+            )
+            .bind(kind)
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap(),
+            expected,
+            "{kind} must be recorded exactly {expected} time(s) across the restart"
+        );
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM processed_messages WHERE kind='device.status'"
+        )
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap(),
+        1,
+        "the redelivery is the same message and must be deduplicated, not re-applied"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT last_seen_at FROM devices")
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap(),
+        None,
+        "a sleep announcement is not a sighting"
+    );
+}
+
 #[tokio::test]
 async fn auto_registration_creates_no_plant() {
     let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();

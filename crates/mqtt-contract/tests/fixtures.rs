@@ -116,7 +116,9 @@ fn check_valid(path: &PathBuf) -> MessageKind {
         MessageKind::DeviceEvents => typed!(DeviceEventBatch, events => {
             events.validate().unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }),
-        MessageKind::DeviceStatus => typed!(DeviceStatus, _d => {}),
+        MessageKind::DeviceStatus => typed!(DeviceStatus, status => {
+            status.validate().unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        }),
         MessageKind::DeviceConfig => typed!(DeviceConfig, config => {
             config.validate().unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }),
@@ -196,6 +198,7 @@ enum Expected {
     PolicyInvalidHysteresis,
     PolicyNonScalarControlKind,
     EventDuplicateId,
+    StatusSleepWakeInterval,
 }
 
 impl Expected {
@@ -211,6 +214,7 @@ impl Expected {
             "policy_invalid_hysteresis" => Self::PolicyInvalidHysteresis,
             "policy_non_scalar_control_kind" => Self::PolicyNonScalarControlKind,
             "event_duplicate_id" => Self::EventDuplicateId,
+            "status_sleep_wake_interval" => Self::StatusSleepWakeInterval,
             other => panic!(
                 "invalid/{other}/ declares no expected failure variant. Every invalid \
                  fixture must state what it proves: add {other:?} to `Expected::from_dir` \
@@ -313,6 +317,27 @@ impl Expected {
                     "{ctx}"
                 );
             }
+            // A sleep announcement the edge must not honour. The envelope still
+            // decodes -- an unknown `mode` resolves to always-on rather than
+            // failing, which is the forward-compatibility rule -- so what is
+            // being proved is that the *semantic* check rejects it, and
+            // therefore that it opens no wake window (SAFETY-021).
+            Self::StatusSleepWakeInterval => {
+                let status = Envelope::<DeviceStatus>::from_json(bytes)
+                    .unwrap_or_else(|e| panic!("{ctx}: envelope must still decode: {e}"))
+                    .data;
+                assert!(status.announces_sleep(), "{ctx}: must claim a sleep");
+                assert_eq!(
+                    status.validate(),
+                    Err(StatusError::SleepWakeInterval),
+                    "{ctx}"
+                );
+                assert_eq!(
+                    status.announced_sleep_interval_seconds(),
+                    None,
+                    "{ctx}: a rejected announcement must yield no interval"
+                );
+            }
         }
     }
 }
@@ -344,7 +369,61 @@ fn invalid_fixtures_fail_with_their_documented_variant() {
         }
         classes += 1;
     }
-    assert!(classes >= 10 && files >= 11, "the corpus lost fixtures");
+    assert!(classes >= 11 && files >= 14, "the corpus lost fixtures");
+}
+
+/// The `power` block is optional, so every status fixture written before
+/// ADR-018 must still decode, declare no power mode, and look like nothing at
+/// all to the liveness derivation.
+///
+/// This is the compatibility half of the battery change: `power` was added to a
+/// message that retained v1 devices are already publishing, and a v1 device that
+/// suddenly failed to decode would take the whole fleet's registry with it.
+#[test]
+fn a_status_without_a_power_block_stays_valid_and_declares_nothing() {
+    let mut checked = 0;
+    for path in json_files(&root().join("valid")) {
+        let bytes = fs::read(&path).unwrap();
+        if Envelope::<Value>::from_json(&bytes).unwrap().kind != MessageKind::DeviceStatus {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let status = Envelope::<DeviceStatus>::from_json(&bytes).unwrap().data;
+        if status.power.is_some() {
+            continue;
+        }
+        assert_eq!(status.declared_power_mode(), None, "{name}");
+        assert_eq!(status.announced_sleep_interval_seconds(), None, "{name}");
+        assert!(!status.announces_sleep(), "{name}");
+        assert_eq!(status.validate(), Ok(()), "{name}");
+        assert!(
+            !serde_json::to_string(&status)
+                .unwrap()
+                .contains("\"power\""),
+            "{name}: an absent block must not be materialised on re-encode"
+        );
+        checked += 1;
+    }
+    assert!(checked >= 2, "no pre-ADR-018 status fixtures left to check");
+}
+
+/// The accepted sleep announcement, decoded through the one rule that decides
+/// whether a wake window may open.
+#[test]
+fn the_sleep_announcement_fixture_yields_a_bounded_relative_interval() {
+    let bytes = fs::read(root().join("valid/status-sleeping.json")).unwrap();
+    let status = Envelope::<DeviceStatus>::from_json(&bytes).unwrap().data;
+    assert!(status.announces_sleep());
+    assert_eq!(status.declared_power_mode(), Some(PowerMode::Battery));
+    assert_eq!(status.announced_sleep_interval_seconds(), Some(900));
+    // The diagnostic fields survive the round trip but decide nothing.
+    let power = status.power.as_deref().unwrap();
+    assert_eq!(power.wake_reason.as_deref(), Some("timer"));
+    assert_eq!(power.battery_mv, Some(3_280));
+    assert!(
+        power.expected_wake_ms.is_some(),
+        "the fixture must carry the diagnostic it is not allowed to use"
+    );
 }
 
 /// An unrecognised measurement kind is stored and marked advisory rather than

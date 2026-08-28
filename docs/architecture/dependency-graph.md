@@ -256,7 +256,8 @@ M5-005 ──┬──→ M5-006 (dry duration) ──┐
 M5-014 ──→ M5-017 (preset catalogue — pure, embedded, offline)
    M5-017 + M5-014 + M5-016 ──→ M5-018 (apply preset to plant)
 
-M4-013 ──→ post-M4 battery correction (minimal status contract + liveness)
+M4-013 ──→ post-M4 battery correction (status contract + sleep-aware liveness)
+       ──→ post-M4 review (read-time derivation, SAFETY-021 tests, staleness split)
 M1-019 ──→ M5-019 (remaining battery measurement/config contract)
    M5-019 + M4-013 + M2-017 ──→ M5-021 (simulator battery mode)
                                                        all ──→ M5-022 (verification)
@@ -275,11 +276,15 @@ the plant work — they share no file with it. `M5-019` depends only on `M1-019`
 so it is executable from the start of the milestone.
 
 They are *device* issues in a *plant* milestone, and the reason is worth stating
-so nobody moves them: they extend the M4-owned registry model, and **M4 is DONE
-and was not reopened** — the same treatment M0 received in the 2026-08-26 pass.
-M5 is the first milestone still open, and M6-022, M9-019, and M12-018 all depend
-on this landing first. Ordering within the chain is contract → edge → producer,
-so the simulator that exercises the new liveness states comes last.
+so nobody moves them: they extend the M4-owned registry model, and **M4 is DONE**
+— the same treatment M0 received in the 2026-08-26 pass. M5 is the first milestone
+still open, and M6-022, M9-019, and M12-018 all depend on this landing first.
+
+The middle link of the chain is gone. Ordering was contract → edge → producer;
+the edge half is delivered and SAFETY-021 is enforced in M4, so what remains is
+the contract's battery measurement and desired-config fields and the simulator
+that can actually produce a sleep. `M5-021` still comes last, because it is the
+producer that lets M8 exercise the M4 states end to end.
 
 ### M6 — Irrigation and safety
 

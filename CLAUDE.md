@@ -6,8 +6,8 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0, M1, M2, and M3 are implemented and green. M4 is
-READY and has not started.**
+**Planning is complete. M0 through M4 are implemented and green. M5 is READY and
+has not started.**
 
 | | State |
 |---|---|
@@ -18,7 +18,9 @@ READY and has not started.**
 | M2 | 19 issues, **DONE** — report in [docs/reports/M2.md](docs/reports/M2.md) |
 | Protocol seam cleanup | ✅ done (2026-08-28) — exact device subscriptions, `event.ack`, sealed gap markers; report in [docs/reports/M2.md](docs/reports/M2.md) §Amendment |
 | M3 | 18 issues, **DONE** — report in [docs/reports/M3.md](docs/reports/M3.md) |
-| M4-001 | ⬜ **next** — apply ingested device status to the registry |
+| M4 | 13 issues, **DONE** — report in [docs/reports/M4.md](docs/reports/M4.md) |
+| Battery pass | ✅ done (2026-08-28) — ADR-018 (see §12), then the post-M4 correction and its independent review; both dated in [docs/reports/M4.md](docs/reports/M4.md) |
+| M5-001 | ⬜ **next** — add plant and profile repositories |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -300,6 +302,35 @@ gap — a test that inspects the buffer directly must seal first, or reconnect.
 not clamped.** Clamping would turn one corrupt field into "delete the entire
 buffer". Same shape for a mismatched `boot_id`: ignored, not best-effort.
 
+**`connectivity` is stored *and* derived, and the derived answer is the one that
+counts.** `devices.connectivity_mode` exists so the liveness timer has somewhere
+to record the transition it makes, the event it emits, and the counter it
+increments. What `GET /api/v1/devices/{id}` reports re-checks `overdue_at`
+against the edge clock on every read, so an overdue sleeper is `isolated` even
+if the timer is stopped, wedged, or has not run since the process started. Read
+the column back directly and you will see `sleeping` for a device that is
+reported — correctly — as `isolated`; that is not a bug, it is the point. Use
+`connectivity::from_projection`, never the raw column.
+
+**There are two staleness formulas and picking the wrong one breaks SAFETY-005.**
+`max_sample_age_seconds` is the control-freshness threshold: it takes the
+telemetry cadence and nothing else, and it is what M6-005 must call.
+`liveness_interval_seconds` is the connectivity cadence, is widened by a battery
+device's declared `wake_interval_seconds`, and is capped at 3600 s for that
+reason. `wake_interval_seconds` is device-declared and admits values up to
+86 400, so letting it reach the control threshold would let a device advertise
+itself a three-day freshness window. A battery device beyond the cap reads
+`stale` while its connectivity reads `sleeping`; the two answer different
+questions and are allowed to disagree.
+
+**An absent `power` block and an unknown `power.mode` are not the same thing.**
+Absence is what a v1 status written before ADR-018 carries: it declares nothing
+and changes nothing the edge already knew. An unrecognised mode is an explicit
+declaration that resolves to always-on and *retires* any battery state the device
+had. And a Last Will declares neither — it is composed at connect and delivered
+whenever the session drops, so it is evidence of an absence and never a
+restatement of configuration.
+
 **A sleeping device is not an offline device, and an offline device is never
 shown as sleeping.** A battery device announces sleep with a retained
 `status: "offline", reason: "sleeping"` and the Edge opens a wake window computed
@@ -383,8 +414,10 @@ each with named tests and an enforcement milestone. Most become enforced in M6.
 The ones most easily broken by an innocent-looking change:
 
 - **SAFETY-005** — staleness must use the **edge** `received_at`, never the
-  device timestamp. A device with a wrong clock would otherwise make stale data
-  look fresh.
+  device timestamp, and its threshold must come from the telemetry cadence, never
+  from a power field. A device with a wrong clock would otherwise make stale data
+  look fresh; a device declaring an 86 400-second wake interval would otherwise
+  make three-day-old data look actionable.
 - **SAFETY-006** — the 24-hour cap is **rolling and derived from rows**, not a
   counter and not a calendar day. A counter would reset on restart; a calendar
   day permits two allowances around midnight.
@@ -394,8 +427,11 @@ The ones most easily broken by an innocent-looking change:
   SQLite transaction. Splitting them reintroduces duplicate watering on crash.
 - **SAFETY-021** — a device is `sleeping` only inside a window the **edge**
   computed, and `isolated` the moment it is overdue. Trusting the device's own
-  `expected_wake_ms`, or letting an unrecognised offline `reason` mean "asleep",
-  turns the sleep state into a place where dead devices hide.
+  `expected_wake_ms`, letting an unrecognised offline `reason` mean "asleep", or
+  reporting the stored `connectivity_mode` without re-checking `overdue_at`, all
+  turn the sleep state into a place where dead devices hide. The last of those is
+  the subtle one: it makes the invariant depend on a writer, and a writer that
+  dies leaves a device asleep for ever.
 
 If you find yourself weakening one of these to make a test pass, the test is
 probably right.
@@ -472,7 +508,10 @@ this area:
   topics. Holding a command is an Edge-side mechanism with no wire representation.
 - **Command TTL and `edge.time`.** Unchanged, because the command is minted at
   the wake. SAFETY-002 is untouched.
-- **M4.** Its completed report carries a dated battery-compatibility correction;
-  the registry model is no longer deferred to **M5-020**, which is superseded.
-  first milestone still open — the same treatment M0 got in August. That is why
-  M5, a plant milestone, contains three device issues.
+- **M4.** Its completed report carries a dated battery-compatibility correction
+  and a dated independent review of that correction. The registry model is no
+  longer deferred to **M5-020**, which is wholly superseded, and **SAFETY-021 is
+  enforced in M4**, not M5. M4 was not reopened as a milestone — the same
+  treatment M0 got in the 2026-08-26 pass — because M5 is the first milestone
+  still open. That is why M5, a plant milestone, contains device issues: M5-019's
+  remaining contract scope and M5-021's simulator.

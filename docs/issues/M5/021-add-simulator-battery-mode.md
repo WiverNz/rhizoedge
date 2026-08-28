@@ -88,7 +88,9 @@ interval is the anti-goal named in
 - [ ] A fresh subscriber after a sleep sees the sleeping status and **nothing**
       on any `commands/*`, `telemetry`, `events`, or `time` topic.
 - [ ] `miss-wake:2` produces an edge-side `isolated` state and
-      `missed_wake_count == 2`.
+      `missed_wake_count == 2`. Note that `missed_wake_count` is *consecutive*
+      misses and is reset by any successful wake, so the two misses must not be
+      separated by one.
 - [ ] `sleep-without-announcing` fires the Last Will and yields `isolated`.
 - [ ] A dose delivered at wake completes without the device sleeping, even with
       `awake_budget_seconds` set below the dose duration.

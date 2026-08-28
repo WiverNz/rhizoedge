@@ -1,9 +1,26 @@
 # Issue M5-020 — Implement sleep-aware device liveness on the edge
 
-**Status:** SUPERSEDED before M5 started. This scope was delivered as the
-2026-08-28 post-M4 battery-compatibility correction recorded in
-`docs/reports/M4.md`. This issue remains as planning history; it is not an M5
-implementation task.
+**Status:** SUPERSEDED before M5 started — **wholly**, including the four
+`safety_021_*` tests and the derive-never-store rule below, which the dated
+2026-08-28 post-M4 review completed. Delivered by the 2026-08-28 post-M4
+battery-compatibility correction and that review, both recorded in
+`docs/reports/M4.md`; SAFETY-021 is enforced in M4. This issue remains as
+planning history and is **not** an M5 implementation task. Nothing in it is
+outstanding.
+
+Two of its own instructions were not honoured by the original correction and were
+fixed by the review, which is the reason this file is worth keeping:
+
+- *"Derive, never store, the connectivity value."* The correction stored it and
+  let the timer be its only writer. The reported value is now derived on every
+  read; the column remains as the timer's record.
+- *"`safety_021_*` tests are green."* Only one of the four named tests existed.
+  All four now do, under the names the invariant registry gives them.
+
+Its staleness instruction was honoured but proved incomplete: feeding the
+device-declared wake interval into `max(15 min, 3 × interval)` is also feeding it
+into SAFETY-005's `max_sample_age`. The review split the two calculations and
+bounded the battery one (PRD 040 F-040-26).
 
 **Milestone:** M5 · **PRD:** [PRD 050](../../prd/050-plant-model-and-recommendations.md) · **Depends on:** M5-019, M4-012, M4-004
 

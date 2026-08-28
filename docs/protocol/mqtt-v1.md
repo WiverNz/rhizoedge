@@ -565,6 +565,21 @@ the same reasoning that makes staleness use `received_at` (SAFETY-005).
 its RTC counter measured the elapsed time, from a reset, where it did not
 (SAFETY-015).
 
+A `power` block that is absent declares nothing, and an unrecognised `mode`
+declares `always_on`. The two are **not** the same: absence is what a v1 status
+written before [ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)
+carries, and it leaves whatever the edge already knew about the device alone; an
+unrecognised mode is an explicit declaration and retires any battery state the
+device had. Both resolve towards *stays reachable*, which is the SAFETY-012
+direction.
+
+Neither `wake_interval_seconds` nor any other field of this block is a safety
+input. `wake_interval_seconds` describes the device's *liveness* cadence and is
+bounded where it is consumed; the freshness threshold that decides whether a
+measurement may be acted upon derives from the configured telemetry interval and
+never from a power field (SAFETY-005, [PRD 040](../prd/040-device-registry-and-health.md)
+F-040-26).
+
 ### 5.6 Last Will and Testament
 
 Every device MUST configure an LWT at connect time:
@@ -607,6 +622,15 @@ than a stale online one.
 receiver MUST decode an unrecognised `reason` to `connection_lost`: uncertainty
 resolves to *unexpectedly absent*, never to *peacefully asleep* (SAFETY-012,
 SAFETY-021).
+
+An announcement is valid only if it carries a `power` block declaring
+`mode: "battery"` and a `wake_interval_seconds` within `60 – 86400`. A receiver
+MUST **reject** an announcement that does not — never clamp it, and never open a
+window on a default. The three ways to fail are an out-of-range interval, a
+non-battery declaration, and a missing block, and each has a fixture under
+`test/fixtures/protocol/invalid/status_sleep_wake_interval/`; the accepted form
+is `test/fixtures/protocol/valid/status-sleeping.json`. A rejected announcement
+is an ordinary unexplained absence, so the device derives `isolated`.
 
 **The Last Will stays armed regardless.** A device that drops its session without
 announcing still fires `connection_lost`, which is what keeps an announced sleep

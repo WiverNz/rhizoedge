@@ -168,20 +168,61 @@ pub enum StatusError {
     /// An announced sleep did not carry a valid relative wake interval.
     SleepWakeInterval,
 }
+/// Shortest relative wake interval a sleep announcement may declare.
+pub const SLEEP_WAKE_INTERVAL_MIN_SECONDS: u32 = 60;
+/// Longest relative wake interval a sleep announcement may declare.
+pub const SLEEP_WAKE_INTERVAL_MAX_SECONDS: u32 = 86_400;
 impl DeviceStatus {
+    /// Whether this status *claims* to be an intentional sleep.
+    ///
+    /// The claim alone opens nothing. Only
+    /// [`Self::announced_sleep_interval_seconds`] decides whether a wake window
+    /// may be opened, which is why the two are separate.
+    pub fn announces_sleep(&self) -> bool {
+        self.status == DeviceStatusValue::Offline
+            && matches!(self.reason.as_deref(), Some("sleeping"))
+    }
+    /// The one place the sleep-announcement rule lives.
+    ///
+    /// A wake window may be opened only by an offline status that says
+    /// `sleeping`, carries a battery-mode `power` block, and declares a relative
+    /// interval inside
+    /// `SLEEP_WAKE_INTERVAL_MIN_SECONDS..=SLEEP_WAKE_INTERVAL_MAX_SECONDS`.
+    /// Every consumer -- the decoder, the edge registry, and later the firmware
+    /// -- asks this function instead of re-deriving the rule, for the same
+    /// reason there is one `validate_water_command`: a second copy that drifted
+    /// would change which absences count as expected without anything turning
+    /// red.
+    ///
+    /// The interval is **relative**. No device timestamp is consulted here and
+    /// `expected_wake_ms` is never read, so a device with a wrong clock cannot
+    /// widen its own window (SAFETY-021).
+    pub fn announced_sleep_interval_seconds(&self) -> Option<u32> {
+        if !self.announces_sleep() {
+            return None;
+        }
+        let power = self.power.as_deref()?;
+        if power.mode.effective() != PowerMode::Battery {
+            return None;
+        }
+        power.wake_interval_seconds.filter(|seconds| {
+            (SLEEP_WAKE_INTERVAL_MIN_SECONDS..=SLEEP_WAKE_INTERVAL_MAX_SECONDS).contains(seconds)
+        })
+    }
+    /// The power mode this status actually declares, resolved conservatively.
+    ///
+    /// `None` means the status carried no `power` block at all -- a v1 payload
+    /// written before ADR-018, which declares nothing and must therefore change
+    /// nothing. An unrecognised mode is *not* `None`: it is an explicit
+    /// declaration that resolves to [`PowerMode::AlwaysOn`], because sleeping is
+    /// the branch that makes a device unreachable (SAFETY-012).
+    pub fn declared_power_mode(&self) -> Option<PowerMode> {
+        self.power.as_deref().map(|power| power.mode.effective())
+    }
     /// Validates the bounded sleep announcement without consulting device time.
     pub fn validate(&self) -> Result<(), StatusError> {
-        if self.status == DeviceStatusValue::Offline
-            && matches!(self.reason.as_deref(), Some("sleeping"))
-        {
-            match self.power.as_deref() {
-                Some(PowerStatus {
-                    mode: PowerMode::Battery,
-                    wake_interval_seconds: Some(60..=86_400),
-                    ..
-                }) => {}
-                _ => return Err(StatusError::SleepWakeInterval),
-            }
+        if self.announces_sleep() && self.announced_sleep_interval_seconds().is_none() {
+            return Err(StatusError::SleepWakeInterval);
         }
         Ok(())
     }
@@ -328,9 +369,65 @@ mod tests {
             limits: None,
         };
         assert_eq!(status.validate(), Ok(()));
+        assert_eq!(status.announced_sleep_interval_seconds(), Some(900));
+        assert_eq!(status.declared_power_mode(), Some(PowerMode::Battery));
         status.power.as_mut().unwrap().wake_interval_seconds = Some(59);
+        assert_eq!(status.validate(), Err(StatusError::SleepWakeInterval));
+        assert_eq!(status.announced_sleep_interval_seconds(), None);
+        status.power.as_mut().unwrap().wake_interval_seconds = Some(86_401);
         assert_eq!(status.validate(), Err(StatusError::SleepWakeInterval));
         status.power = None;
         assert_eq!(status.validate(), Err(StatusError::SleepWakeInterval));
+        assert_eq!(status.declared_power_mode(), None);
+    }
+    /// Negative controls for the two directions the rule must never take:
+    /// a sleep claim from a non-battery declaration, and an unknown mode that
+    /// resolves to an explicit always-on rather than to "declared nothing".
+    #[test]
+    fn a_sleep_claim_without_a_battery_declaration_opens_no_window() {
+        let mut status = DeviceStatus {
+            boot_generation: 1,
+            status: DeviceStatusValue::Offline,
+            reason: Some("sleeping".into()),
+            firmware_version: None,
+            protocol_version: Some(1),
+            applied_config_version: None,
+            uptime_ms: None,
+            free_heap_bytes: None,
+            rssi_dbm: None,
+            applied_policy_versions: BTreeMap::new(),
+            connectivity: None,
+            power: Some(Box::new(PowerStatus {
+                mode: PowerMode::Unknown,
+                wake_interval_seconds: Some(900),
+                expected_wake_ms: None,
+                wake_reason: None,
+                battery_mv: None,
+                awake_ms: None,
+            })),
+            capabilities: DeviceCapabilities::default(),
+            limits: None,
+        };
+        assert!(status.announces_sleep());
+        assert_eq!(status.announced_sleep_interval_seconds(), None);
+        assert_eq!(status.declared_power_mode(), Some(PowerMode::AlwaysOn));
+        assert_eq!(status.validate(), Err(StatusError::SleepWakeInterval));
+        status.power.as_mut().unwrap().mode = PowerMode::AlwaysOn;
+        assert_eq!(status.announced_sleep_interval_seconds(), None);
+        status.reason = Some("connection_lost".into());
+        assert!(!status.announces_sleep());
+        assert_eq!(status.validate(), Ok(()));
+    }
+    /// A v1 status written before ADR-018 must still decode, declare nothing,
+    /// and never look like a sleep announcement.
+    #[test]
+    fn a_pre_adr_018_status_declares_no_power_mode() {
+        let json = r#"{"boot_generation":3,"status":"offline","reason":"connection_lost","protocol_version":1}"#;
+        let status: DeviceStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.declared_power_mode(), None);
+        assert_eq!(status.announced_sleep_interval_seconds(), None);
+        assert!(!status.announces_sleep());
+        assert_eq!(status.validate(), Ok(()));
+        assert!(!serde_json::to_string(&status).unwrap().contains("power"));
     }
 }

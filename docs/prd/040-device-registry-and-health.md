@@ -190,7 +190,22 @@ What M4 already got right, and why nothing here is a correction:
 - Staleness is `max(15 min, 3 × telemetry_interval)` from the **edge**
   `received_at`. At a 900-second wake interval that yields 45 minutes, which
   already tolerates one missed wake. Only *which* interval feeds the formula
-  changes for a battery device.
+  changes for a battery device — and only for the **liveness** indication.
+
+  This distinction is load-bearing and is why F-040-26 carries a cap.
+  `max(15 min, 3 × interval)` is also SAFETY-005's `max_sample_age`, the
+  threshold that decides whether a measurement may be *acted on*. The wake
+  interval is a device-declared field admitting values up to 86 400 seconds, so
+  feeding it into that formula unguarded would let a device advertise itself a
+  three-day freshness window — the exact shape SAFETY-021 forbids, arriving
+  through the staleness door instead of the connectivity one. The two questions
+  are therefore answered by two functions: `max_sample_age_seconds`, which takes
+  a cadence and nothing else and is what M6-005 calls, and
+  `liveness_interval_seconds`, which is the only place the battery widening
+  exists and bounds it at the slowest cadence the edge would ever configure. A
+  battery device beyond that cap simply reads `stale` while its connectivity
+  honestly reads `sleeping`; the two indications answer different questions and
+  are allowed to disagree.
 - F-040-09's liveness timer is what notices an overdue sleeper, because a device
   that stopped waking produces no message to react to — the same reasoning that
   made the timer necessary in the first place.
@@ -201,13 +216,13 @@ Delivered by the dated post-M4 battery-compatibility correction:
 
 | ID | Requirement |
 |---|---|
-| F-040-20 | `power_mode` and `wake_interval_seconds` persisted per device from the config the edge published |
-| F-040-21 | `connectivity` gains `sleeping`, derived — never stored — alongside `connected`, `isolated`, and `reconciling` |
+| F-040-20 | `power_mode` and `wake_interval_seconds` persisted per device. Until the edge publishes device configuration (M5-019) the source is the device's own `power` declaration on `device.status`: an absent block declares nothing and changes nothing, any explicit non-battery mode retires the battery state, and a Last Will never redeclares either |
+| F-040-21 | `connectivity` gains `sleeping`, **derived at read time** alongside `connected`, `isolated`, and `reconciling`. The `connectivity_mode` column is the raw material the timer maintains for events and metrics; the reported value re-checks `overdue_at` against the edge clock on every read, so an overdue sleeper reads `isolated` even if the timer never ran |
 | F-040-22 | `expected_wake_at = received_at(announcement) + wake_interval_seconds`, and `overdue_at = expected_wake_at + max(wake_interval_seconds, 300 s)`, both on the **edge** clock |
 | F-040-23 | Past `overdue_at` the device derives `isolated`, with the transition made **by the liveness timer** and no inbound message required |
 | F-040-24 | A device's own `expected_wake_ms` is advisory and never extends the edge's window; an LWT and an unrecognised offline `reason` both derive `isolated` |
 | F-040-25 | `missed_wake_count` stored — it counts events rather than describing the present — and reset on a successful wake |
-| F-040-26 | A battery device's effective staleness interval is its wake interval |
+| F-040-26 | A battery device's effective **liveness** interval is its wake interval, capped at 3600 s — the slowest cadence `device.config` may ask for. The control-freshness threshold SAFETY-005 governs is a separate calculation over the telemetry interval and never reads a power field |
 | F-040-27 | `devices_sleeping` gauge and `device_wake_missed_total` counter; sleeping devices are not counted as offline |
 
 The invariant this creates is **SAFETY-021**: expected sleep is bounded and never

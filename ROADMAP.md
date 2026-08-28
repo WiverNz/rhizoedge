@@ -28,8 +28,11 @@ pin may move forward deliberately
 > **SAFETY-021** was appended; the first twenty are unchanged and were never
 > renumbered. A subsequent focused correction on the same date made the completed
 > M4 registry battery-compatible before M5: the scope originally planned as
-> M5-019 and M5-020 is recorded as superseded, while M5-021 still owns simulator
-> sleep behaviour. The dated correction is documented in the M4 report.
+> M5-020 and the status half of M5-019 is superseded and delivered, while M5-019's
+> battery measurement kinds and desired-config power fields, and M5-021's
+> simulator sleep behaviour, remain M5 work. SAFETY-021 is therefore enforced in
+> **M4**, not M5. The dated correction and the dated post-M4 review that completed
+> it are documented in the M4 report.
 >
 > The change is additive on the wire and needed **no protocol version bump**: two
 > measurement kinds, optional `power` blocks, one offline `reason`. Holding a
@@ -238,7 +241,17 @@ produces a stale indication **from the timer**. An unknown device registers with
 no plant. `/health/ready` is 200 with the cloud stopped, 503 with the broker
 stopped. No endpoint changes `device_id`.
 
-**Invariants.** Provides SAFETY-005's inputs; applies SAFETY-012 to onboarding.
+**Exit criteria added by the dated post-M4 battery correction.** A device inside
+its announced window reports `sleeping`, not `offline`; one past `overdue_at`
+reports `isolated`, with the durable transition made **by the liveness timer with
+no inbound message** and the reported value derived on every read regardless of
+the timer. An announced wake time far in the future extends nothing. A retained
+announcement redelivered after a broker or edge restart moves neither the window
+nor the missed-wake count. An always-on device's liveness behaviour is unchanged.
+
+**Invariants.** Provides SAFETY-005's inputs — and takes no power field into that
+threshold; applies SAFETY-012 to onboarding; enforces **SAFETY-021** (expected
+sleep is bounded and never masks an unexpected absence).
 
 **PRD.** [040](docs/prd/040-device-registry-and-health.md)
 
@@ -268,8 +281,9 @@ derivation · EC trend and warning · evaluation tick and endpoints ·
 **a versioned, embedded, curated species preset catalogue with per-value
 provenance, and its application into ordinary per-plant policies** ·
 **the remaining battery measurement/config wire surface and a simulator that
-sleeps** (M5-019, M5-021); the minimal sleep-status wire surface and sleep-aware
-liveness are already delivered by the dated post-M4 correction.
+sleeps** (M5-019, M5-021). The sleep-status wire surface and the whole sleep-aware
+liveness model are already delivered and enforced in M4; M5 owns only what can
+*produce* that behaviour and the battery telemetry and desired-config fields.
 
 **Exit criteria.** Drying produces `WaterRecommended` with a non-empty reason
 list and **zero MQTT commands published**. A plant with no `ActuatorBinding`
@@ -281,15 +295,15 @@ step following a command creates no second event. A plant created from a species
 preset has ordinary, fully editable `MeasurementPolicy` rows, still has
 `auto_watering_enabled = false`, and **no catalogue entry contains an interval or
 schedule** — a preset stores preferences, never a timer.
-A battery device inside its announced window shows as `sleeping`, not `offline`;
-one past `overdue_at` shows as `isolated`, and **the transition is made by the
-liveness timer with no inbound message**. An announced wake time far in the future
-does not extend the Edge's window. An always-on device's liveness behaviour is
-byte-identical to M4's.
+A **simulated** battery device drives the M4 liveness model end to end: it sleeps
+and shows as `sleeping`, `miss-wake:2` leaves it `isolated` with
+`missed_wake_count == 2`, and `sleep-without-announcing` fires the Last Will and
+also yields `isolated`. `--power-mode always_on` behaviour is unchanged and the
+whole M2 suite stays green.
 
-**Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path) and
-**SAFETY-021** (expected sleep is bounded and never masks an unexpected absence).
-Otherwise builds the gate's inputs without actuating.
+**Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path);
+re-verifies **SAFETY-021**, which M4 enforces, against a device that can actually
+sleep. Otherwise builds the gate's inputs without actuating.
 
 **PRD.** [050](docs/prd/050-plant-model-and-recommendations.md)
 
@@ -685,7 +699,7 @@ Full registry: [docs/architecture/safety-invariants.md](docs/architecture/safety
 | SAFETY-018 | A plant with no actuator has no actuation path | Edge | M5 | M8, M12 |
 | SAFETY-019 | Policy activation is atomic | Device | M9 | M8 |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap | Device + Edge | M9 | M8 |
-| SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M5 | M8, M12 |
+| SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | M8, M12 |
 
 Every invariant names at least one automated test in the registry. M6 and M7 are
 not complete until those tests exist and pass.
