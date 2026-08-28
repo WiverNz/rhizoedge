@@ -92,7 +92,7 @@ POST /plants/monstera-01/water {"ml":30,"mode":"manual"}
 | ID | Requirement |
 |---|---|
 | F-060-01 | The gate runs **before** any irrigation logic, in `evaluate`, at the single entry point |
-| F-060-02 | Ordered checks: leak → tank → sample validity → sample freshness → daily cap |
+| F-060-02 | Resolve the plant's `SensorBinding[]`, optional `ActuatorBinding`, and `MeasurementPolicy[]`; then run ordered veto checks for required leak/tank/control inputs, validity, freshness, and durable rolling budget |
 | F-060-03 | Every safety match is **exhaustive with no `_ =>` arm**; a new enum variant fails to compile until classified |
 | F-060-04 | `None` and `Unknown` map to a lockout, never to permission |
 | F-060-05 | `manual` mode skips **only** `SensorFault` and `StaleData`; every other check applies |
@@ -171,7 +171,10 @@ pub struct IrrigationInputs<'a> {
     pub latest_weight: Option<&'a WeightSample>,
     pub tank: Option<TankState>,
     pub leak: LeakState,               // Clear | Detected | Unknown
-    pub profile: &'a PlantProfile,
+    pub sensor_bindings: &'a [SensorBinding],
+    pub actuator_binding: Option<&'a ActuatorBinding>,
+    pub measurement_policies: &'a [MeasurementPolicy],
+    pub automation: &'a AutomationPolicy,
     pub delivered_last_24h_ml: f32,
     pub doses_this_cycle: u8,
     pub last_cycle_completed_at: Option<DateTime<Utc>>,
@@ -343,6 +346,9 @@ The heaviest test investment in the project.
 - [ ] `evaluate` has no `_ =>` arm on any safety match (reviewed and asserted by
       a compile-fail test).
 - [ ] `PROPTEST_CASES=10000 cargo test safety_006` passes.
+- [ ] The shared offline evaluator, its sole simulator call site, reconciliation,
+      and SAFETY-013…020 property coverage required by M6-019…M6-021 are green.
+- [ ] No MQTT water command is published while reconciliation is incomplete.
 
 ## Dependencies
 

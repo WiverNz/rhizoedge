@@ -29,18 +29,17 @@ device publishes (QoS 1)
 ┌───────────────────────────────────────────────────────────┐
 │ pipeline task — ONE SQLite TRANSACTION                    │
 │                                                           │
-│  7. INSERT INTO processed_messages(message_id) …          │
+│  7. bounded transport dedup: processed_messages(message_id)│
 │         ON CONFLICT DO NOTHING                            │
 │     rows_affected == 0 ──► DUPLICATE: rollback, count,    │
 │                            and stop. No effects applied.  │
 │                                                           │
-│  8. range-validate each field                             │
-│       valid   → keep                                      │
-│       invalid → field = NULL + device_event(sensor_invalid)│
+│  8. enforce stable logical identity/order                 │
+│     batch sample / actuator / command / event / status    │
 │                                                           │
-│  9. INSERT measurement row                                │
-│ 10. UPDATE device last_seen_at, boot_id, sequence         │
-│ 11. INSERT pending_cloud_events row (outbox)              │
+│  9. validate each MeasurementSample independently         │
+│       valid → typed narrow row; invalid → NULL + event     │
+│ 10. INSERT durable effect rows transactionally            │
 │                                                           │
 │     COMMIT  ── all of the above, or none of it            │
 └───────────────────────┬───────────────────────────────────┘
@@ -53,7 +52,7 @@ device publishes (QoS 1)
 
 ### Why the transaction boundary is where it is
 
-Steps 7–11 are atomic. If the process is killed at any point, either the message
+Steps 7–10 are atomic. If the process is killed at any point, either the message
 is recorded as processed *and* its effects are durable, or neither is true and
 the broker will redeliver it. This is the mechanism behind **SAFETY-001** and
 **SAFETY-010**, and it is the reason dedup lives in SQLite rather than in a
@@ -61,7 +60,7 @@ the broker will redeliver it. This is the mechanism behind **SAFETY-001** and
 
 ### Validation is lenient per-field, strict per-message
 
-A soil telemetry message with a valid moisture and a wildly out-of-range EC is
+A `telemetry.batch` with a valid moisture sample and a wildly out-of-range EC sample is
 **not** discarded. The moisture is stored, the EC is stored as `NULL`, and a
 `device_event` of kind `sensor_invalid` is recorded. Discarding the whole
 message would throw away the reading the safety logic actually needs.
@@ -81,6 +80,12 @@ pipeline therefore assumes nothing about order:
   the process saw".
 - A `sequence` that moves backwards within the same `boot_id` is recorded as a
   `device_event` (`sequence_regression`) but does not reject the message.
+- Status is different current-state data: M3 accepts only a greater sequence in
+  the same `boot_generation`, a greater generation, or the first current-boot
+  LWT. Exact or logically equivalent replay and delayed older boots are no-ops,
+  even after transport-marker pruning. Only a newly accepted logical status may
+  later refresh registry freshness; every otherwise-valid status receipt still
+  receives the non-retained `edge.time` response in M4.
 
 ---
 
@@ -94,14 +99,15 @@ depend on state, which is testable.
 control_loop tick (default every 30 s, virtual-time aware)
         │
         ▼
-  for each plant with a device:
+  for each plant:
         │
         ▼
   load IrrigationState from SQLite (never from memory alone)
         │
         ▼
-  gather inputs: latest soil sample + age, tank, leak,
-                 profile, delivered_today_ml, last cycle time
+  resolve SensorBinding[] across devices, optional ActuatorBinding,
+  MeasurementPolicy[] and current profile-derived automation settings;
+  gather required typed samples, veto inputs, durable budget and cycle state
         │
         ▼
 ┌──────────────────────────────────────────────────┐
@@ -231,7 +237,7 @@ Backoff parameters are specified in
 ## 4. Configuration flow
 
 ```text
-operator (UI/API) ──► edge SQLite (plant profile, device config)
+operator (UI/API) ──► edge SQLite (plant bindings/policies, templates, device config)
                             │
                             ▼
                   config_version += 1
@@ -262,9 +268,8 @@ cannot be changed by config, cloud, or UI (SAFETY-007). See
 
 | Boundary | Carries | Never carries |
 |---|---|---|
-| device → broker | telemetry, status, command results | decisions |
-| broker → edge | the above | anything authoritative about time |
-| edge → device | config, bounded commands | unbounded doses |
+| device → edge via broker | telemetry, actuator state, status, offline events, command results | connected-mode plant decisions |
+| edge → device via broker | config, policy, live time, water/tare/calibrate commands, event ack | unbounded doses; retained time/commands/acks |
 | edge → cloud | historical events | requests for permission |
 | cloud → edge | acknowledgements only (V1) | commands, config |
 | UI → edge | user intent over HTTP | MQTT of any kind |

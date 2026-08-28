@@ -278,10 +278,10 @@ device reconnects
    ↓ publishes retained status incl. applied_policy_version, boot_id, device_seq
    ↓ replays buffered events in device_seq order, QoS 1, in batches
 edge ingests each event
-   ↓ dedup on event_id  (the same processed_messages mechanism as telemetry)
+   ↓ transport dedup on message_id; durable logical dedup on stable event_id
    ↓ autonomous doses become watering_events with origin=offline_autonomous
    ↓ the rolling budget is recomputed from rows — offline doses now count
-   ↓ gap markers stored as device_events(kind='history_gap')
+   ↓ gap markers stored as first-class history_gaps rows
    ↓ plant leaves Uncertain only after the replay is acknowledged complete
 edge resumes normal control
 ```

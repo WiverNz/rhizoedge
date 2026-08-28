@@ -84,7 +84,7 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 | F-020-07 | Applies retained config; ignores `config_version` ≤ applied; echoes `applied_config_version` |
 | F-020-08 | Publishes a `command.result` for **every** command, including rejections |
 | F-020-09 | Retries result publication up to 60 s; persists unpublished results across restart |
-| F-020-10 | Never publishes retained on telemetry or command topics |
+| F-020-10 | Retains only `status`; device publications `telemetry`, `actuator`, `events`, and `commands/result` are never retained. Received `time`, all `commands/*`, and `events/ack` are also non-retained; edge-owned `config` and `policy` are retained |
 | F-020-11 | Persists and atomically activates retained offline policies; reports applied versions |
 | F-020-12 | Models isolation/reconnect while sampling and buffering continue |
 | F-020-13 | Persists monotonic offline runtime state needed by the later shared evaluator |
@@ -156,6 +156,7 @@ frozen serialization schema:
 ```json
 {
   "boot_count": 12,
+  "boot_generation": 12,
   "applied_config_version": 7,
   "delivered_today_ml": 130.0,
   "delivered_day_epoch": 20325,
@@ -275,8 +276,9 @@ asserted directly by tests rather than sampled.
 
 - [x] `docker compose up mosquitto device-simulator` runs standalone; telemetry
       visible via `mosquitto_sub`.
-- [x] A subscriber sees retained `status` and `config` and **nothing** on
-      `commands/*`.
+- [x] A retained-only subscriber sees exactly `status`, edge `config`, and edge
+      `policy`; telemetry, actuator state, events, time, commands/results, and
+      `events/ack` are non-retained.
 - [x] Killing the simulator produces the LWT within the keepalive window.
 - [x] The same `command_id` published three times causes one actuation and three
       results.

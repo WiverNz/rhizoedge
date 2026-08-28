@@ -16,7 +16,8 @@ Guarantee exactly-once logical processing across crashes.
 
 - `mark_processed` doing `INSERT ... ON CONFLICT DO NOTHING`
 - 0 rows affected means duplicate: roll back, count, apply nothing
-- Dedup key is `message_id` alone
+- Transport dedup key is `message_id`; durable effects additionally use the
+  stable identity/order added by M3's late-replay corrections
 - The marker and all effects share one transaction
 - `SQLITE_BUSY` retried 3x with 50/100/200 ms jitter, then a clean failure leaving the message unprocessed
 
@@ -34,6 +35,12 @@ Guarantee exactly-once logical processing across crashes.
 `(device_id, boot_id, sequence)` must **not** be used for dedup — a device
 rebooting mid-second could legitimately reuse a sequence value while
 `message_id` remains unique.
+
+Post-M3 note: this issue established the bounded transport fast path. Migrations
+0002/0003 and the final M3 storage path add independent durable identities for
+telemetry samples, actuator state, command results, replayed events/gaps, and
+status ordering. Seven-day marker pruning is safe because of those protections,
+not because transport identity is permanent logical effect identity.
 
 On a `SQLITE_BUSY` failure the message must be left unprocessed, so QoS 1
 redelivery reprocesses it correctly. Marking it processed and then failing to

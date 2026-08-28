@@ -4,8 +4,9 @@
 
 ## Context
 
-ADR-001 makes `rhizo-mqtt-contract` the only crate shared with the ESP32
-firmware, so it must be `no_std` from the first line. Retrofitting `no_std` onto
+ADR-001 makes `rhizo-mqtt-contract` the firmware-facing wire crate; ADR-015 later
+adds `rhizo-policy` as the second firmware-facing shared crate. Both must remain
+`no_std`. Retrofitting `no_std` onto
 a crate that grew `std` habits is far harder than starting that way.
 
 ## Goal

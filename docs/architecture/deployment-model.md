@@ -138,7 +138,7 @@ telemetry is a stream of samples rather than a ledger, there is nothing worth
 queuing. The one exception, command *results*, is handled by device-side retry
 rather than by broker persistence.
 
-Retained messages (status, config) are a broker-level feature independent of
+Retained messages (status, config, policy) are a broker-level feature independent of
 session persistence, so they still work.
 
 ---
@@ -164,10 +164,11 @@ it further.
 
 Retention defaults (edge):
 
-- `measurements`: raw kept 90 days; older data downsampled to hourly aggregates
-  (a M13 deliverable — until then, raw is kept and the operator is warned).
-- `processed_messages`: 7 days. This is the dedup horizon; it must comfortably
-  exceed the longest plausible broker redelivery window.
+- `measurements`: M3 deletes eligible raw rows older than 90 days. M13 first
+  adds hourly downsampling so long-range aggregate history survives that deletion.
+- `processed_messages`: transport markers are kept 7 days. This bounded fast
+  path is safe because durable effects have independent stable uniqueness/order
+  protection; it is not justified by assumptions about broker redelivery time.
 - `pending_cloud_events` with `status='synced'`: 24 hours.
 - `watering_events`, `device_events`, `commands`: **never auto-pruned.** This is
   the ledger of what the machine did to a living plant.

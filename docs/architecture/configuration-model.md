@@ -8,16 +8,19 @@ Decision record: [ADR-011](../adr/011-configuration-and-secrets-model.md).
 
 ---
 
-## 1. The five layers
+## 1. The configuration layers
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │ L5  Plant instance settings      owner: operator (UI/API)    │
-│     auto_watering_enabled, profile assignment, plant name    │
+│     plant identity, name, optional template provenance       │
 ├──────────────────────────────────────────────────────────────┤
-│ L4  Plant profile                owner: operator (UI/API)    │
-│     moisture targets, dose sizes, cooldown, daily cap,       │
-│     EC thresholds                                            │
+│ L4  Per-plant configuration      owner: operator (UI/API)    │
+│     SensorBinding[], optional ActuatorBinding,               │
+│     MeasurementPolicy[], automation configuration            │
+├──────────────────────────────────────────────────────────────┤
+│ L3b Offline policy                owner: edge, device-applied │
+│     validated restricted policy (retained, versioned, atomic)│
 ├──────────────────────────────────────────────────────────────┤
 │ L3  Device runtime config        owner: edge, device-applied │
 │     telemetry interval, pump calibration, tank minimum,      │
@@ -36,8 +39,8 @@ Decision record: [ADR-011](../adr/011-configuration-and-secrets-model.md).
 ```
 
 **The rule that makes this safe:** a lower layer always wins. L4 may request a
-120 ml dose; if L1 caps a single run at 60 ml, the device delivers at most 60 ml
-and reports `clamped`. There is no message, config topic, API call, or cloud
+120 ml dose; L1 caps a single run at the current 80 ml hard maximum, so the
+device cannot deliver more. There is no message, config topic, API call, or cloud
 field that can raise an L1 value (SAFETY-007).
 
 ---
@@ -133,10 +136,35 @@ Edge-owned desired state, delivered as a **retained** MQTT message on
 calibration changes accuracy; it cannot exceed L1 bounds because the firmware
 also clamps on *duration*.
 
-### L4 — Plant profile
+### L3b — Persisted offline policy
+
+The Edge derives and validates a deliberately restricted per-plant policy from
+the L4 automation configuration, then publishes it retained on
+`rhizo/v1/devices/{device_id}/policy`. The device stages, validates, and
+atomically activates it. `enabled` defaults false; an absent, invalid, or
+unapplied policy grants no autonomous actuation permission. Desired/applied
+versions expose drift. See [offline-autonomy.md](offline-autonomy.md).
+
+### L4 — Per-plant bindings, measurement policies, and automation configuration
+
+The authoritative configuration is attached to the plant:
+
+- `SensorBinding[]` selects declared device sensor capabilities and assigns roles.
+- An optional `ActuatorBinding` selects the watering actuator; absence is a
+  normal monitoring-only plant.
+- `MeasurementPolicy[]` defines target, warning, critical, freshness,
+  hysteresis, and confirmation settings per measurement kind.
+- Automation configuration defines dose/cooldown/budget inputs, within L1.
+
+One plant may consume sensors from several devices, and one device may serve
+several plants. Warning/critical bands are observability inputs, not permission
+to actuate.
+
+### PlantProfile — reusable template, not an authority
 
 Stored in edge SQLite, editable through the API/UI, versioned by
-`updated_at`. Profiles are reusable across plants.
+`updated_at`. Profiles are reusable templates used to initialise per-plant L4
+configuration. Editing a template does not silently rewrite existing plants.
 
 ```yaml
 id: monstera_default
@@ -173,7 +201,7 @@ than silently clamped, so the operator learns the real limit).
 
 ```text
 plants.auto_watering_enabled   bool, operator-controlled, default false
-plants.profile_id              FK
+plants.profile_id              nullable template provenance
 plants.name, species, pot_volume_ml, soil_type
 plants.lockout_reason          set by the system, cleared explicitly
 ```
@@ -191,7 +219,9 @@ in to automation is an explicit act (SAFETY-012).
 | Pump calibration | ✓ | ✗ | ✓ (delivery) | ✗ | ✗ |
 | Telemetry interval | ✓ | ✗ | ✓ (delivery) | ✗ | ✗ |
 | Tank minimum | ✓ | ✗ | ✓ (delivery) | ✗ | ✗ |
-| Plant profile values | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Plant template values | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Bindings / measurement policies | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Offline policy | ✓ (intent) | ✗ | ✓ (`policy`, retained) | ✗ | ✗ |
 | Auto-watering on/off | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Broker URL, DB path | ✗ | ✓ | ✗ | ✗ | ✗ |
 | Cloud URL / enabled | ✗ | ✓ | ✗ | ✗ | ✗ |

@@ -40,8 +40,11 @@ Retry and backoff parameters: [ADR-014](../adr/014-failure-and-retry-policy.md).
 
 ### 1.3 QoS 1 duplicate delivery
 
-- **Detection:** `INSERT INTO processed_messages` affects 0 rows.
-- **Expected state:** message discarded before any effect. Transaction rolled back.
+- **Detection:** `processed_messages(message_id)` catches transport duplicates;
+  stable effect identity/order catches late logical replay after marker pruning.
+- **Expected state:** no logical effect is applied twice. Telemetry uses batch
+  sample identity, actuator state its persisted identity, command results
+  `command_id`, and offline events/gaps `event_id`.
 - **Recovery:** none needed.
 - **Data loss:** none.
 - **Safety:** ✅ SAFETY-001.
@@ -59,6 +62,14 @@ Retry and backoff parameters: [ADR-014](../adr/014-failure-and-retry-policy.md).
   device (it would expire unseen anyway).
 - **Observability:** `devices_online` / `devices_offline` gauges,
   `device_event(kind='offline')`.
+
+Status freshness is protected independently of transport markers. M3 persists a
+per-device `boot_generation`/`status_sequence` high-water plus the current-boot
+LWT identity. Replayed current-boot LWT, equivalent status with a new
+`message_id`, or a delayed older boot cannot regress state or refresh
+`last_seen_at`, including after marker pruning. A greater generation or greater
+same-boot sequence is eligible for M4 registry mutation. Every otherwise-valid
+status receipt still prompts M4's live, non-retained `edge.time` response.
 
 ### 1.5 Malformed payload
 

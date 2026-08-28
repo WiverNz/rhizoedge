@@ -3,7 +3,7 @@
 ## Status
 
 Accepted — 2026-08-25. Supersedes the "Dockerized web UI" assumption in the
-original implementation prompt. Implemented in M12.
+original implementation prompt. Planned for M12.
 
 ## Context
 

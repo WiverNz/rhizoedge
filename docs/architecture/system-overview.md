@@ -117,10 +117,11 @@ Any path that shortcuts this chain is a defect, not a feature.
 ## 5. Data flow in one sentence
 
 Devices publish telemetry over MQTT QoS 1; the Edge Controller validates,
-deduplicates by `message_id`, persists to SQLite in the same transaction that
-records the dedup key, updates plant state, evaluates safety and irrigation
-rules, may publish a bounded water command, records the result, and enqueues a
-cloud event in an outbox that drains opportunistically.
+transport-deduplicates by `message_id`, durably deduplicates/orders logical
+effects by stable identities, and persists them transactionally. M4–M7 extend
+that delivered M3 pipeline with registry/plant projections, connected safety and
+irrigation evaluation, persisted command publication, and an opportunistic cloud
+outbox; none of those future stages is implied to exist in M3.
 
 See [data-flow.md](data-flow.md) for the detailed pipeline.
 

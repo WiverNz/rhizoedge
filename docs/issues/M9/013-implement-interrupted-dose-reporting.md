@@ -21,7 +21,7 @@ Detect and report a dose interrupted by a restart.
 
 ## Non-goals
 
-- Edge-side handling, already implemented in M6-010.
+- Edge-side handling, planned in prerequisite M6-010.
 
 ## Dependencies
 

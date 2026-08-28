@@ -125,7 +125,7 @@ pub struct UtcMillis(pub i64);
 pub enum MessageKind { TelemetryBatch, ActuatorState, DeviceEvents,
                        DeviceStatus, DeviceConfig, DevicePolicy, EdgeTime,
                        CommandWater, CommandTare, CommandCalibrate,
-                       CommandResult }
+                       CommandResult, EventAck }
 
 pub struct Envelope<T> { /* protocol §4 fields */ }
 impl<T: Serialize + DeserializeOwned> Envelope<T> {
@@ -134,7 +134,7 @@ impl<T: Serialize + DeserializeOwned> Envelope<T> {
     pub fn check_identity(&self, topic_device: &DeviceId) -> Result<(), DecodeError>;
 }
 
-pub enum Topic { /* ten variants */ }
+pub enum Topic { /* twelve variants; see mqtt-v1.md §3 for the exhaustive list */ }
 impl Topic {
     pub fn to_string(&self) -> alloc::string::String;
     pub fn parse(topic: &str) -> Result<Topic, TopicError>;

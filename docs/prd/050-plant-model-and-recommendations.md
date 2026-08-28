@@ -89,7 +89,7 @@ operator waters by hand
 | F-050-01 | CRUD for plants; `auto_watering_enabled` defaults to **false** |
 | F-050-02 | CRUD for profiles; profiles are reusable across plants |
 | F-050-03 | Profile validation **rejects** rather than clamps: `target_min >= target_max`, `dose_ml × max_doses > max_daily_ml`, non-positive intervals, `dose_ml > FIRMWARE_MAX_ML_PER_RUN` |
-| F-050-04 | A plant references exactly one device; a device may serve several plants |
+| F-050-04 | A plant consumes `SensorBinding[]` from one or more devices; one device may serve several plants; an `ActuatorBinding` is optional |
 | F-050-05 | Deleting a plant preserves its `watering_events` history |
 
 ### Analysis
@@ -216,7 +216,7 @@ water".
 | Profile references a deleted device | plant surfaced with an error state; no crash |
 | Weight sensor absent | detection falls back to moisture only, with lower confidence |
 | Moisture jump caused by a command | attributed to the command, not double-counted as detected |
-| Two plants on one device | each evaluated independently against the same telemetry |
+| Shared or cross-device sensors | each plant resolves its own bindings and measurement policies independently |
 | Clock step | trend window shifts; handled by M6's clock-step lockout |
 
 ## Safety implications

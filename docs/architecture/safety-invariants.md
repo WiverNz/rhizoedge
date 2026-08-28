@@ -12,6 +12,14 @@ safety suite.
 **Status legend.** `PLANNED` — specified, not yet enforced. `ENFORCED` — code
 and test exist and are green.
 
+M2/M3 already provide tested enforcement points without completing the full
+end-to-end invariants: the simulator's single actuation path and shared command
+validator support SAFETY-001/-002/-007/-012; fail-closed persistent-state and
+policy mechanics support SAFETY-013/-015/-019/-020; and M3 supplies durable
+effect identity, status ordering, event replay, and history-gap persistence for
+SAFETY-001/-011/-016/-020. These rows remain `PLANNED` until every enforcement
+point named by the invariant exists; no M6/M9 work is claimed complete here.
+
 ---
 
 ## Summary table

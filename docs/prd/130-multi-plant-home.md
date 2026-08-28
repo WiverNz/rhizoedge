@@ -82,7 +82,7 @@ plant 7 leak detected → Lock(Leak) → notification dispatched
 | ID | Requirement |
 |---|---|
 | F-130-01 | ≥ 10 devices and ≥ 20 plants without architectural change |
-| F-130-02 | One device may serve several plants (the schema already allows it) |
+| F-130-02 | One device may serve several plants and one plant may bind sensor capabilities from several devices (ADR-016) |
 | F-130-03 | Per-plant irrigation state is fully independent |
 | F-130-04 | The control loop evaluates all plants within one tick period |
 | F-130-05 | One device's failure never affects another's plants |
@@ -145,6 +145,14 @@ a notification channel must not add a way for the control loop to block.
 | F-130-52 | Bulk automation enable/disable with a confirmation listing affected plants |
 | F-130-53 | Notification configuration |
 
+### Release and operations
+
+| ID | Requirement |
+|---|---|
+| F-130-60 | A `v*` tag runs release CI and publishes checksummed archives whose binaries report the tagged version |
+| F-130-61 | CI builds on the MSRV 1.98.0 and current stable so an accidental MSRV increase fails visibly |
+| F-130-62 | An opt-in `observability` Compose profile adds Prometheus/Grafana; no normal service or test depends on it and plant history remains in SQL storage |
+
 ## Interfaces
 
 ```text
@@ -188,13 +196,19 @@ CREATE TABLE notification_log (
 );
 
 CREATE TABLE measurements_hourly (
-    device_id TEXT NOT NULL, point TEXT NOT NULL,
+    device_id TEXT NOT NULL, sensor_id TEXT, point TEXT NOT NULL,
+    kind TEXT NOT NULL, unit TEXT NOT NULL,
     hour_start INTEGER NOT NULL,
-    moisture_vwc_avg REAL, moisture_vwc_min REAL, moisture_vwc_max REAL,
-    soil_temperature_c_avg REAL, ec_us_cm_avg REAL, sample_count INTEGER NOT NULL,
-    PRIMARY KEY (device_id, point, hour_start)
+    value_avg REAL, value_min REAL, value_max REAL,
+    true_count INTEGER, false_count INTEGER,
+    sample_count INTEGER NOT NULL,
+    PRIMARY KEY (device_id, sensor_id, point, kind, hour_start)
 );
 ```
+
+The aggregate remains keyed by measurement identity and kind, so adding a new
+`MeasurementKind` does not require adding columns. Aggregation fields apply by
+measurement class; incompatible values remain absent rather than coerced.
 
 `notification_log` exists so a missed alert can be distinguished from an alert
 that was never generated — the first is a delivery problem, the second is a
@@ -287,6 +301,9 @@ single-loop design needs revisiting.
 - [ ] Two devices on one reservoir: the lowest reading governs both.
 - [ ] 20 plants evaluate within one tick period.
 - [ ] The UI remains legible at 20 plants.
+- [ ] A `v*` tag produces checksummed downloadable archives with matching versions.
+- [ ] The MSRV/current-stable matrix catches an intentional post-MSRV language feature.
+- [ ] The complete system and M8 suite work with the observability profile disabled.
 
 ## Dependencies
 

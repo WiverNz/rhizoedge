@@ -135,9 +135,10 @@ Device config gains:
 
 ## Data model
 
-No schema change. `measurements.moisture_vwc`, `soil_temperature_c`, and
-`ec_us_cm` already exist, and `point` is already reserved for
-multi-probe use ([ADR-004](../adr/004-sqlite-edge-persistence-model.md)).
+No measurement-table shape change. M3 already stores narrow typed rows using
+`MeasurementKind`, `point`, numeric/boolean value, canonical `unit`, `quality`,
+sensor identity, and `calibration_ref`; `point` supports multi-probe use
+([ADR-004](../adr/004-sqlite-edge-persistence-model.md)).
 
 Calibration lives in device config, not in the database, because it is a
 property of the physical installation and must survive an edge rebuild.

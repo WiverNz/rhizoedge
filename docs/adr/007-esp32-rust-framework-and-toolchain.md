@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-25. Implemented in M9. **Toolchain commands verified against
+Accepted — 2026-08-25. Planned for M9. **Toolchain commands verified against
 upstream documentation on 2026-08-25; re-verify at the start of M9 (issue
 M9-001).** The firmware Rust version is an explicit exception to the host
 workspace's 1.98.0 pin — see "Rust version: the embedded toolchain exception".

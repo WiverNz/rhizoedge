@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-25. Implemented in M6.
+Accepted — 2026-08-25. Planned for M6.
 
 **Amended 2026-08-26 by [ADR-015](015-device-offline-autonomy.md).** The
 "device has no irrigation intelligence" claim below is corrected: a device

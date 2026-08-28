@@ -12,9 +12,9 @@ READY and has not started.**
 | | State |
 |---|---|
 | Planning artefacts | ✅ complete; revised by the 2026-08-26 architecture pass |
-| M0 milestone | ✅ **DONE** — implemented, verified, committed (`8fba4e7`) |
+| M0 milestone | ✅ **DONE** — report in [docs/reports/M0.md](docs/reports/M0.md) |
 | Architecture pass | ✅ done — offline autonomy, per-plant policy, extensible measurements (see §11) |
-| M1 | 19 issues, **DONE** |
+| M1 | 19 issues, **DONE** — report in [docs/reports/M1.md](docs/reports/M1.md) |
 | M2 | 19 issues, **DONE** — report in [docs/reports/M2.md](docs/reports/M2.md) |
 | Protocol seam cleanup | ✅ done (2026-08-28) — exact device subscriptions, `event.ack`, sealed gap markers; report in [docs/reports/M2.md](docs/reports/M2.md) §Amendment |
 | M3 | 18 issues, **DONE** — report in [docs/reports/M3.md](docs/reports/M3.md) |
@@ -111,16 +111,16 @@ docs/
 ├── Rhizo_Edge_*.md    historical source material (see §7)
 ├── architecture/      9 docs: overview, components, data flow, deployment,
 │                      safety invariants, failure model, time, config, deps
-├── adr/               ADR-001…014 — why each decision was made
+├── adr/               ADR-001…017 — why each decision was made
 ├── prd/               PRD 000…140 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
 ├── testing/           strategy, 72 scenarios, simulator, HIL, local dev
-└── issues/M0…M14/     204 implementation issues
+└── issues/M0…M14/     239 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
 
 Cargo.toml             root workspace (M0-002)
-crates/                nine crate stubs, empty but building:
+crates/                nine implemented/building workspace crates:
                        mqtt-contract, domain, storage, telemetry, cloud-client,
                        testkit, edge-controller, device-simulator, cloud-api
 deploy/ migrations/ scripts/ test/            skeleton, .gitkeep only
@@ -148,8 +148,9 @@ read the relevant section before adding code to a crate.
   downgraded to match it.
 - **`rhizo-domain` is pure.** No I/O, no `Utc::now()`. Clippy enforces the clock
   ban from M1-013 onward.
-- **`rhizo-mqtt-contract` is `no_std`.** It is the only crate shared with the
-  firmware. A `std`-only dependency there breaks the ESP32 build invisibly.
+- **`rhizo-mqtt-contract` and `rhizo-policy` are `no_std`.** They are the two
+  firmware-facing shared crates. A `std`-only dependency in either breaks the
+  ESP32 build invisibly; verify both bare-metal targets in the project gate.
 - **One actuation gate.** `validate_water_command` lives in the contract crate;
   the simulator and the firmware each call it from exactly one place. A second
   implementation of the rules makes every simulator-based safety test worthless.
@@ -189,6 +190,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
 cargo run -p rhizo-docscheck
 ```

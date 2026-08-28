@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-25. Implemented in M7.
+Accepted — 2026-08-25. Planned for M7.
 
 **Extended 2026-08-26.** The event catalogue gains offline-autonomy kinds, and
 the cloud `measurements` projection follows the narrow typed-kind shape

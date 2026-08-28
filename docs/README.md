@@ -1,7 +1,7 @@
 # Rhizo Edge — Documentation Index
 
 Everything needed to implement Rhizo Edge without rediscovering the
-architecture. **M0 is complete. M1 has not started.**
+architecture. **M0–M3 are complete. M4 is READY; M4-001 is next.**
 
 > An architecture pass on 2026-08-26 added device offline autonomy
 > ([ADR-015](adr/015-device-offline-autonomy.md)), the per-plant binding and
@@ -125,7 +125,7 @@ One PRD per milestone.
 
 ## Implementation issues
 
-204 issues across 15 milestones, each with context, scope, dependencies,
+239 issues across 15 milestones, each with context, scope, dependencies,
 acceptance criteria, and verification commands.
 
 | Milestone | Issues | Subject |

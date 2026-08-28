@@ -17,7 +17,8 @@ Mark devices offline correctly when the broker publishes their will.
 - Recognise `status: offline` with `reason: connection_lost`
 - Mark the device offline and freeze `last_seen_at`
 - Record an `offline` device event
-- Tolerate a repeated LWT `message_id` via the existing dedup path
+- Tolerate a repeated LWT through M3's transport fast path and durable
+  current-boot LWT identity
 - Distinguish `connection_lost` from `shutdown`
 
 ## Non-goals
@@ -30,9 +31,11 @@ Mark devices offline correctly when the broker publishes their will.
 
 ## Implementation notes
 
-The repeated-`message_id` case is handled correctly by M3-008's dedup: the
-second delivery is a duplicate and is ignored, which is the right outcome. Add a
-test making that explicit rather than leaving it as an inference.
+M3 owns both cases: an immediate repeated `message_id` hits the transport fast
+path, while replay after marker pruning is rejected by
+`status_lwt_message_id` for the current `boot_generation`. Neither may produce
+a second transition or refresh `last_seen_at`; M4 consumes that persistence
+outcome rather than reimplementing ordering.
 
 `shutdown` is a clean disconnect and is informational; `connection_lost` is
 worth a warning.

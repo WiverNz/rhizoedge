@@ -85,7 +85,7 @@ edge publishes command.water
 | F-090-01 | Own Cargo workspace, own `rust-toolchain.toml`, excluded from the root workspace. Pins **1.98.0 where the Espressif ecosystem supports it**; otherwise the ESP-compatible toolchain, recorded in [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md). The host workspace is never downgraded to match. |
 | F-090-02 | Target `riscv32imc-esp-espidf`; `esp-idf-svc` / `esp-idf-hal` pinned to exact versions |
 | F-090-03 | `cargo build --release` succeeds **with no board attached** |
-| F-090-04 | `rhizo-mqtt-contract` depended on by **path**, `default-features = false` |
+| F-090-04 | `rhizo-mqtt-contract` and `rhizo-policy` depended on by **path**, `default-features = false` |
 | F-090-05 | Build and flash instructions **verified by executing them**, including on Windows; [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md) corrected from what actually happens |
 | F-090-06 | CI job builds the firmware on changes to `firmware/**` or `crates/mqtt-contract/**` |
 
@@ -186,6 +186,13 @@ namespace "rhizo"
   cmd_ring             blob (16 × { command_id, outcome })
   in_flight_dose       blob (command_id, started_at, requested_ml) | absent
   pending_result       blob | absent
+  boot_generation      u64 (monotonic across reboot for status ordering)
+  policy_active        blob (versioned, validated, checksummed) | absent
+  policy_staging       blob + checksum | absent
+  offline_runtime      blob (budget/cooldown/last action, conservative across reboot)
+  event_buffer         bounded tiered audit/telemetry records
+  gap_state            mutable unsent gap or sealed replay marker
+  replay_ack           boot id + highest acknowledged device sequence
 ```
 
 Deliberately identical in content to the simulator's state file
@@ -203,7 +210,7 @@ Running:
    telemetry timer  → sample sensors → publish
    command received → validate → (actuate | reject) → publish result
    config received  → validate → apply → persist → status
-   edge.time        → if >= last applied → set clock, stamp monotonic, status
+   edge.time        → if strictly newer → set clock, stamp monotonic, status
 
 Pump: Idle ──► Running(command_id, deadline) ──► Idle
                     │
@@ -223,11 +230,11 @@ degraded sensor.
 
 | Failure | Behaviour |
 |---|---|
-| Wi-Fi unavailable | keep sampling, retry with backoff, pump stays off; no autonomous watering |
+| Wi-Fi unavailable | keep sampling and buffering; retry with backoff; a validated enabled persisted policy may drive only the restricted shared offline evaluator, otherwise no autonomous actuation |
 | `edge.time` never received | telemetry continues; **every** water command refused with `clock_unsynced`; status republished at a bounded rate so the edge retries |
 | `edge.time` stops arriving | `clock_synced` ages out after `TIME_SYNC_MAX_AGE_SECONDS`; commands refused from that point; monitoring unaffected |
 | MQTT broker down | reconnect; telemetry ring caps at 16 samples |
-| NVS corrupt | start with defaults, log, publish a `nvs_reset` event — a corrupt store must not block boot but must not be trusted |
+| Safety-critical NVS corrupt | fail closed and report the fault; do not activate defaults, clear dedup uncertainty, replenish budget, shorten cooldown, erase in-flight ambiguity, or grant actuation permission |
 | NVS write fails before actuation | **abort the dose**; report `failed`. Never actuate without a durable record. |
 | Power loss mid-dose | boot → pump off → report `interrupted` |
 | Watchdog reset | same |
@@ -304,6 +311,12 @@ With a board attached: HIL-1 and HIL-2 from
       resets, a watchdog reset, and 10 mid-boot power cuts.
 - [ ] **With a board:** withholding `edge.time` causes every water command to be
       refused while telemetry continues.
+- [ ] Offline policy staging/activation is atomic and a corrupt update never
+      replaces the last valid policy.
+- [ ] The sole firmware `evaluate_offline` call site uses persisted conservative
+      budget/cooldown state and still routes any dose through the shared actuation gate.
+- [ ] Audit events, sealed history gaps, replay progress, and cumulative
+      `event.ack` handling survive reboot with stable `event_id` values.
 
 The board-dependent criteria are marked so the milestone can be substantially
 completed and reviewed before hardware arrives.

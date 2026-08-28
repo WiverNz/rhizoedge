@@ -6,8 +6,9 @@ independently and interoperate.
 
 **Conformance language:** MUST / MUST NOT / SHOULD / MAY as in RFC 2119.
 
-> **Revised 2026-08-26, before any implementation.** M1 had not started, so v1
-> was still unwritten and no compatibility was owed. Three changes:
+> **Revised 2026-08-26, before implementation.** At the time this revision was
+> accepted, M1 had not started, so v1 was still unwritten and no compatibility
+> was owed. Three changes:
 > the four `telemetry/*` topics became one batched `telemetry` topic carrying
 > typed measurement samples plus a separate `actuator` state topic
 > ([ADR-017](../adr/017-extensible-measurement-model.md)); a retained `policy`
@@ -199,7 +200,7 @@ Every payload on every topic is a JSON object with this envelope:
 |---|---|---|---|
 | `v` | integer | yes | MUST be `1`. A receiver MUST reject any other value. |
 | `kind` | string | yes | see §5; MUST match the topic |
-| `message_id` | UUID string | yes | **UUIDv7**; globally unique; the deduplication key |
+| `message_id` | UUID string | yes | **UUIDv7**; globally unique transport identity |
 | `device_id` | string | yes | MUST equal the `device_id` in the topic |
 | `boot_id` | UUID string | yes for device→edge | regenerated at every device boot |
 | `sequence` | integer ≥ 0 | yes for device→edge | monotonically increasing within a `boot_id` |
@@ -1131,8 +1132,8 @@ actuate.
 `(device_id, boot_id, sequence)` MUST NOT be used as a dedup key. It is used
 only to detect gaps and regressions, which are recorded as diagnostic events.
 
-**Replayed offline events** (§5.4) deduplicate on their device-generated
-`event_id` through the same `processed_messages` transaction. The device MUST
+**Replayed offline events** (§5.4) deduplicate durably on their device-generated
+`event_id` inside the same transaction as the bounded transport marker. The device MUST
 generate each `event_id` once, at buffering time, and MUST NOT regenerate it on
 replay — a regenerated id would defeat deduplication and create duplicate
 watering history (SAFETY-016).

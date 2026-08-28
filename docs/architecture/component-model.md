@@ -29,17 +29,19 @@ Rationale for these boundaries is in [ADR-001](../adr/001-rust-workspace-and-cra
 
 ## 2. `rhizo-mqtt-contract` — the shared wire contract
 
-**The single most important crate in the project.** It is the only code shared
-between the Edge Controller, the Device Simulator, and the ESP32 firmware.
+One of two firmware-facing shared crates. `rhizo-mqtt-contract` is shared by the
+Edge Controller, Device Simulator, and ESP32 firmware; `rhizo-policy` is the
+second shared crate and owns the restricted offline evaluator.
 
 Owns:
 
 - the message envelope type and its JSON representation
-- all telemetry, status, config, command, and command-result payload types
+- all v1 wire payloads, including telemetry, actuator state, status, config,
+  policy, time, commands/results, offline events, and event acknowledgements
 - topic grammar: building and parsing `rhizo/v1/...` topics
 - `DeviceId` newtype and its validation grammar
 - protocol version constant and compatibility rules
-- physical range constants used for validation (`MOISTURE_VWC_RANGE`, etc.)
+- hard limits, measurement metadata, and the shared commanded-actuation validator
 
 Constraints:
 
@@ -55,46 +57,9 @@ Must never:
 - depend on `rhizo-domain` (the dependency runs the other way)
 - contain business rules such as "when to water"
 
-Public surface sketch:
-
-```rust
-pub const PROTOCOL_VERSION: u16 = 1;
-
-pub struct DeviceId(/* validated, ≤32 bytes */);
-pub struct UtcMillis(pub i64);
-
-pub struct Envelope<T> {
-    pub v: u16,
-    pub kind: MessageKind,
-    pub message_id: Uuid,      // UUIDv7
-    pub device_id: DeviceId,
-    pub boot_id: Uuid,
-    pub sequence: u64,
-    pub device_time: Option<UtcMillis>,
-    pub clock_synced: bool,
-    pub data: T,
-}
-
-pub enum Topic {
-    TelemetrySoil(DeviceId),
-    TelemetryWeight(DeviceId),
-    TelemetryTank(DeviceId),
-    TelemetryPump(DeviceId),
-    Status(DeviceId),
-    Config(DeviceId),
-    CommandWater(DeviceId),
-    CommandTare(DeviceId),
-    CommandCalibrate(DeviceId),
-    CommandResult(DeviceId),
-}
-
-impl Topic {
-    pub fn to_string(&self) -> alloc::string::String;
-    pub fn parse(topic: &str) -> Result<Topic, TopicError>;
-}
-```
-
-Full specification: [docs/protocol/mqtt-v1.md](../protocol/mqtt-v1.md).
+The exhaustive `Topic` and `MessageKind` definitions deliberately live in the
+contract and its normative specification rather than being copied here. See
+[mqtt-v1.md §3](../protocol/mqtt-v1.md#3-topic-hierarchy).
 
 ---
 
@@ -248,7 +213,9 @@ Owns:
 Must never:
 
 - be more permissive than the firmware
-- implement irrigation intelligence (that is the Edge Controller's job)
+- implement its own irrigation rules. While connected, decisions belong to the
+  Edge. M6 installs exactly one simulator call site for the shared restricted
+  `rhizo_policy::evaluate_offline` evaluator used only while isolated.
 
 The shared refusal logic lives in `rhizo-mqtt-contract` (as
 `validate_water_command`) so both the simulator and the firmware call the same
@@ -258,17 +225,20 @@ function. This is the mechanism that makes SAFETY-007 testable before hardware.
 
 ## 7. `edge-controller` — the control plane
 
-The only component that decides. Structured as cooperating Tokio tasks:
+Owns connected-mode and rich plant decisions. An isolated device may execute
+only the persisted restricted offline policy; every actuation still ends at the
+device's hardware safety veto. The controller is structured as cooperating
+Tokio tasks, delivered by milestone:
 
 | Task | Responsibility |
 |---|---|
-| `mqtt_ingress` | rumqttc event loop, decode, hand off to pipeline |
-| `pipeline` | validate → dedup → persist → update state → emit events |
-| `control_loop` | periodic tick: evaluate irrigation for every plant |
-| `command_dispatch` | publish water commands, track in-flight, apply TTL |
-| `api` | Axum REST server |
-| `outbox_drain` | ship cloud events with backoff; never blocks control |
-| `retention` | prune `processed_messages` and old measurements |
+| `mqtt_ingress` | M3: rumqttc event loop, decode, hand off to pipeline |
+| `pipeline` | M3: validate → layered dedup/order → transactional persistence |
+| `retention` | M3: bounded pruning of transport markers and raw measurements |
+| registry/API | M4: registry projections, health, time response, REST |
+| plant/recommendation | M5: bindings, policies, derived plant state |
+| `control_loop` / command dispatch | M6: evaluate, persist, publish, reconcile |
+| `outbox_drain` | M7: ship cloud events; never blocks control |
 
 Owns:
 
@@ -342,7 +312,8 @@ Owns:
 - command TTL validation, command deduplication across reboot
 - boot-safe state: pump off before anything else initialises
 
-Shares `rhizo-mqtt-contract` with `default-features = false`.
+Shares both `rhizo-mqtt-contract` and `rhizo-policy` with
+`default-features = false`; the latter is integrated in M9.
 
 Must never:
 

@@ -125,7 +125,8 @@ One message per sampling cycle instead of four. Consequences that matter:
 Actuator state moves to its own `actuator` topic because it is state, not a
 measurement, and conflating them was a modelling error in the original design.
 
-**This is a v1 change made before v1 exists.** M1 has not started, so nothing is
+**This was a v1 change made before v1 existed.** At the time this ADR was
+accepted, M1 had not started, so nothing was
 deployed and no compatibility is owed. See §Protocol version below.
 
 ### Storage: a narrow typed-kind table

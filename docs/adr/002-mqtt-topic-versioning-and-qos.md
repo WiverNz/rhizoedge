@@ -132,16 +132,31 @@ Every payload is an envelope with a typed `data` field:
 ```json
 {
   "v": 1,
-  "kind": "telemetry.soil",
+  "kind": "telemetry.batch",
   "message_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a20",
   "device_id": "plant-node-01",
   "boot_id": "018fd6b0-1122-7000-8000-aabbccddeeff",
   "sequence": 81273,
   "device_time_ms": 1756121400000,
   "clock_synced": true,
-  "data": { "moisture_vwc": 31.7, "temperature_c": 21.4, "ec_us_cm": 840 }
+  "data": {
+    "batch_id": "018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a21",
+    "samples": [
+      {
+        "point": "default",
+        "kind": "soil_moisture",
+        "value": 31.7,
+        "unit": "vwc_percent",
+        "quality": "ok",
+        "sensor_id": "soil-0"
+      }
+    ]
+  }
 }
 ```
+
+The current exhaustive envelope and payload contract is maintained in
+[mqtt-v1.md](../protocol/mqtt-v1.md); this ADR keeps only one compact example.
 
 - **`message_id` is a UUIDv7** — time-ordered, so it sorts usefully as a
   primary key and gives a cheap sanity check on device clocks, unlike UUIDv4.

@@ -113,6 +113,8 @@ a pump to a program, and the limits should be visible at that moment.
 | F-120-15 | Profile editor with **client-side validation mirroring the server's**, and server 422 errors rendered specifically |
 | F-120-16 | Events view: device events with severity |
 | F-120-17 | Sync view: pending count, last success, quarantined events |
+| F-120-18 | Binding editor supports sensor roles and only declared capabilities; an optional actuator binding makes monitoring-only plants first class |
+| F-120-19 | Per-measurement policies expose target, warning, critical, freshness, hysteresis, and confirmation settings without treating alert bands as actuation rules |
 
 ### Safety presentation
 
@@ -136,6 +138,9 @@ a pump to a program, and the limits should be visible at that moment.
 | F-120-32 | Edge base URL configurable and persisted |
 | F-120-33 | Connection loss shows a clear banner and stops silently retrying forever |
 | F-120-34 | No MQTT client dependency — the shortcut must not compile |
+| F-120-35 | Connectivity shows connected/isolated/reconciling, desired/applied offline-policy versions, and whether autonomous control is enabled |
+| F-120-36 | Offline events and history gaps are visible; charts render reported gaps as gaps rather than interpolation |
+| F-120-37 | A monitoring-only plant renders no watering controls |
 
 ## Interfaces
 
@@ -245,6 +250,12 @@ project excludes ([strategy.md](../testing/strategy.md) §11).
       `rhizo-domain` dependency.
 - [ ] Charts render moisture, EC, and weight with the target band and watering
       markers, in inline SVG.
+- [ ] Operators can edit bindings/roles and per-measurement policies, including
+      warning/critical/target bands and offline automation enable/disable.
+- [ ] Connectivity, reconciliation state, desired/applied policy versions,
+      autonomous offline events, and history gaps are represented accurately.
+- [ ] A monitoring-only plant has no watering UI, and charts do not interpolate
+      across a reported history gap.
 
 ## Dependencies
 

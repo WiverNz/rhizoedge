@@ -86,6 +86,8 @@ developer / CI
 | F-080-20 | All `e2e` scenarios: SCEN-002, -011, -012, -022, -023, -025, -031, -040, -042, -044, -051, -060, -061, -062 |
 | F-080-21 | The project-plan §46 demo implemented as `scenario_first_demo` |
 | F-080-22 | Each scenario names the invariants it proves in its test name or metadata |
+| F-080-23 | M8-015 covers device isolation with enabled/disabled/invalid policy, stale inputs, monotonic cooldown/budget, and bounded autonomous dosing |
+| F-080-24 | M8-016 covers reconnect replay, exact-once `event_id` reconciliation, sealed gaps, lost-ACK replay, and command suppression until reconciliation completes |
 
 ## Interfaces
 
@@ -212,6 +214,8 @@ This table is how M8 proves it is not.
 - [ ] CI runs the suite on every change to `crates/**` or `deploy/**`.
 - [ ] A failing scenario prints database state and MQTT traffic, not just an
       assertion message.
+- [ ] Device-isolation and reconciliation scenarios from M8-015/M8-016 pass and
+      re-verify the applicable SAFETY-013…020 invariants.
 
 ## Dependencies
 

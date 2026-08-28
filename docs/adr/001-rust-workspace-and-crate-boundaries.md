@@ -113,9 +113,10 @@ in the ESP-IDF build script for every developer including those who never touch
 hardware. The `exclude` approach costs one extra CI job and buys a workspace
 that behaves normally.
 
-**A single `rhizo-core` crate instead of `mqtt-contract` + `domain`.** Rejected:
-the firmware needs the wire types but must not receive the irrigation engine —
-it deliberately contains no irrigation intelligence. Merging them would either
+**A single `rhizo-core` crate instead of focused shared crates.** Rejected: the
+firmware needs wire types and the deliberately restricted `rhizo-policy`
+offline evaluator, but must not receive the rich connected-mode irrigation and
+recommendation engine. Merging them would either
 push `std`-only logic into the firmware or force the whole domain to be
 `no_std`, which would make the recommendation engine painful to write for no
 benefit.

@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted — 2026-08-25. Implemented across M1 (representation), M3 (stamping),
-M6 (staleness, TTL, rolling window).
+Accepted — 2026-08-25. Implemented in M1 (representation) and M3 (stamping);
+remaining staleness, TTL, and rolling-window enforcement is planned for M6.
 
 **Extended 2026-08-26** with two additions required by device offline autonomy
 ([ADR-015](015-device-offline-autonomy.md)): devices obtain wall time **from the

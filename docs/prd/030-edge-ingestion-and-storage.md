@@ -1,6 +1,6 @@
 # PRD 030 — Edge Ingestion and Storage
 
-**Milestone:** M3 · **Status:** PLANNED · **Depends on:** M1, M2
+**Milestone:** M3 · **Status:** DELIVERED · **Depends on:** M1, M2
 
 > **Revised 2026-08-26.** The `measurements` table is now **narrow and
 > typed-kind** rather than wide columns
@@ -9,9 +9,10 @@
 > reported history gaps. Ingestion additionally handles replayed offline events
 > idempotently. Issues M3-016 and M3-017 were added; M3-003 and M3-009 expanded.
 >
-> The deduplicate-and-persist transaction is unchanged and is exactly what makes
-> replay safe: a replayed batch deduplicates on the device-generated `event_id`
-> through the same mechanism that protects live telemetry.
+> The transaction remains the crash-safety boundary. Transport delivery is
+> deduplicated by `message_id`; durable logical effects additionally use stable
+> identities (`batch_id` plus sample index, actuator message identity,
+> `command_id`, `event_id`) or the bounded status-order projection.
 >
 > **Additional acceptance criteria:** one sampling cycle produces rows sharing a
 > `batch_id`; a replayed batch ingested three times creates one row per
@@ -88,9 +89,9 @@ start → run migrations (Fatal on failure) → open pool (WAL)
 
 | ID | Requirement |
 |---|---|
-| F-030-20 | `INSERT INTO processed_messages … ON CONFLICT DO NOTHING`; 0 rows affected ⇒ duplicate |
-| F-030-21 | **The dedup marker and every effect share one transaction.** Rollback on duplicate applies nothing. |
-| F-030-22 | Dedup key is `message_id` alone |
+| F-030-20 | `processed_messages(message_id)` is the bounded transport fast path; a conflict is a transport duplicate |
+| F-030-21 | **The transport marker and every effect share one transaction.** Rollback applies nothing. |
+| F-030-22 | Durable effects remain idempotent after marker pruning: telemetry uses `(device_id, batch_id, sample_index)`, actuator state its persisted message identity, command results `command_id`, offline events/gaps `event_id`, and status the per-device boot/sequence/LWT projection |
 | F-030-23 | All writes flow through the single pipeline task |
 | F-030-24 | `SQLITE_BUSY` retried 3× with 50/100/200 ms jitter, then a clean failure that leaves the message unprocessed |
 | F-030-25 | WAL, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON` |
@@ -126,7 +127,7 @@ impl EdgeDb {
 
 pub struct Ingest<'t>(&'t mut Transaction<'t>);
 impl<'t> Ingest<'t> {
-    /// Returns Duplicate without applying anything if message_id was seen.
+    /// Returns Duplicate when the bounded transport marker was already seen.
     pub async fn mark_processed(&mut self, id: Uuid, device: &DeviceId, kind: MessageKind)
         -> Result<Dedup, StorageError>;
     pub async fn insert_measurement(&mut self, m: &MeasurementRow) -> Result<(), StorageError>;
@@ -143,10 +144,13 @@ No HTTP interface yet — the read API is M4.
 ## Data model
 
 Exactly the schema in [ADR-004](../adr/004-sqlite-edge-persistence-model.md).
-M3 creates all tables (so later milestones add rows rather than migrations
-during feature work) but only populates `devices`, `measurements`,
-`device_events`, `processed_messages`, `quarantined_messages`, and
-`pending_cloud_events`.
+M3 creates the ADR-004 baseline in `0001_initial.sql` and populates the ingestion
+tables, including `measurements`, `actuator_states`, `command_results`,
+`device_events`, `history_gaps`, `replay_progress`, `processed_messages`, and
+`quarantined_messages`. `0002_late_replay_effect_identity.sql` adds stable
+telemetry sample identity and `command_id` uniqueness. `0003_status_order.sql`
+adds `status_boot_generation`, `status_sequence`, and
+`status_lwt_message_id` to the bounded per-device status projection.
 
 Indexes that matter for M3:
 
@@ -185,7 +189,7 @@ must demonstrate:
 |---|---|
 | Broker down at startup | edge starts; `/health/ready` not ready (endpoint lands in M4); reconnect loop runs |
 | Broker restart | reconnect **and re-subscribe**; retained messages redelivered |
-| Duplicate QoS 1 | rolled back, counted, no effect |
+| Duplicate QoS 1 | transport duplicate is counted; stable effect identity/order also makes a late replay a no-op after marker pruning |
 | Malformed payload | quarantined, pipeline continues |
 | One bad field | stored as NULL, message kept |
 | `SQLITE_BUSY` | retried, then the message is left unprocessed for redelivery |
@@ -242,20 +246,20 @@ counters.
 
 ## Acceptance criteria
 
-- [ ] Simulator telemetry appears in `measurements` with `received_at` set from
+- [x] Simulator telemetry appears in `measurements` with `received_at` set from
       the edge clock.
-- [ ] Publishing the same `message_id` twice produces one row and increments
+- [x] Publishing the same `message_id` twice produces one row and increments
       `mqtt_duplicate_messages_total`.
-- [ ] Restarting the edge preserves all history; the device registry is restored
+- [x] Restarting the edge preserves all history; persisted device state is restored
       from SQLite.
-- [ ] Restarting Mosquitto results in reconnection **and** re-subscription;
+- [x] Restarting Mosquitto results in reconnection **and** re-subscription;
       telemetry resumes without operator action.
-- [ ] A batch with one out-of-range soil-moisture sample stores that sample's
+- [x] A batch with one out-of-range soil-moisture sample stores that sample's
       value columns as NULL, preserves valid sibling rows, and records a
       `sensor_invalid` event.
-- [ ] Invalid JSON is quarantined and the next valid message is processed.
-- [ ] `SIGTERM` shuts down cleanly with exit 0 and no partial transaction.
-- [ ] A forced panic in the pipeline task exits the process non-zero.
+- [x] Invalid JSON is quarantined and the next valid message is processed.
+- [x] Graceful shutdown drains to a bounded transaction boundary with no partial transaction.
+- [x] A forced panic in a supervised task exits the process non-zero.
 
 ## Dependencies
 

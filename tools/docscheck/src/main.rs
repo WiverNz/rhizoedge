@@ -96,6 +96,7 @@ fn main() {
 
     check_required_files(&root, &mut r);
     check_roadmap(&root, &issues, &mut r);
+    check_prd_milestone_statuses(&root, &mut r);
     check_status_summary(&root, &mut r);
     check_starting_point(&root, &issues, &mut r);
     check_references(&root, &docs, &issues, &adrs, &prds, &safety, &scen, &mut r);
@@ -420,6 +421,49 @@ fn milestone_status(txt: &str, m: usize) -> Option<String> {
                 .trim_matches('*')
                 .to_string()
         })
+}
+
+/// Completed ROADMAP milestones must not leave their milestone PRD labelled
+/// PLANNED. Future milestones remain planning artefacts and are not forced to a
+/// particular pre-implementation vocabulary here.
+fn check_prd_milestone_statuses(root: &Path, r: &mut Report) {
+    let roadmap = read(&root.join("ROADMAP.md"));
+    let Ok(entries) = fs::read_dir(root.join("docs/prd")) else {
+        return;
+    };
+    for path in entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+    {
+        let txt = read(&path);
+        let Some(header) = txt
+            .lines()
+            .find(|line| line.starts_with("**Milestone:** M"))
+        else {
+            continue;
+        };
+        let Some(number) = header
+            .strip_prefix("**Milestone:** M")
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|n| n.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        if milestone_status(&roadmap, number).as_deref() == Some("DONE") {
+            r.check(
+                completed_prd_status(header),
+                format!(
+                    "{}: M{number} is DONE in ROADMAP.md but its PRD status is not DELIVERED/IMPLEMENTED",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("PRD")
+                ),
+            );
+        }
+    }
+}
+
+fn completed_prd_status(header: &str) -> bool {
+    header.contains("**Status:** DELIVERED") || header.contains("**Status:** IMPLEMENTED")
 }
 
 /// The one-line implementation-status summary near the top of the ROADMAP is
@@ -811,5 +855,23 @@ fn parse_issue_id(tok: &str) -> Option<(usize, String)> {
         Some((ms, num))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completed_prd_status;
+
+    #[test]
+    fn completed_prd_status_accepts_project_vocabulary_only() {
+        assert!(completed_prd_status(
+            "**Milestone:** M3 · **Status:** DELIVERED · **Depends on:** M1, M2"
+        ));
+        assert!(completed_prd_status(
+            "**Milestone:** M1 · **Status:** IMPLEMENTED · **Depends on:** M0"
+        ));
+        assert!(!completed_prd_status(
+            "**Milestone:** M3 · **Status:** PLANNED · **Depends on:** M1, M2"
+        ));
     }
 }

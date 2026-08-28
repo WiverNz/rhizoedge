@@ -205,7 +205,8 @@ M0-013 + M1-019 ──→ M3-001 (edge binary + supervisor)
                                       ├──→ M3-010 (latest-sample cache)
                                       ├──→ M3-011 (metrics, + M0-006) ──→ M3-012
                                       ├──→ M3-014 (graceful shutdown)      (cardinality)
-                                      └──→ M3-015 (retention)
+                                      ├──→ M3-015 (retention)
+                                      └──→ M3-016 (offline event replay) ──→ M3-017 (history gaps)
                                  all ──→ M3-018 (verification)
 ```
 
@@ -229,6 +230,7 @@ M3-018 ──→ M4-001 (apply ingested status to registry)
 
    M4-004 + M4-005 + M4-006 ──→ M4-008 (device REST) ──→ M4-009 (API server + CORS)
    M4-004 + M3-011 ──────────→ M4-010 (device metrics)
+   M4-001 ──→ M4-011 (declared capabilities) ──→ M4-012 (connectivity mode)
                         all ──→ M4-013 (verification)
 ```
 
@@ -284,6 +286,9 @@ M5-017 ──→ M6-001 (IrrigationInputs / IrrigationDecision)
                      M6-006 + M3-011 ──→ M6-014 (control metrics)
 
         M6-017 + M6-012 + M6-015 ──→ M6-018 (safety property tests)
+        M6-002 + M6-006 + M2-017 ──→ M6-019 (shared offline evaluator)
+        M3-016 + M6-019 ───────────→ M6-020 (offline reconciliation)
+        M6-019 + M6-020 ───────────→ M6-021 (offline safety properties)
                                 all ──→ M6-022 (verification)
 ```
 
@@ -337,6 +342,8 @@ M7-015 ──→ M8-001 (Dockerfiles) ──→ M8-002 (compose topology) ──
                               M8-006 + M8-011 ──→ M8-012 (first demo)
                                                      ├──→ M8-013 (mutation verification)
                                                      └──→ M8-014 (e2e CI job)
+  M6-019 + M6-021 ──→ M8-015 (device-isolation scenarios)
+  M6-019 + M6-020 + M6-021 ──→ M8-016 (reconciliation scenarios)
                                                  all ──→ M8-017 (verification)
 ```
 
@@ -577,7 +584,7 @@ M0-001 → M0-002 → M0-003 → M0-012 → M0-013
        → M8-001 → M8-002 → M8-003 → M8-004 → M8-005 → M8-006 → M8-012 → M8-017
 ```
 
-Roughly 60 issues on the critical path out of 146 in M0–M8. The remainder are
+Roughly 60 issues on the critical path out of 153 in M0–M8. The remainder are
 parallelisable, concentrated in M4 (health checks), M8 (scenarios), and the pure
 domain functions of M5.
 

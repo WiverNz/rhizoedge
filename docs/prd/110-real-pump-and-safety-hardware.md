@@ -67,7 +67,7 @@ Every stage gates the next. See
 
 | ID | Requirement |
 |---|---|
-| F-110-10 | `command.calibrate` runs the pump for a fixed duration |
+| F-110-10 | `command.calibrate` maps duration to requested/effective volume and runs only after the same full shared device actuation gate used by watering; it has no bypass or subset validator |
 | F-110-11 | Five runs, mean and standard deviation recorded |
 | F-110-12 | `ml_per_second` stored in device config, versioned |
 | F-110-13 | Accepted only if σ < 5 % of the mean; higher variance is a wiring or hardware problem, not a number to average |
