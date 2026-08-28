@@ -1,6 +1,8 @@
 //! Decode, validate, and transactionally persist inbound device messages.
 mod quarantine;
-use crate::{metrics::Metrics, mqtt::ingress::Inbound, state::cache::LatestSampleCache};
+use crate::{
+    error::EdgeError, metrics::Metrics, mqtt::ingress::Inbound, state::cache::LatestSampleCache,
+};
 use rhizo_domain::Clock;
 use rhizo_mqtt_contract::payload::{
     ActuatorState, CommandResult, DeviceEventBatch, DeviceStatus, TelemetryBatch,
@@ -8,6 +10,7 @@ use rhizo_mqtt_contract::payload::{
 use rhizo_mqtt_contract::{Envelope, Topic};
 use rhizo_storage::StorageError;
 use rhizo_storage::repo::ingest::{self, Dedup};
+use rhizo_telemetry::{Classify, FailureKind};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
@@ -23,7 +26,57 @@ pub async fn run(
 ) -> Result<(), String> {
     let mut limiter = quarantine::Limiter::default();
     loop {
-        tokio::select! {biased;changed=shutdown.changed()=>{if changed.is_err()||*shutdown.borrow(){return Ok(())}},item=rx.recv()=>{let Some(item)=item else{return Ok(())};process(&db,clock.as_ref(),&client,&cache,&metrics,&mut limiter,item).await?}}
+        tokio::select! {biased;changed=shutdown.changed()=>{if changed.is_err()||*shutdown.borrow(){return Ok(())}},item=rx.recv()=>{let Some(item)=item else{return Ok(())};if let Err(error)=process(&db,clock.as_ref(),&client,&cache,&metrics,&mut limiter,&item).await{let at=clock.now().timestamp_millis();apply_classification(&db,&mut limiter,&item,at,&error).await?}}}
+    }
+}
+
+/// Applies ADR-014's classification at the pipeline's one message failure site.
+///
+/// The classification is what decides the outcome, not the call site: `Fatal`
+/// propagates and the supervisor exits the process, `Permanent` quarantines the
+/// message and carries on — a permanently failing message that stopped the
+/// process would take every other device down with it — and a `Transient`
+/// failure that has already exhausted its bounded retries leaves the message
+/// unprocessed.
+async fn apply_classification(
+    db: &rhizo_storage::EdgeDb,
+    limiter: &mut quarantine::Limiter,
+    item: &Inbound,
+    at: i64,
+    error: &EdgeError,
+) -> Result<(), String> {
+    let classification = error.classify();
+    match classification {
+        FailureKind::Fatal => Err(error.to_string()),
+        FailureKind::Permanent => {
+            tracing::error!(topic=%item.topic,%classification,error=%error,"quarantining a permanently failing message");
+            let device = Topic::parse(&item.topic)
+                .ok()
+                .map(|topic| topic.device_id().to_string());
+            if limiter.allow(device.as_deref().unwrap_or_default(), at)
+                && let Err(failure) = rhizo_storage::repo::quarantine::insert(
+                    db,
+                    device.as_deref(),
+                    &item.topic,
+                    &item.payload,
+                    &error.to_string(),
+                    at,
+                )
+                .await
+            {
+                // A failure while quarantining is judged on its own terms, so a
+                // full or broken database still stops the process.
+                if failure.classify().is_fatal() {
+                    return Err(failure.to_string());
+                }
+                tracing::error!(error=%failure,"could not quarantine the failing message");
+            }
+            Ok(())
+        }
+        FailureKind::Transient => {
+            tracing::warn!(topic=%item.topic,%classification,error=%error,"leaving a message unprocessed after exhausting its bounded retries");
+            Ok(())
+        }
     }
 }
 
@@ -34,8 +87,8 @@ async fn process(
     cache: &LatestSampleCache,
     m: &Metrics,
     limiter: &mut quarantine::Limiter,
-    item: Inbound,
-) -> Result<(), String> {
+    item: &Inbound,
+) -> Result<(), EdgeError> {
     let topic = match Topic::parse(&item.topic) {
         Ok(t) => t,
         Err(_) => {
@@ -79,8 +132,7 @@ async fn process(
                     &e.to_string(),
                     at,
                 )
-                .await
-                .map_err(|x| x.to_string())?;
+                .await?;
             }
             return Ok(());
         }
@@ -89,12 +141,9 @@ async fn process(
     m.received.with_label_values(&[kind]).inc();
     let dedup = match msg {
         Msg::Telemetry(e) => {
-            let (d, n) = retry_busy(m, || ingest::persist_telemetry(db, &e, at)).await?;
+            let (d, n) = retry_transient(m, || ingest::persist_telemetry(db, &e, at)).await?;
             if d == Dedup::New {
-                for sample in rhizo_storage::repo::query::latest_samples(db)
-                    .await
-                    .map_err(|x| x.to_string())?
-                {
+                for sample in rhizo_storage::repo::query::latest_samples(db).await? {
                     cache.update(sample);
                 }
             }
@@ -110,9 +159,9 @@ async fn process(
             debug_assert!(n <= e.data.samples.len());
             d
         }
-        Msg::Actuator(e) => retry_busy(m, || ingest::persist_actuator(db, &e, at)).await?,
-        Msg::Status(e) => retry_busy(m, || ingest::persist_status(db, &e, at)).await?,
-        Msg::Result(e) => retry_busy(m, || ingest::persist_command_result(db, &e, at)).await?,
+        Msg::Actuator(e) => retry_transient(m, || ingest::persist_actuator(db, &e, at)).await?,
+        Msg::Status(e) => retry_transient(m, || ingest::persist_status(db, &e, at)).await?,
+        Msg::Result(e) => retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?,
         Msg::Events(e) => {
             for event in &e.data.events {
                 if let rhizo_mqtt_contract::payload::EventDetail::Gap { lost_tier, .. } =
@@ -128,7 +177,7 @@ async fn process(
             let boot = e.boot_id;
             let dev = e.device_id.clone();
             let replay = e.data.replay;
-            let commit = retry_busy(m, || ingest::persist_replay(db, &e, at)).await?;
+            let commit = retry_transient(m, || ingest::persist_replay(db, &e, at)).await?;
             if replay && let Some(boot_id) = boot {
                 let ack = Envelope {
                     v: 1,
@@ -149,10 +198,11 @@ async fn process(
                         Topic::EventsAck(dev).as_string(),
                         rumqttc::QoS::AtLeastOnce,
                         false,
-                        ack.to_json().map_err(|x| x.to_string())?,
+                        ack.to_json()
+                            .map_err(|x| EdgeError::Decode(x.to_string()))?,
                     )
                     .await
-                    .map_err(|x| x.to_string())?;
+                    .map_err(|x| EdgeError::Mqtt(x.to_string()))?;
             }
             commit.dedup
         }
@@ -166,26 +216,34 @@ async fn process(
     Ok(())
 }
 
-async fn retry_busy<T, F, Fut>(m: &Metrics, mut operation: F) -> Result<T, String>
+/// Retries only what ADR-014 classifies as `Transient`, with its documented
+/// 50 ms base, 500 ms cap, and three attempts.
+///
+/// The retry decision comes from [`Classify`] rather than from a `match` arm
+/// here. A new `StorageError` variant therefore cannot be silently retried
+/// forever or silently dropped — it has to be classified where it is defined.
+async fn retry_transient<T, F, Fut>(m: &Metrics, mut operation: F) -> Result<T, EdgeError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, StorageError>>,
 {
     let mut backoff =
-        rhizo_telemetry::Backoff::new(Duration::from_millis(50), Duration::from_millis(200));
+        rhizo_telemetry::Backoff::new(Duration::from_millis(50), Duration::from_millis(500));
     for attempt in 0..=3 {
         match operation().await {
             Ok(value) => return Ok(value),
-            Err(StorageError::Busy(error)) if attempt < 3 => {
-                m.sqlite_busy.inc();
+            Err(error) if error.classify().is_retryable() && attempt < 3 => {
+                if matches!(error, StorageError::Busy(_)) {
+                    m.sqlite_busy.inc();
+                }
                 tokio::time::sleep(backoff.next_delay()).await;
                 tracing::warn!(
                     attempt = attempt + 1,
-                    error,
-                    "retrying busy SQLite transaction"
+                    error = %error,
+                    "retrying a transient SQLite failure"
                 );
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error.into()),
         }
     }
     unreachable!("the bounded retry loop always returns")
@@ -270,7 +328,7 @@ mod decode {
             &LatestSampleCache::default(),
             &metrics,
             &mut limiter,
-            Inbound {
+            &Inbound {
                 topic: "rhizo/v1/devices/plant-node-01/telemetry".into(),
                 payload: payload.to_vec(),
             },
@@ -297,7 +355,7 @@ mod decode {
             &LatestSampleCache::default(),
             &metrics,
             &mut limiter,
-            Inbound {
+            &Inbound {
                 topic: topic.clone(),
                 payload: b"not-json".to_vec(),
             },
@@ -311,7 +369,7 @@ mod decode {
             &LatestSampleCache::default(),
             &metrics,
             &mut limiter,
-            Inbound {
+            &Inbound {
                 topic,
                 payload: include_bytes!(
                     "../../../../test/fixtures/protocol/valid/telemetry-batch.json"
@@ -363,5 +421,98 @@ mod gaps {
             x.detail,
             rhizo_mqtt_contract::payload::EventDetail::Gap { .. }
         )));
+    }
+}
+
+#[cfg(test)]
+mod classify {
+    use super::*;
+
+    fn inbound() -> Inbound {
+        Inbound {
+            topic: "rhizo/v1/devices/plant-node-01/telemetry".into(),
+            payload: b"whatever".to_vec(),
+        }
+    }
+    async fn quarantined(db: &rhizo_storage::EdgeDb) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM quarantined_messages")
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+    }
+
+    /// ADR-014's whole point: one unusable message must not take the process
+    /// down, because every other plant's device is behind it in the queue.
+    #[tokio::test]
+    async fn a_permanent_failure_is_quarantined_and_the_pipeline_continues() {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let mut limiter = quarantine::Limiter::default();
+        let error = EdgeError::Storage(StorageError::Constraint("bad row".into()));
+        assert_eq!(error.classify(), FailureKind::Permanent);
+        apply_classification(&db, &mut limiter, &inbound(), 5, &error)
+            .await
+            .expect("a permanent failure must not stop the pipeline");
+        assert_eq!(quarantined(&db).await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_fatal_failure_stops_the_pipeline_without_quarantining() {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let mut limiter = quarantine::Limiter::default();
+        let error = EdgeError::Storage(StorageError::Full("disk".into()));
+        assert_eq!(error.classify(), FailureKind::Fatal);
+        assert!(
+            apply_classification(&db, &mut limiter, &inbound(), 5, &error)
+                .await
+                .is_err()
+        );
+        assert_eq!(quarantined(&db).await, 0);
+    }
+
+    /// An exhausted transient failure leaves the message unprocessed rather
+    /// than quarantining it — the operation could still succeed later.
+    #[tokio::test]
+    async fn an_exhausted_transient_failure_is_neither_fatal_nor_quarantined() {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let mut limiter = quarantine::Limiter::default();
+        let error = EdgeError::Mqtt("broker unreachable".into());
+        assert_eq!(error.classify(), FailureKind::Transient);
+        apply_classification(&db, &mut limiter, &inbound(), 5, &error)
+            .await
+            .unwrap();
+        assert_eq!(quarantined(&db).await, 0);
+    }
+
+    /// The bounded retry loop honours ADR-014's three attempts and gives up on
+    /// anything the classification does not call retryable.
+    #[tokio::test]
+    async fn only_transient_failures_are_retried() {
+        let m = Metrics::new().unwrap();
+        let attempts = std::cell::Cell::new(0);
+        let error = retry_transient(&m, || {
+            attempts.set(attempts.get() + 1);
+            async { Err::<(), _>(StorageError::Busy("locked".into())) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.classify(), FailureKind::Transient);
+        assert_eq!(
+            attempts.get(),
+            4,
+            "one attempt plus ADR-014's three retries"
+        );
+
+        let permanent = std::cell::Cell::new(0);
+        let error = retry_transient(&m, || {
+            permanent.set(permanent.get() + 1);
+            async { Err::<(), _>(StorageError::Constraint("bad row".into())) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.classify(), FailureKind::Permanent);
+        assert_eq!(permanent.get(), 1, "a permanent failure is never retried");
     }
 }

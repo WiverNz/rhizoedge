@@ -455,3 +455,35 @@ async fn restart_reopen_preserves_history_and_registry() {
         1
     );
 }
+
+/// `storage_bytes` is the gauge ADR-004 and the failure model watch to see a
+/// disk filling before `SQLITE_FULL` makes every write fatal, so it has to
+/// report a real size and grow with the data.
+#[tokio::test]
+async fn storage_bytes_reports_a_real_size_that_grows() {
+    let db = db().await;
+    let empty = rhizo_storage::repo::query::storage_bytes(&db)
+        .await
+        .unwrap();
+    assert!(empty > 0, "a migrated database is never zero bytes");
+
+    let e = Envelope::<TelemetryBatch>::from_json(include_bytes!(
+        "../../../test/fixtures/protocol/valid/telemetry-batch.json"
+    ))
+    .unwrap();
+    for i in 0..200 {
+        let mut batch = e.clone();
+        batch.message_id = MessageId::from_uuid(uuid::Uuid::new_v4());
+        batch.data.batch_id = uuid::Uuid::new_v4();
+        ingest::persist_telemetry(&db, &batch, 1_000 + i)
+            .await
+            .unwrap();
+    }
+    assert!(
+        rhizo_storage::repo::query::storage_bytes(&db)
+            .await
+            .unwrap()
+            > empty,
+        "the gauge must move as rows are written"
+    );
+}

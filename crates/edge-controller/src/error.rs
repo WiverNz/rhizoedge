@@ -38,4 +38,17 @@ mod classify {
         );
         assert_eq!(EdgeError::Task("x".into()).classify(), FailureKind::Fatal);
     }
+    /// `Storage` has no kind of its own — it defers, so a storage variant
+    /// reclassified in `rhizo-storage` changes the pipeline's behaviour too.
+    #[test]
+    fn storage_defers_to_the_storage_classification() {
+        for storage in [
+            rhizo_storage::StorageError::Busy("x".into()),
+            rhizo_storage::StorageError::Constraint("x".into()),
+            rhizo_storage::StorageError::Full("x".into()),
+        ] {
+            let expected = storage.classify();
+            assert_eq!(EdgeError::Storage(storage).classify(), expected);
+        }
+    }
 }
