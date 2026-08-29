@@ -88,6 +88,7 @@ async fn one(
         let Some(row) = query::latest_measurement(
             &state.db,
             &device,
+            bound.binding.sensor_id.as_str(),
             bound.binding.point.as_str(),
             bound.binding.kind.as_str(),
         )
@@ -391,6 +392,7 @@ pub async fn measurements(
         match query::count_measurements_for(
             &state.db,
             &device,
+            bound.binding.sensor_id.as_str(),
             bound.binding.point.as_str(),
             bound.binding.kind.as_str(),
             from,
@@ -421,6 +423,7 @@ pub async fn measurements(
         let rows = match query::measurements_for(
             &state.db,
             &device,
+            bound.binding.sensor_id.as_str(),
             bound.binding.point.as_str(),
             bound.binding.kind.as_str(),
             from,

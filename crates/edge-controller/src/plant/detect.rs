@@ -144,12 +144,14 @@ pub async fn stuck(
             continue;
         }
         let device = bound.binding.device_id.to_string();
+        let sensor = bound.binding.sensor_id.as_str();
         let point = bound.binding.point.as_str();
         let kind = bound.binding.kind.as_str();
-        let Some(latest) = query::latest_measurement(db, &device, point, kind).await? else {
+        let Some(latest) = query::latest_measurement(db, &device, sensor, point, kind).await?
+        else {
             continue;
         };
-        let stored = plant_repo::stuck_state(db, &device, point, kind).await?;
+        let stored = plant_repo::stuck_state(db, &device, sensor, point, kind).await?;
         // Fold a reading in once. The tick reads the *latest* row rather than a
         // stream of new ones, so without this guard the same reading would
         // extend the run on every tick and any sensor at all would look stuck.
@@ -178,6 +180,7 @@ pub async fn stuck(
         plant_repo::put_stuck_state(
             db,
             &device,
+            sensor,
             point,
             kind,
             plant_repo::StuckStateRow {

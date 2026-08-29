@@ -497,6 +497,94 @@ mod recommend {
         assert_eq!(plant["state"], "sensor_fault");
     }
 
+    /// A binding owns the complete `(device, sensor, point, kind)` identity.
+    /// Another probe on the same device may report the same kind and point, but
+    /// its data is not evidence about this plant. Omitting `sensor_id` from the
+    /// storage lookup used to let this unbound stream build dry duration and
+    /// produce a positive watering recommendation.
+    #[tokio::test]
+    async fn an_unbound_same_kind_stream_cannot_recommend_water() {
+        let api = TestApi::start().await;
+        api.with_device().await;
+        api.plant("monstera-01").await;
+        api.bind_control("monstera-01").await;
+        api.moisture_policy("monstera-01").await;
+        api.json(
+            "PUT",
+            "/api/v1/plants/monstera-01/bindings/actuator",
+            serde_json::json!({ "device_id": "plant-node-01", "actuator_id": "pump-0" }),
+        )
+        .await;
+
+        for i in 0i64..72 {
+            let at = base() - Duration::minutes((71 - i) * 5);
+            sqlx::query(
+                "INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,unit,quality,received_at,batch_id,origin) \
+                 VALUES('plant-node-01','soil-unbound','default','soil_moisture',20.0,'percent','ok',?,?, 'live')",
+            )
+            .bind(at.timestamp_millis())
+            .bind(format!("unbound-{i}"))
+            .execute(api.db.pool())
+            .await
+            .unwrap();
+        }
+
+        let answer = api.evaluate("monstera-01").await;
+        assert_eq!(answer.decision, Decision::Blocked, "{answer:?}");
+        assert_eq!(
+            answer.blocked_by,
+            Some(rhizo_domain::LockoutReason::SensorFault)
+        );
+        assert!(
+            answer
+                .reasons
+                .iter()
+                .any(|reason| reason.code() == "sample_missing")
+        );
+        assert_eq!(answer.recommended_ml, None);
+    }
+
+    /// A required binding is not satisfied merely because its sensor is marked
+    /// healthy in status. Missing measurement evidence must fail closed before
+    /// M6 can consume the recommendation.
+    #[tokio::test]
+    async fn a_missing_required_measurement_cannot_recommend_water() {
+        let api = TestApi::start().await;
+        drying(&api).await;
+        api.json(
+            "PUT",
+            "/api/v1/plants/monstera-01/bindings/sensors",
+            serde_json::json!({
+                "device_id": "plant-node-01",
+                "sensor_id": "leak-0",
+                "point": "tray",
+                "kind": "leak_state",
+                "role": "required"
+            }),
+        )
+        .await;
+        api.json(
+            "PUT",
+            "/api/v1/plants/monstera-01/measurement-policies/leak_state",
+            serde_json::json!({ "stale_after_ms": 900_000 }),
+        )
+        .await;
+
+        let answer = api.evaluate("monstera-01").await;
+        assert_eq!(answer.decision, Decision::Blocked, "{answer:?}");
+        assert_eq!(
+            answer.blocked_by,
+            Some(rhizo_domain::LockoutReason::SensorFault)
+        );
+        assert!(
+            answer
+                .reasons
+                .iter()
+                .any(|reason| reason.code() == "sensor_unhealthy")
+        );
+        assert_eq!(answer.recommended_ml, None);
+    }
+
     /// SAFETY-005: a reading older than the control-freshness threshold blocks,
     /// and the threshold comes from the telemetry cadence, never from a power
     /// field.

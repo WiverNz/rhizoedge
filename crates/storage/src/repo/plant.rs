@@ -501,14 +501,16 @@ pub struct StuckStateRow {
 pub async fn stuck_state(
     db: &EdgeDb,
     device_id: &str,
+    sensor_id: &str,
     point: &str,
     kind: &str,
 ) -> Result<StuckStateRow, StorageError> {
     let row = sqlx::query(
         "SELECT last_bits,last_bool,last_received_at,repeats,reported FROM sensor_stuck_state \
-         WHERE device_id=? AND point=? AND kind=?",
+         WHERE device_id=? AND sensor_id=? AND point=? AND kind=?",
     )
     .bind(device_id)
+    .bind(sensor_id)
     .bind(point)
     .bind(kind)
     .fetch_optional(db.pool())
@@ -526,18 +528,20 @@ pub async fn stuck_state(
 pub async fn put_stuck_state(
     db: &EdgeDb,
     device_id: &str,
+    sensor_id: &str,
     point: &str,
     kind: &str,
     state: StuckStateRow,
     now: i64,
 ) -> Result<(), StorageError> {
     sqlx::query(
-        "INSERT INTO sensor_stuck_state(device_id,point,kind,last_bits,last_bool,last_received_at,repeats,reported,updated_at) \
-         VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,point,kind) DO UPDATE SET \
+        "INSERT INTO sensor_stuck_state(device_id,sensor_id,point,kind,last_bits,last_bool,last_received_at,repeats,reported,updated_at) \
+         VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,sensor_id,point,kind) DO UPDATE SET \
          last_bits=excluded.last_bits,last_bool=excluded.last_bool,last_received_at=excluded.last_received_at, \
          repeats=excluded.repeats,reported=excluded.reported,updated_at=excluded.updated_at",
     )
     .bind(device_id)
+    .bind(sensor_id)
     .bind(point)
     .bind(kind)
     .bind(state.last_bits)
@@ -852,15 +856,20 @@ mod tests {
     /// Foreign keys are on, so a plant cannot name a profile that is not there.
     #[tokio::test]
     async fn foreign_key_violations_are_rejected() {
+        use rhizo_telemetry::{Classify as _, FailureKind};
+
         let db = db().await;
         let orphan = NewPlant {
             profile_id: Some("no-such-profile".to_owned()),
             ..new_plant("monstera-01")
         };
-        assert!(matches!(
-            create(&db, &orphan, 1_000).await,
-            Err(StorageError::Constraint(_))
-        ));
+        let error = create(&db, &orphan, 1_000).await.unwrap_err();
+        assert!(matches!(error, StorageError::Constraint(_)));
+        assert_eq!(
+            error.classify(),
+            FailureKind::Permanent,
+            "SQLITE_CONSTRAINT_FOREIGNKEY (787) must never become fatal or retryable"
+        );
         assert_eq!(live_count(&db).await.unwrap(), 0);
 
         // The same id twice is a primary-key violation, not a silent overwrite.
@@ -986,14 +995,44 @@ mod tests {
             repeats: 19,
             reported: false,
         };
-        put_stuck_state(&db, "plant-node-01", "default", "soil_moisture", stuck, 1)
-            .await
-            .unwrap();
+        put_stuck_state(
+            &db,
+            "plant-node-01",
+            "soil-0",
+            "default",
+            "soil_moisture",
+            stuck,
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            stuck_state(&db, "plant-node-01", "default", "soil_moisture")
+            stuck_state(&db, "plant-node-01", "soil-0", "default", "soil_moisture",)
                 .await
                 .unwrap(),
             stuck
+        );
+        let other = StuckStateRow {
+            repeats: 1,
+            ..StuckStateRow::default()
+        };
+        put_stuck_state(
+            &db,
+            "plant-node-01",
+            "soil-1",
+            "default",
+            "soil_moisture",
+            other,
+            2,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            stuck_state(&db, "plant-node-01", "soil-0", "default", "soil_moisture",)
+                .await
+                .unwrap(),
+            stuck,
+            "two same-kind sensors must not share stuck-run state"
         );
 
         let threshold = ThresholdStateRow {

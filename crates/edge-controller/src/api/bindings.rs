@@ -271,6 +271,19 @@ pub async fn put_actuator(
     if let Err(e) = validate_actuator_binding(&binding, &declared) {
         return refused(&e);
     }
+    let existing = match plant::load(&state.db, &id).await {
+        Ok(Some(loaded)) => loaded,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "plant_not_found", "unknown plant"),
+        Err(_) => return storage_error(),
+    };
+    if let Some(bound) = existing.sensors.iter().find(|bound| {
+        rhizo_domain::binding::is_safety_kind(&bound.binding.kind)
+            && bound.binding.role != rhizo_domain::plant::BindingRole::Required
+    }) {
+        return refused(&BindingError::SafetyRoleMustBeRequired {
+            kind: bound.binding.kind.as_str().to_owned(),
+        });
+    }
     let now = state.clock.now().timestamp_millis();
     let row = binding_repo::ActuatorBindingRow {
         plant_id: id,
@@ -460,6 +473,35 @@ mod tests {
                 .await;
             assert_eq!(status, StatusCode::CREATED, "{accepted}");
         }
+    }
+
+    /// The invariant is order-independent: adding the actuator after an
+    /// advisory safety binding must be refused just as the reverse order is.
+    #[tokio::test]
+    async fn an_actuator_cannot_be_added_over_an_advisory_safety_binding() {
+        let api = ready().await;
+        let (status, advisory) = api
+            .json(
+                "PUT",
+                "/api/v1/plants/monstera-01/bindings/sensors",
+                sensor("leak-0", "tray", "leak_state", "advisory"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{advisory}");
+
+        let (status, refused) = api
+            .json(
+                "PUT",
+                "/api/v1/plants/monstera-01/bindings/actuator",
+                serde_json::json!({ "device_id": "plant-node-01", "actuator_id": "pump-0" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+        assert_eq!(refused["error"]["code"], "safety_role_must_be_required");
+        let (_, body) = api
+            .get("/api/v1/plants/monstera-01/bindings/actuator")
+            .await;
+        assert_eq!(body["actuator_binding"], serde_json::Value::Null);
     }
 
     /// SCEN-106: a monitoring-only plant is fully functional and its actuator

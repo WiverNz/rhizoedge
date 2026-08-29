@@ -70,7 +70,7 @@ CREATE INDEX idx_devices_sleep_deadline ON devices(overdue_at) WHERE connectivit
 CREATE INDEX idx_plants_live ON plants(deleted_at);
 
 CREATE TABLE plant_dry_state (plant_id TEXT PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE, dry_ms INTEGER NOT NULL DEFAULT 0, last_sample_at INTEGER, updated_at INTEGER NOT NULL);
-CREATE TABLE sensor_stuck_state (device_id TEXT NOT NULL, point TEXT NOT NULL, kind TEXT NOT NULL, last_bits INTEGER, last_bool INTEGER, last_received_at INTEGER, repeats INTEGER NOT NULL DEFAULT 0, reported INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, PRIMARY KEY(device_id,point,kind));
+CREATE TABLE sensor_stuck_state (device_id TEXT NOT NULL, sensor_id TEXT NOT NULL, point TEXT NOT NULL, kind TEXT NOT NULL, last_bits INTEGER, last_bool INTEGER, last_received_at INTEGER, repeats INTEGER NOT NULL DEFAULT 0, reported INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, PRIMARY KEY(device_id,sensor_id,point,kind));
 CREATE TABLE plant_state_current (plant_id TEXT PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE, state TEXT NOT NULL, since INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE plant_events (event_id TEXT PRIMARY KEY, plant_id TEXT, kind TEXT NOT NULL, severity TEXT NOT NULL, detail_json TEXT, occurred_at INTEGER NOT NULL);
 CREATE INDEX idx_plant_events_time ON plant_events(plant_id, occurred_at DESC);

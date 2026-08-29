@@ -32,7 +32,7 @@ use rhizo_domain::plant::MeasurementPolicy;
 use rhizo_domain::preset::{PlantPreset, catalogue};
 use rhizo_domain::profile::{PlantProfile, ProfileError};
 use rhizo_storage::EdgeDb;
-use rhizo_storage::repo::{binding as binding_repo, plant as plant_repo};
+use rhizo_storage::repo::binding as binding_repo;
 
 use super::{Loaded, policy_to_row};
 
@@ -228,33 +228,31 @@ pub async fn apply(
         plan(loaded, preset, catalogue.catalogue_version, overwrite).map_err(ApplyError::Preset)?;
 
     let plant_id = loaded.plant.plant_id.as_str();
-    for policy in &policies {
-        binding_repo::upsert_measurement_policy(db, &policy_to_row(plant_id, policy), now).await?;
-    }
-    // The automation starting values live on the plant's own profile document,
-    // so an operator edits them exactly where they edit a hand-configured
-    // plant's. A plant with no profile of its own gets one named after itself.
-    let profile_id = loaded
-        .plant
-        .profile_id
-        .clone()
-        .unwrap_or_else(|| format!("{plant_id}-profile"));
+    // The storage transaction reuses an exclusively owned profile, but clones
+    // a shared one so applying to this plant cannot rewrite another plant's
+    // configuration. The fallback id is unique even if an unrelated profile
+    // already uses a plant-derived name.
+    let private_profile_id = format!("{plant_id}-profile-{}", uuid::Uuid::new_v4());
     let document = serde_json::to_string(&profile).map_err(|e| {
         ApplyError::Storage(rhizo_storage::StorageError::Serialization(e.to_string()))
     })?;
-    rhizo_storage::repo::profile::upsert(db, &profile_id, &profile.name, &document, now).await?;
-    if loaded.plant.profile_id.is_none() {
-        plant_repo::update(
-            db,
-            plant_id,
-            &plant_repo::PlantPatch {
-                profile_id: Some(Some(profile_id)),
-                ..Default::default()
-            },
-        )
-        .await?;
-    }
-    plant_repo::record_applied_preset(db, plant_id, preset_id, applied.catalogue_version).await?;
+    let policy_rows = policies
+        .iter()
+        .map(|policy| policy_to_row(plant_id, policy))
+        .collect::<Vec<_>>();
+    binding_repo::materialize_preset(
+        db,
+        plant_id,
+        &policy_rows,
+        loaded.plant.profile_id.as_deref(),
+        &private_profile_id,
+        &profile.name,
+        &document,
+        preset_id,
+        applied.catalogue_version,
+        now,
+    )
+    .await?;
     Ok(applied)
 }
 
@@ -317,10 +315,12 @@ mod tests {
         // would select any template. What is being compared is whether a
         // decision path can tell the two plants apart, so they must differ in
         // nothing except how their numbers got there.
+        let (_, preset_plant) = api.get("/api/v1/plants/preset-01").await;
+        let preset_profile = preset_plant["profile_id"].as_str().unwrap();
         api.json(
             "PATCH",
             "/api/v1/plants/hand-01",
-            serde_json::json!({ "profile_id": "preset-01-profile" }),
+            serde_json::json!({ "profile_id": preset_profile }),
         )
         .await;
 
@@ -401,6 +401,198 @@ mod tests {
         }
         // The column does exist, and is written by exactly this module and read
         // by the API — so the assertion above is not passing by accident.
-        assert!(include_str!("preset.rs").contains("record_applied_preset"));
+        assert!(include_str!("preset.rs").contains("materialize_preset"));
+        assert!(
+            include_str!("../../../storage/src/repo/binding.rs")
+                .contains("applied_preset_id=?,applied_catalogue_version=?")
+        );
+    }
+
+    /// A failure at the final provenance write must roll back the earlier
+    /// policy and profile writes. The trigger is a negative control for the
+    /// transaction boundary, not production behavior.
+    #[tokio::test]
+    async fn a_partial_preset_failure_rolls_back_every_materialized_value() {
+        let api = TestApi::start().await;
+        api.with_device().await;
+        api.plant("monstera-01").await;
+        api.bind_control("monstera-01").await;
+        let loaded = super::super::load(&api.db, "monstera-01")
+            .await
+            .unwrap()
+            .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER reject_preset_provenance BEFORE UPDATE OF applied_preset_id ON plants \
+             BEGIN SELECT RAISE(ABORT, 'injected late preset failure'); END",
+        )
+        .execute(api.db.pool())
+        .await
+        .unwrap();
+
+        let result = super::apply(
+            &api.db,
+            &loaded,
+            "monstera-deliciosa",
+            false,
+            base().timestamp_millis(),
+        )
+        .await;
+        assert!(matches!(result, Err(super::ApplyError::Storage(_))));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM measurement_policies WHERE plant_id='monstera-01'"
+            )
+            .fetch_one(api.db.pool())
+            .await
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM plant_profiles")
+                .fetch_one(api.db.pool())
+                .await
+                .unwrap(),
+            0
+        );
+        let plant = rhizo_storage::repo::plant::get(&api.db, "monstera-01")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(plant.profile_id, None);
+        assert_eq!(plant.applied_preset_id, None);
+    }
+
+    /// Race-shaped stale-read control: the API loaded a live plant, another
+    /// request soft-deleted it, and only then did materialisation reach its
+    /// transaction. The checked final update must fail and roll everything
+    /// before it back.
+    #[tokio::test]
+    async fn a_soft_deleted_target_rolls_back_preset_materialization() {
+        let api = TestApi::start().await;
+        api.with_device().await;
+        api.plant("monstera-01").await;
+        api.bind_control("monstera-01").await;
+        let loaded = super::super::load(&api.db, "monstera-01")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            rhizo_storage::repo::plant::delete(&api.db, "monstera-01", base().timestamp_millis())
+                .await
+                .unwrap()
+        );
+
+        let result = super::apply(
+            &api.db,
+            &loaded,
+            "monstera-deliciosa",
+            false,
+            base().timestamp_millis(),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(super::ApplyError::Storage(
+                rhizo_storage::StorageError::Constraint(_)
+            ))
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM measurement_policies")
+                .fetch_one(api.db.pool())
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM plant_profiles")
+                .fetch_one(api.db.pool())
+                .await
+                .unwrap(),
+            0
+        );
+        let row = sqlx::query(
+            "SELECT profile_id,applied_preset_id,applied_catalogue_version FROM plants WHERE plant_id='monstera-01'",
+        )
+        .fetch_one(api.db.pool())
+        .await
+        .unwrap();
+        use sqlx::Row as _;
+        assert_eq!(row.get::<Option<String>, _>("profile_id"), None);
+        assert_eq!(row.get::<Option<String>, _>("applied_preset_id"), None);
+        assert_eq!(row.get::<Option<i64>, _>("applied_catalogue_version"), None);
+    }
+
+    /// Profiles may seed several plants, but materialised automation values are
+    /// per plant. Applying to one owner must clone before changing the profile.
+    #[tokio::test]
+    async fn applying_to_one_plant_does_not_mutate_a_shared_profile() {
+        let api = TestApi::start().await;
+        api.with_device().await;
+        let shared = super::super::default_profile();
+        let original = serde_json::to_string(&shared).unwrap();
+        rhizo_storage::repo::profile::upsert(
+            &api.db,
+            "shared-profile",
+            &shared.name,
+            &original,
+            base().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+        for id in ["plant-a", "plant-b"] {
+            rhizo_storage::repo::plant::create(
+                &api.db,
+                &rhizo_storage::repo::plant::NewPlant {
+                    plant_id: id.to_owned(),
+                    name: id.to_owned(),
+                    profile_id: Some("shared-profile".to_owned()),
+                    pot_volume_ml: Some(2_500.0),
+                    ..Default::default()
+                },
+                base().timestamp_millis(),
+            )
+            .await
+            .unwrap();
+        }
+        api.bind_control("plant-a").await;
+        let loaded = super::super::load(&api.db, "plant-a")
+            .await
+            .unwrap()
+            .unwrap();
+        super::apply(
+            &api.db,
+            &loaded,
+            "monstera-deliciosa",
+            false,
+            base().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+
+        let a = rhizo_storage::repo::plant::get(&api.db, "plant-a")
+            .await
+            .unwrap()
+            .unwrap();
+        let b = rhizo_storage::repo::plant::get(&api.db, "plant-b")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(a.profile_id, b.profile_id, "plant-a must own a clone");
+        assert_eq!(b.profile_id.as_deref(), Some("shared-profile"));
+        assert_eq!(
+            rhizo_storage::repo::profile::get(&api.db, "shared-profile")
+                .await
+                .unwrap()
+                .unwrap()
+                .profile_json,
+            original,
+            "plant-b's effective configuration must remain byte-identical"
+        );
+        let applied_profile =
+            rhizo_storage::repo::profile::get(&api.db, a.profile_id.as_deref().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_ne!(applied_profile.profile_json, original);
     }
 }

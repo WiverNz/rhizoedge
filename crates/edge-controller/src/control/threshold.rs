@@ -42,8 +42,9 @@ pub async fn run(
             continue;
         };
         let device = bound.binding.device_id.to_string();
+        let sensor = bound.binding.sensor_id.as_str();
         let point = bound.binding.point.as_str();
-        let latest = query::latest_measurement(db, &device, point, &kind).await?;
+        let latest = query::latest_measurement(db, &device, sensor, point, &kind).await?;
         let stored = plant_repo::threshold_state(db, plant_id, &kind).await?;
         let mut state =
             stored

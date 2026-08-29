@@ -319,6 +319,7 @@ pub async fn analyse(
 
     if let Some(bound) = control {
         let device = bound.binding.device_id.to_string();
+        let sensor = bound.binding.sensor_id.as_str();
         let point = bound.binding.point.as_str();
         let kind = bound.binding.kind.as_str();
         let cadence = query::telemetry_interval_seconds(db, &device)
@@ -328,7 +329,7 @@ pub async fn analyse(
             .policy(&bound.binding.kind)
             .map_or(u32::MAX, |p| p.stale_after_ms);
         freshness_ms = control_freshness_ms(stale_after, cadence);
-        if let Some(latest) = query::latest_measurement(db, &device, point, kind).await? {
+        if let Some(latest) = query::latest_measurement(db, &device, sensor, point, kind).await? {
             sample_age = Some(Duration::milliseconds(
                 now_ms.saturating_sub(latest.received_at).max(0),
             ));
@@ -341,6 +342,7 @@ pub async fn analyse(
         let rows = query::measurements_for(
             db,
             &device,
+            sensor,
             point,
             kind,
             now_ms - window.num_milliseconds(),
@@ -400,8 +402,9 @@ pub async fn analyse(
     )
     .await?;
 
-    // Required-role bindings must be healthy for actuation to be safe. Anything
-    // the device has not told us about counts as unhealthy (SAFETY-012).
+    // Required-role bindings must be healthy and have a usable, fresh sample.
+    // Device health alone is not measurement evidence: a healthy leak or tank
+    // sensor with no current value is still uncertainty (SAFETY-012).
     let mut required_healthy = true;
     for bound in loaded
         .sensors
@@ -411,6 +414,33 @@ pub async fn analyse(
         let device = bound.binding.device_id.to_string();
         let healthy = query::sensor_healthy(db, &device, bound.binding.sensor_id.as_str()).await?;
         if healthy != Some(true) {
+            required_healthy = false;
+            continue;
+        }
+        let Some(policy) = loaded.policy(&bound.binding.kind) else {
+            required_healthy = false;
+            continue;
+        };
+        let cadence = query::telemetry_interval_seconds(db, &device)
+            .await?
+            .unwrap_or(300);
+        let max_age = control_freshness_ms(policy.stale_after_ms, cadence);
+        let latest = query::latest_measurement(
+            db,
+            &device,
+            bound.binding.sensor_id.as_str(),
+            bound.binding.point.as_str(),
+            bound.binding.kind.as_str(),
+        )
+        .await?;
+        let usable = latest.is_some_and(|row| {
+            let has_typed_value = row.value_num.is_some_and(f64::is_finite)
+                || row.value_bool.is_some_and(|value| matches!(value, 0 | 1));
+            row.quality == "ok"
+                && has_typed_value
+                && now_ms.saturating_sub(row.received_at).max(0) < max_age
+        });
+        if !usable {
             required_healthy = false;
         }
     }
@@ -424,14 +454,16 @@ pub async fn analyse(
     let mut ec_trend = None;
     if let Some(bound) = loaded.binding_for(&MeasurementKind::SoilEc) {
         let device = bound.binding.device_id.to_string();
+        let sensor = bound.binding.sensor_id.as_str();
         let point = bound.binding.point.as_str();
-        latest_ec = query::latest_measurement(db, &device, point, "soil_ec")
+        latest_ec = query::latest_measurement(db, &device, sensor, point, "soil_ec")
             .await?
             .and_then(|r| r.value_num);
         let window = trend_window();
         let rows = query::measurements_for(
             db,
             &device,
+            sensor,
             point,
             "soil_ec",
             now_ms - window.num_milliseconds(),

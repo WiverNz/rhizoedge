@@ -120,9 +120,14 @@ fn to_measurement(row: &sqlx::sqlite::SqliteRow) -> MeasurementRow {
 /// Ordered ascending because every consumer — the trend fit, the dry-duration
 /// accumulator, and the detection pair — reads time forwards. Sorting at the
 /// call site instead would be one more place to get it wrong.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the full bound stream identity plus its time window must stay explicit"
+)]
 pub async fn measurements_for(
     db: &EdgeDb,
     device_id: &str,
+    sensor_id: &str,
     point: &str,
     kind: &str,
     from: i64,
@@ -131,10 +136,11 @@ pub async fn measurements_for(
 ) -> Result<Vec<MeasurementRow>, StorageError> {
     let rows = sqlx::query(
         "SELECT device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at \
-         FROM measurements WHERE device_id=? AND point=? AND kind=? AND received_at>=? AND received_at<=? \
+         FROM measurements WHERE device_id=? AND sensor_id=? AND point=? AND kind=? AND received_at>=? AND received_at<=? \
          ORDER BY received_at, id LIMIT ?",
     )
     .bind(device_id)
+    .bind(sensor_id)
     .bind(point)
     .bind(kind)
     .bind(from)
@@ -150,16 +156,18 @@ pub async fn measurements_for(
 pub async fn count_measurements_for(
     db: &EdgeDb,
     device_id: &str,
+    sensor_id: &str,
     point: &str,
     kind: &str,
     from: i64,
     to: i64,
 ) -> Result<i64, StorageError> {
     sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM measurements WHERE device_id=? AND point=? AND kind=? \
+        "SELECT count(*) FROM measurements WHERE device_id=? AND sensor_id=? AND point=? AND kind=? \
          AND received_at>=? AND received_at<=?",
     )
     .bind(device_id)
+    .bind(sensor_id)
     .bind(point)
     .bind(kind)
     .bind(from)
@@ -173,14 +181,16 @@ pub async fn count_measurements_for(
 pub async fn latest_measurement(
     db: &EdgeDb,
     device_id: &str,
+    sensor_id: &str,
     point: &str,
     kind: &str,
 ) -> Result<Option<MeasurementRow>, StorageError> {
     Ok(sqlx::query(
         "SELECT device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at \
-         FROM measurements WHERE device_id=? AND point=? AND kind=? ORDER BY received_at DESC, id DESC LIMIT 1",
+         FROM measurements WHERE device_id=? AND sensor_id=? AND point=? AND kind=? ORDER BY received_at DESC, id DESC LIMIT 1",
     )
     .bind(device_id)
+    .bind(sensor_id)
     .bind(point)
     .bind(kind)
     .fetch_optional(db.pool())

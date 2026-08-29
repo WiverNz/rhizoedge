@@ -318,6 +318,97 @@ pub async fn delete_measurement_policy(
     Ok(done.rows_affected() == 1)
 }
 
+/// Atomically materialises every durable effect of applying a preset.
+///
+/// Planning and validation happen before this call. Keeping the policy rows,
+/// profile document, optional profile assignment, and provenance in one SQLite
+/// transaction prevents a late constraint or I/O failure from leaving a plant
+/// half configured.
+#[allow(clippy::too_many_arguments)]
+pub async fn materialize_preset(
+    db: &EdgeDb,
+    plant_id: &str,
+    policies: &[MeasurementPolicyRow],
+    current_profile_id: Option<&str>,
+    private_profile_id: &str,
+    profile_name: &str,
+    profile_json: &str,
+    preset_id: &str,
+    catalogue_version: u32,
+    now: i64,
+) -> Result<(), StorageError> {
+    let mut tx = db.begin().await?;
+    // A profile is a seed, not shared mutable runtime configuration. Reusing it
+    // is safe only when this plant is its sole owner; otherwise materialisation
+    // clones into the caller-supplied private id and re-points only this plant.
+    let profile_id = if let Some(current) = current_profile_id {
+        let references: i64 = sqlx::query_scalar("SELECT count(*) FROM plants WHERE profile_id=?")
+            .bind(current)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+        if references == 1 {
+            current
+        } else {
+            private_profile_id
+        }
+    } else {
+        private_profile_id
+    };
+    for policy in policies {
+        sqlx::query(
+            "INSERT INTO measurement_policies(plant_id,kind,target_min,target_max,warning_low,warning_high,critical_low,critical_high,stale_after_ms,hysteresis,confirm_duration_ms,updated_at) \
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(plant_id,kind) DO UPDATE SET \
+             target_min=excluded.target_min,target_max=excluded.target_max,warning_low=excluded.warning_low,warning_high=excluded.warning_high, \
+             critical_low=excluded.critical_low,critical_high=excluded.critical_high,stale_after_ms=excluded.stale_after_ms, \
+             hysteresis=excluded.hysteresis,confirm_duration_ms=excluded.confirm_duration_ms,updated_at=excluded.updated_at",
+        )
+        .bind(&policy.plant_id)
+        .bind(&policy.kind)
+        .bind(policy.target_min)
+        .bind(policy.target_max)
+        .bind(policy.warning_low)
+        .bind(policy.warning_high)
+        .bind(policy.critical_low)
+        .bind(policy.critical_high)
+        .bind(policy.stale_after_ms)
+        .bind(policy.hysteresis)
+        .bind(policy.confirm_duration_ms)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(StorageError::from_sqlx)?;
+    }
+    sqlx::query(
+        "INSERT INTO plant_profiles(profile_id,name,profile_json,updated_at) VALUES(?,?,?,?) \
+         ON CONFLICT(profile_id) DO UPDATE SET name=excluded.name,profile_json=excluded.profile_json,updated_at=excluded.updated_at",
+    )
+    .bind(profile_id)
+    .bind(profile_name)
+    .bind(profile_json)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    let updated = sqlx::query(
+        "UPDATE plants SET profile_id=?,applied_preset_id=?,applied_catalogue_version=? \
+         WHERE plant_id=? AND deleted_at IS NULL",
+    )
+    .bind(profile_id)
+    .bind(preset_id)
+    .bind(i64::from(catalogue_version))
+    .bind(plant_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    if updated.rows_affected() != 1 {
+        return Err(StorageError::Constraint(format!(
+            "preset target {plant_id} is no longer a live plant"
+        )));
+    }
+    tx.commit().await.map_err(StorageError::from_sqlx)
+}
+
 // ------------------------------------------------------------ offline policy
 
 pub async fn offline_policy(
