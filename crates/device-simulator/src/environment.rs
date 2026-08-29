@@ -40,6 +40,8 @@ pub struct Environment {
     pub tank: TankModel,
     /// The conductivity probe.
     pub ec: EcModel,
+    /// The pack, where the device has one. Telemetry only (ADR-018 section 7).
+    pub battery: crate::model::battery::BatteryModel,
     /// The deterministic generator every reading draws its noise from.
     pub rng: SplitMix64,
     /// Whether readings carry Gaussian noise.
@@ -67,6 +69,10 @@ impl Environment {
             soil: SoilModel::new(soil_params, cli.initial_moisture),
             tank: TankModel::new(tank_params, 100.0),
             ec: EcModel::new(EcParams::default()),
+            battery: crate::model::battery::BatteryModel::new(
+                crate::model::battery::BatteryParams::default(),
+                100.0,
+            ),
             rng: SplitMix64::new(cli.seed),
             noise: !cli.no_noise,
         }

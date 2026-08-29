@@ -38,10 +38,10 @@ operator inventing numbers.
 
 ## Acceptance criteria
 
-- [ ] All endpoints return the documented shapes.
-- [ ] An invalid profile returns 422 naming the violated rule and the limit.
-- [ ] A default profile exists on first run.
-- [ ] Updating a profile affects plants using it on the next evaluation.
+- [x] All endpoints return the documented shapes.
+- [x] An invalid profile returns 422 naming the violated rule and the limit.
+- [x] A default profile exists on first run.
+- [x] Updating a profile affects plants using it on the next evaluation.
 
 ## Verification
 

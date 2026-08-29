@@ -112,19 +112,19 @@ reading, it is this rule being broken.
 
 ## Acceptance criteria
 
-- [ ] Creating a plant with `preset_id` writes `MeasurementPolicy` rows indistinguishable from hand-configured ones.
-- [ ] Every materialised value can afterwards be edited, and the edit survives a restart unchanged.
-- [ ] `auto_watering_enabled` is still `false` on a plant created from a preset.
-- [ ] Materialisation happens **exactly once**; no restart, catalogue upgrade, or tick re-derives a value.
-- [ ] `applied_preset_id` and `applied_catalogue_version` are recorded, and are **not read by recommendation, the safety gate, irrigation control, or offline-policy evaluation** — asserted structurally, not only by behaviour.
-- [ ] Recommendation and threshold evaluation produce identical results for a preset-configured plant and a hand-configured plant with the same values.
-- [ ] Applying a preset to a plant with **no `ActuatorBinding` succeeds**, creates its measurement policies, creates no actuator binding, and leaves `POST /water` returning 422 `no_actuator_bound` (SAFETY-018 intact).
-- [ ] Materialisation uses the plant's existing `SensorBinding` rows and creates, selects, or edits none.
-- [ ] Applying to a configured plant without `overwrite` is refused; with it, the response names each changed field.
-- [ ] A preset value violating a profile hard limit is **rejected with 422**, not clamped.
-- [ ] A preset kind with no matching binding creates no policy row and is reported.
-- [ ] Creating a plant with no `preset_id` behaves exactly as before this issue.
-- [ ] **No MQTT command is published by any preset operation.**
+- [x] Creating a plant with `preset_id` writes `MeasurementPolicy` rows indistinguishable from hand-configured ones.
+- [x] Every materialised value can afterwards be edited, and the edit survives a restart unchanged.
+- [x] `auto_watering_enabled` is still `false` on a plant created from a preset.
+- [x] Materialisation happens **exactly once**; no restart, catalogue upgrade, or tick re-derives a value.
+- [x] `applied_preset_id` and `applied_catalogue_version` are recorded, and are **not read by recommendation, the safety gate, irrigation control, or offline-policy evaluation** — asserted structurally, not only by behaviour.
+- [x] Recommendation and threshold evaluation produce identical results for a preset-configured plant and a hand-configured plant with the same values.
+- [x] Applying a preset to a plant with **no `ActuatorBinding` succeeds**, creates its measurement policies, creates no actuator binding, and leaves `POST /water` returning 422 `no_actuator_bound` (SAFETY-018 intact).
+- [x] Materialisation uses the plant's existing `SensorBinding` rows and creates, selects, or edits none.
+- [x] Applying to a configured plant without `overwrite` is refused; with it, the response names each changed field.
+- [x] A preset value violating a profile hard limit is **rejected with 422**, not clamped.
+- [x] A preset kind with no matching binding creates no policy row and is reported.
+- [x] Creating a plant with no `preset_id` behaves exactly as before this issue.
+- [x] **No MQTT command is published by any preset operation.**
 
 ## Verification
 

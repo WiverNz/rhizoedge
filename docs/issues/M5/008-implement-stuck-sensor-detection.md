@@ -37,11 +37,11 @@ to avoid false positives, short enough to matter.
 
 ## Acceptance criteria
 
-- [ ] 20 identical readings mark the sensor unhealthy.
-- [ ] 19 do not.
-- [ ] A different value resets the counter.
-- [ ] A `sensor_stuck` event is raised once, not per sample.
-- [ ] Noisy but stable readings do not trigger it.
+- [x] 20 identical readings mark the sensor unhealthy.
+- [x] 19 do not.
+- [x] A different value resets the counter.
+- [x] A `sensor_stuck` event is raised once, not per sample.
+- [x] Noisy but stable readings do not trigger it.
 
 ## Verification
 

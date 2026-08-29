@@ -111,6 +111,15 @@ impl FaultSet {
         }
     }
 
+    /// How many wake cycles `miss-wake` should skip.
+    #[must_use]
+    pub fn miss_wakes(&self) -> Option<u32> {
+        match self.get("miss-wake") {
+            Some(Fault::MissWake { count }) => Some(count),
+            _ => None,
+        }
+    }
+
     /// The policy step the process should die after, if any.
     #[must_use]
     pub fn policy_interrupt(&self) -> Option<PolicyStep> {

@@ -44,12 +44,12 @@ and an operator who is alerted constantly stops reading alerts.
 
 ## Acceptance criteria
 
-- [ ] Warning and critical crossings raise events with the right severity.
-- [ ] A crossing raises one event per transition, not one per tick.
-- [ ] Hysteresis prevents oscillation at the boundary.
-- [ ] A monitoring-only plant raises critical alerts normally.
-- [ ] **No threshold crossing of any kind triggers actuation.**
-- [ ] Threshold state is visible per measurement in the plant API.
+- [x] Warning and critical crossings raise events with the right severity.
+- [x] A crossing raises one event per transition, not one per tick.
+- [x] Hysteresis prevents oscillation at the boundary.
+- [x] A monitoring-only plant raises critical alerts normally.
+- [x] **No threshold crossing of any kind triggers actuation.**
+- [x] Threshold state is visible per measurement in the plant API.
 
 ## Verification
 

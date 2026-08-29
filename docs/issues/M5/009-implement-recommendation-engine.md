@@ -41,13 +41,13 @@ tests and a renderable UI. Render to prose in exactly one place (the API layer).
 
 ## Acceptance criteria
 
-- [ ] A dry, fresh, past-cooldown plant recommends water with reasons.
-- [ ] Each failing conjunct produces its specific reason.
-- [ ] `no_water` carries reasons explaining why.
-- [ ] `recommended_ml` equals `profile.dose_ml`.
-- [ ] Confidence drops with sparse data.
-- [ ] The engine is pure — no I/O, no clock access.
-- [ ] Confidence is used in no decision.
+- [x] A dry, fresh, past-cooldown plant recommends water with reasons.
+- [x] Each failing conjunct produces its specific reason.
+- [x] `no_water` carries reasons explaining why.
+- [x] `recommended_ml` equals `profile.dose_ml`.
+- [x] Confidence drops with sparse data.
+- [x] The engine is pure — no I/O, no clock access.
+- [x] Confidence is used in no decision.
 
 ## Verification
 

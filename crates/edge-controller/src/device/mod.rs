@@ -57,7 +57,7 @@ mod status {
             mode: PowerMode::Battery,
             wake_interval_seconds: Some(900),
             expected_wake_ms: Some(u64::MAX),
-            wake_reason: Some("timer".into()),
+            wake_reason: Some(rhizo_mqtt_contract::payload::WakeReason::Timer),
             battery_mv: None,
             awake_ms: None,
         }));

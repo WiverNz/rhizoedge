@@ -51,15 +51,15 @@ recommendation logic against a real plant before M6 gives it a pump.
 
 ## Acceptance criteria
 
-- [ ] All gate commands pass.
-- [ ] Simulator drying produces `WaterRecommended` with a non-empty reason list.
-- [ ] **Zero MQTT commands published during the entire scenario.**
-- [ ] A profile with `dose_ml = 200` is rejected with 422 naming the limit.
-- [ ] A manual moisture step creates a `detected` event and resets the cooldown.
-- [ ] A step following a command creates **no** second event.
-- [ ] Trend is `None` with fewer than 5 valid samples.
-- [ ] A new plant has `auto_watering_enabled = false`.
-- [ ] ROADMAP.md updated and the report recorded.
+- [x] All gate commands pass.
+- [x] Simulator drying produces `WaterRecommended` with a non-empty reason list.
+- [x] **Zero MQTT commands published during the entire scenario.**
+- [x] A profile with `dose_ml = 200` is rejected with 422 naming the limit.
+- [x] A manual moisture step creates a `detected` event and resets the cooldown.
+- [x] A step following a command creates **no** second event.
+- [x] Trend is `None` with fewer than 5 valid samples.
+- [x] A new plant has `auto_watering_enabled = false`.
+- [x] ROADMAP.md updated and the report recorded.
 
 ## Verification
 

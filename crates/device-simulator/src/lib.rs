@@ -52,6 +52,7 @@ pub mod model;
 pub mod mqtt;
 pub mod offline_state;
 pub mod policy;
+pub mod power;
 pub mod pump;
 pub mod rng;
 pub mod runner;

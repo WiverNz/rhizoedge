@@ -54,7 +54,13 @@ mod tests {
         db.migrate().await.unwrap();
         let metrics = crate::metrics::Metrics::new().unwrap();
         metrics.connection.set(connection);
-        ApiState { db, metrics }
+        ApiState {
+            db,
+            metrics,
+            clock: std::sync::Arc::new(rhizo_testkit::TestClock::new(
+                chrono::DateTime::from_timestamp_millis(1_000).unwrap(),
+            )),
+        }
     }
     #[tokio::test]
     async fn subscribed_is_ready_and_cloud_is_not_a_check() {

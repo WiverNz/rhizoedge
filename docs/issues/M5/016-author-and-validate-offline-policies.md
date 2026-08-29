@@ -47,13 +47,13 @@ device to water unsupervised, and the two should require separate decisions.
 
 ## Acceptance criteria
 
-- [ ] A valid policy is authored, validated, versioned, and persisted.
-- [ ] `policy_version` increases monotonically.
-- [ ] A policy for a plant with no actuator is **rejected** with a specific error.
-- [ ] A dose above `FIRMWARE_MAX_ML_PER_RUN` is rejected, not clamped.
-- [ ] A newly created policy has `enabled: false`.
-- [ ] Validation uses `rhizo-policy`, not a second rule set.
-- [ ] Required measurements are derived from `required`-role bindings.
+- [x] A valid policy is authored, validated, versioned, and persisted.
+- [x] `policy_version` increases monotonically.
+- [x] A policy for a plant with no actuator is **rejected** with a specific error.
+- [x] A dose above `FIRMWARE_MAX_ML_PER_RUN` is rejected, not clamped.
+- [x] A newly created policy has `enabled: false`.
+- [x] Validation uses `rhizo-policy`, not a second rule set.
+- [x] Required measurements are derived from `required`-role bindings.
 
 ## Verification
 

@@ -108,20 +108,20 @@ failure and needs its match arm in `crates/mqtt-contract/tests/fixtures.rs`.
 
 ## Acceptance criteria
 
-- [ ] The two battery `MeasurementKind` variants exist with correct specs and
+- [x] The two battery `MeasurementKind` variants exist with correct specs and
       round-trip through the telemetry batch.
-- [ ] An absent `power` block in `device.config` decodes to `AlwaysOn`.
-- [ ] An unrecognised `mode` string in `device.config` decodes to `AlwaysOn`.
-- [ ] `device.config`'s `wake_interval_seconds` outside its documented range is
+- [x] An absent `power` block in `device.config` decodes to `AlwaysOn`.
+- [x] An unrecognised `mode` string in `device.config` decodes to `AlwaysOn`.
+- [x] `device.config`'s `wake_interval_seconds` outside its documented range is
       **rejected** with a named typed error, not clamped, and shares its bounds
       with the status side rather than restating them.
-- [ ] `wake_reason` is typed, and an unrecognised value decodes to `Unknown`
+- [x] `wake_reason` is typed, and an unrecognised value decodes to `Unknown`
       rather than failing.
-- [ ] Every new fixture behaves as its directory name states, and the delivered
+- [x] Every new fixture behaves as its directory name states, and the delivered
       status fixtures stay green unchanged.
-- [ ] `cargo build -p rhizo-mqtt-contract --no-default-features --target
+- [x] `cargo build -p rhizo-mqtt-contract --no-default-features --target
       thumbv7em-none-eabi` still succeeds.
-- [ ] The device subscription set is still exactly seven topics.
+- [x] The device subscription set is still exactly seven topics.
 
 ## Verification
 

@@ -112,17 +112,17 @@ the provenance discipline visible while it is still cheap to establish.
 
 ## Acceptance criteria
 
-- [ ] `PlantPreset` exists in `rhizo-domain` with per-`MeasurementKind` preferences.
-- [ ] The catalogue is embedded, has a `catalogue_version`, and needs no network or database.
-- [ ] Every entry carries `source`, `source_ref`, `license`, and `retrieved_at`.
-- [ ] Every preference value is either `SourceFact` or `RhizoDefault`; there is no third, unlabelled case.
-- [ ] **No preset contains an interval, frequency, or schedule field** — asserted by a test over the whole catalogue.
-- [ ] Search finds a species by display name and by synonym.
-- [ ] A malformed entry (duplicate id, inverted range, missing licence) fails the catalogue validation test.
-- [ ] **No catalogue field names a device, sensor, point, or capability** —
+- [x] `PlantPreset` exists in `rhizo-domain` with per-`MeasurementKind` preferences.
+- [x] The catalogue is embedded, has a `catalogue_version`, and needs no network or database.
+- [x] Every entry carries `source`, `source_ref`, `license`, and `retrieved_at`.
+- [x] Every preference value is either `SourceFact` or `RhizoDefault`; there is no third, unlabelled case.
+- [x] **No preset contains an interval, frequency, or schedule field** — asserted by a test over the whole catalogue.
+- [x] Search finds a species by display name and by synonym.
+- [x] A malformed entry (duplicate id, inverted range, missing licence) fails the catalogue validation test.
+- [x] **No catalogue field names a device, sensor, point, or capability** —
       asserted by a test over the whole catalogue, alongside the no-schedule
       assertion.
-- [ ] `rhizo-domain` stays pure: no I/O, no clock.
+- [x] `rhizo-domain` stays pure: no I/O, no clock.
 
 ## Verification
 

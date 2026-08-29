@@ -79,3 +79,183 @@ pub async fn device_count(db: &EdgeDb) -> Result<i64, StorageError> {
         .await
         .map_err(StorageError::from_sqlx)
 }
+
+/// One stored measurement, as the plant endpoints and the plant tick read it.
+///
+/// A narrow typed-kind row ([ADR-017](../../../../docs/adr/017-extensible-measurement-model.md)):
+/// `value_num` and `value_bool` are mutually exclusive, and both are `NULL` for
+/// a sample that failed validation on the way in. That third case is not a
+/// value of zero — it is the absence of a reading, and every consumer has to
+/// treat it that way (SAFETY-012).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeasurementRow {
+    pub device_id: String,
+    pub sensor_id: Option<String>,
+    pub point: String,
+    pub kind: String,
+    pub value_num: Option<f64>,
+    pub value_bool: Option<i64>,
+    pub unit: String,
+    pub quality: String,
+    pub received_at: i64,
+}
+
+fn to_measurement(row: &sqlx::sqlite::SqliteRow) -> MeasurementRow {
+    use sqlx::Row as _;
+    MeasurementRow {
+        device_id: row.get("device_id"),
+        sensor_id: row.get("sensor_id"),
+        point: row.get("point"),
+        kind: row.get("kind"),
+        value_num: row.get("value_num"),
+        value_bool: row.get("value_bool"),
+        unit: row.get("unit"),
+        quality: row.get("quality"),
+        received_at: row.get("received_at"),
+    }
+}
+
+/// Measurements for one bound stream inside a window, oldest first.
+///
+/// Ordered ascending because every consumer — the trend fit, the dry-duration
+/// accumulator, and the detection pair — reads time forwards. Sorting at the
+/// call site instead would be one more place to get it wrong.
+pub async fn measurements_for(
+    db: &EdgeDb,
+    device_id: &str,
+    point: &str,
+    kind: &str,
+    from: i64,
+    to: i64,
+    limit: i64,
+) -> Result<Vec<MeasurementRow>, StorageError> {
+    let rows = sqlx::query(
+        "SELECT device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at \
+         FROM measurements WHERE device_id=? AND point=? AND kind=? AND received_at>=? AND received_at<=? \
+         ORDER BY received_at, id LIMIT ?",
+    )
+    .bind(device_id)
+    .bind(point)
+    .bind(kind)
+    .bind(from)
+    .bind(to)
+    .bind(limit.max(1))
+    .fetch_all(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(rows.iter().map(to_measurement).collect())
+}
+
+/// How many rows a window holds, so a caller can refuse rather than truncate.
+pub async fn count_measurements_for(
+    db: &EdgeDb,
+    device_id: &str,
+    point: &str,
+    kind: &str,
+    from: i64,
+    to: i64,
+) -> Result<i64, StorageError> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM measurements WHERE device_id=? AND point=? AND kind=? \
+         AND received_at>=? AND received_at<=?",
+    )
+    .bind(device_id)
+    .bind(point)
+    .bind(kind)
+    .bind(from)
+    .bind(to)
+    .fetch_one(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)
+}
+
+/// The most recent row for one bound stream, whatever its validity.
+pub async fn latest_measurement(
+    db: &EdgeDb,
+    device_id: &str,
+    point: &str,
+    kind: &str,
+) -> Result<Option<MeasurementRow>, StorageError> {
+    Ok(sqlx::query(
+        "SELECT device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at \
+         FROM measurements WHERE device_id=? AND point=? AND kind=? ORDER BY received_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(point)
+    .bind(kind)
+    .fetch_optional(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?
+    .as_ref()
+    .map(to_measurement))
+}
+
+/// The last `limit` rows for one bound stream, oldest first.
+pub async fn recent_measurements(
+    db: &EdgeDb,
+    device_id: &str,
+    point: &str,
+    kind: &str,
+    limit: i64,
+) -> Result<Vec<MeasurementRow>, StorageError> {
+    let mut rows = sqlx::query(
+        "SELECT device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at \
+         FROM measurements WHERE device_id=? AND point=? AND kind=? ORDER BY received_at DESC, id DESC LIMIT ?",
+    )
+    .bind(device_id)
+    .bind(point)
+    .bind(kind)
+    .bind(limit.max(1))
+    .fetch_all(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?
+    .iter()
+    .map(to_measurement)
+    .collect::<Vec<_>>();
+    rows.reverse();
+    Ok(rows)
+}
+
+/// The telemetry cadence a device is configured for, which is the only input
+/// SAFETY-005's control-freshness threshold may take.
+pub async fn telemetry_interval_seconds(
+    db: &EdgeDb,
+    device_id: &str,
+) -> Result<Option<i64>, StorageError> {
+    sqlx::query_scalar::<_, i64>("SELECT telemetry_interval_seconds FROM devices WHERE device_id=?")
+        .bind(device_id)
+        .fetch_optional(db.pool())
+        .await
+        .map_err(StorageError::from_sqlx)
+}
+
+/// Whether a device declares the named sensor healthy and present.
+///
+/// `None` means the device has never said — which is not the same as healthy,
+/// and every caller must treat it as an absence rather than as permission.
+pub async fn sensor_healthy(
+    db: &EdgeDb,
+    device_id: &str,
+    sensor_id: &str,
+) -> Result<Option<bool>, StorageError> {
+    let sensors: Option<String> =
+        sqlx::query_scalar("SELECT sensors_json FROM devices WHERE device_id=?")
+            .bind(device_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(StorageError::from_sqlx)?;
+    let Some(sensors) = sensors else {
+        return Ok(None);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&sensors) else {
+        return Ok(None);
+    };
+    Ok(value.as_array().and_then(|list| {
+        list.iter()
+            .find(|s| s.get("sensor_id").and_then(serde_json::Value::as_str) == Some(sensor_id))
+            .map(|s| {
+                s.get("healthy").and_then(serde_json::Value::as_bool) == Some(true)
+                    && s.get("present").and_then(serde_json::Value::as_bool) == Some(true)
+            })
+    }))
+}

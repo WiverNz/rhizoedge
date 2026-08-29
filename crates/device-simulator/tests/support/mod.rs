@@ -415,6 +415,9 @@ impl SimulatedDevice {
             std::sync::Arc::new(std::sync::Mutex::new(device_simulator::Device::new(&cli)));
         let mut connection = device_simulator::mqtt::Connection::new(&cli, device.clone())
             .expect("connection must be constructible");
+        // Kept so the loop can rebuild the connection after a sleep, exactly as
+        // `runner::run` does: a sleeping device has no socket.
+        let sleep_cli = std::sync::Arc::new(cli.clone());
         let (tx, mut steps) = mpsc::unbounded_channel();
         let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
@@ -473,6 +476,46 @@ impl SimulatedDevice {
                                 .collect::<Vec<_>>()
                         };
                         connection.publish_all(&publications).await;
+                        // The announcement has gone out; *then* the socket
+                        // closes. A sleeping ESP32 has no connection, and a
+                        // harness that kept one would test nothing (M5-021).
+                        let sleeping = {
+                            let mut device = device_simulator::mqtt::lock(&ticked);
+                            device.take_sleep_notice()
+                        };
+                        if sleeping {
+                            // An *announced* sleep leaves cleanly, so its will
+                            // does not fire and the retained `sleeping` status
+                            // stays the last word. An unannounced one drops the
+                            // socket, which is what makes the will the only
+                            // thing the edge hears.
+                            if device_simulator::mqtt::lock(&ticked).sleep_was_announced() {
+                                connection.disconnect_cleanly().await;
+                            }
+                            drop(connection);
+                            device_simulator::mqtt::lock(&ticked).on_disconnected();
+                            loop {
+                                tokio::time::sleep(TICK).await;
+                                let elapsed = clock.take_elapsed_ms();
+                                {
+                                    let mut device = device_simulator::mqtt::lock(&ticked);
+                                    for step in AcceleratedClock::steps(elapsed) {
+                                        device.tick(step);
+                                    }
+                                    if !device.is_sleeping() {
+                                        break;
+                                    }
+                                }
+                                if thread_kill.load(std::sync::atomic::Ordering::Relaxed) {
+                                    return;
+                                }
+                            }
+                            connection = device_simulator::mqtt::Connection::new(
+                                &sleep_cli,
+                                std::sync::Arc::clone(&ticked),
+                            )
+                            .expect("reconnection must be constructible");
+                        }
                     }
                     }
                 }

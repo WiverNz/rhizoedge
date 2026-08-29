@@ -6,7 +6,7 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 through M4 are implemented and green. M5 is READY and
+**Planning is complete. M0 through M5 are implemented and green. M6 is READY and
 has not started.**
 
 | | State |
@@ -20,7 +20,8 @@ has not started.**
 | M3 | 18 issues, **DONE** — report in [docs/reports/M3.md](docs/reports/M3.md) |
 | M4 | 13 issues, **DONE** — report in [docs/reports/M4.md](docs/reports/M4.md) |
 | Battery pass | ✅ done (2026-08-28) — ADR-018 (see §12), then the post-M4 correction and its independent review; both dated in [docs/reports/M4.md](docs/reports/M4.md) |
-| M5-001 | ⬜ **next** — add plant and profile repositories |
+| M5 | 22 issues, **DONE** — report in [docs/reports/M5.md](docs/reports/M5.md) |
+| M6-001 | ⬜ **next** — add irrigation types and inputs |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -132,6 +133,10 @@ Cargo.toml             root workspace (M0-002)
 crates/                nine implemented/building workspace crates:
                        mqtt-contract, domain, storage, telemetry, cloud-client,
                        testkit, edge-controller, device-simulator, cloud-api
+crates/domain/data/    presets.v1.json — the embedded species catalogue,
+                       compiled in with include_str! (M5-017). Twenty-two
+                       curated entries; every value carries its provenance,
+                       and nothing here names a device, sensor, or schedule.
 deploy/ migrations/ scripts/ test/            skeleton, .gitkeep only
 ```
 
@@ -353,7 +358,58 @@ SAFETY-015's existing behaviour. Get this backwards and a corrupted RTC word
 becomes free watering budget.
 
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
-test, check that first — it is intended behaviour, not a bug.
+test, check that first — it is intended behaviour, not a bug. The default is
+enforced in `repo::plant::create`, not only in the API, so no caller can forget
+it.
+
+**Deleting a plant is a soft delete, and a profile in use can never be deleted.**
+`plants.deleted_at` is what keeps `watering_events` and their attribution alive,
+so every plant read filters on it — a plant that "vanished" is one you deleted.
+`count_using_profile` counts **all** plant rows including soft-deleted ones,
+because the foreign key does not know about `deleted_at`: reporting a profile as
+free and then failing its delete with a constraint error would be worse than
+refusing it plainly.
+
+**The dry-duration accumulator folds every unobserved sample, not one per tick.**
+`plant::analyse` reads the samples newer than `last_sample_at` and folds them in
+order. Advancing one reading per *tick* would make the debounce a property of how
+often the loop runs — a 30-second tick against a 5-minute cadence over-counts,
+and a slow tick under-counts. It also means the freshness threshold has to be
+larger than the sampling interval or every sample looks like a gap: at the
+default 300-second cadence the threshold is 900 seconds, and a test that samples
+every 30 minutes will see `dry_ms` stay at zero. That is the gap rule working,
+not a bug.
+
+**A sleeping simulator disconnects *cleanly*.** `Connection::disconnect_cleanly`
+leaves without publishing anything, because a dropped socket makes the broker
+publish the will — which overwrites the retained `sleeping` status with
+`connection_lost` and turns every expected absence into an unexplained one. The
+`sleep-without-announcing` fault is the one path that still drops the socket, and
+that is its entire purpose. This was caught by the real-broker test, not the
+in-process one.
+
+**`missed_wake_count` reaches 1 after two missed wakes, not 2.** A missed wake
+announces nothing, so it opens no new window, and M4's timer counts at most one
+miss per window. `isolated` — the half that matters — is unaffected. See
+[docs/reports/M5.md](docs/reports/M5.md) §Deviations before "fixing" it.
+
+**`POST /plants/{id}/water` exists in M5 only so that it can refuse.** A plant
+with no `ActuatorBinding` gets **422** `no_actuator_bound`, which SAFETY-018
+requires to be distinguishable from a 409 safety refusal and from a 404. A plant
+that *does* have one gets **501**: M5 issues no commands, and saying so is better
+than a route that 404s and tells an operator their pump is unknown. M6-016
+replaces the second arm.
+
+**Battery measurement kinds are recognised, scalar, and deliberately not
+control-eligible.** `MeasurementKind::is_power_telemetry` is what excludes them,
+so a policy naming `battery_voltage` as its control measurement is refused by the
+shared validator rather than by a reviewer noticing (ADR-018 §7).
+
+**A preset kind with no matching binding produces no policy row.** Creating a
+plant with `preset_id` before binding any sensor is therefore legal and configures
+nothing — the kinds come back in `skipped_unbound_kinds`. Applying the preset
+again after binding sensors is how they get configured, and needs `overwrite`
+only if policies already exist.
 
 **The simulator never waters by itself, and that is M2's boundary, not a bug.**
 An enabled, valid, activated offline policy on a bone-dry isolated plant is

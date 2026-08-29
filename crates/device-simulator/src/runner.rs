@@ -89,6 +89,13 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
                 if restarted_by_fault {
                     rebuild(&cli, &device, &mut connection);
                 }
+                // The announcement has now gone out. *Then* the socket closes:
+                // publishing after disconnecting is not possible, and the
+                // ordering is what lets a fresh subscriber see a sleeping device
+                // rather than a stale online one (ADR-018 section 5).
+                if crate::mqtt::lock(&device).take_sleep_notice() {
+                    connection = deep_sleep(&cli, &device, &mut clock, connection).await?;
+                }
             }
             () = restarted.notified() => {
                 // The device was replaced with a fresh boot. Rebuild the
@@ -150,6 +157,49 @@ async fn isolate(
     // only on an unusable broker URL or an unencodable will, both of which
     // already succeeded once at startup. Retrying would loop on a condition
     // that cannot change.
+    Connection::new(cli, Arc::clone(device))
+}
+
+/// Holds the device off the broker for the announced sleep interval.
+///
+/// The connection is dropped rather than paused, for the same reason
+/// [`isolate`] drops it: a sleeping ESP32 has no socket, and a paused one would
+/// keep the session open and test nothing. The plant keeps drying throughout,
+/// which is what makes a missed wake visible in the readings that follow it.
+async fn deep_sleep(
+    cli: &Cli,
+    device: &Arc<Mutex<Device>>,
+    clock: &mut AcceleratedClock,
+    mut connection: Connection,
+) -> Result<Connection, MqttError> {
+    // A **clean** DISCONNECT, not a dropped socket. A device entering deep sleep
+    // leaves deliberately, so the broker must not publish its will: the retained
+    // sleep announcement has to survive as the last word on this device, and a
+    // will would overwrite it with `connection_lost` and turn an expected
+    // absence into an unexplained one. `sleep-without-announcing` is the case
+    // that *does* drop the socket, and it does so by publishing nothing first.
+    if crate::mqtt::lock(device).sleep_was_announced() {
+        connection.disconnect_cleanly().await;
+    }
+    // An unannounced sleep drops the socket instead, so the broker publishes the
+    // will and the absence reads as `connection_lost`.
+    drop(connection);
+    {
+        let mut guard = crate::mqtt::lock(device);
+        guard.on_disconnected();
+        tracing::info!(
+            sleep_ms = guard.power_state().sleep_remaining_ms(),
+            "asleep; the radio is off and nothing is published or received"
+        );
+    }
+    loop {
+        tokio::time::sleep(TICK_INTERVAL).await;
+        let _ = advance(device, clock);
+        if !crate::mqtt::lock(device).is_sleeping() {
+            break;
+        }
+    }
+    tracing::info!("awake; reconnecting");
     Connection::new(cli, Arc::clone(device))
 }
 

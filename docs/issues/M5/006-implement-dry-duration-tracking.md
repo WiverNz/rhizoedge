@@ -37,11 +37,11 @@ Persisting it means a restart mid-debounce neither loses progress nor invents it
 
 ## Acceptance criteria
 
-- [ ] Continuous dryness accumulates correctly.
-- [ ] One sample at or above target resets it.
-- [ ] A sample gap longer than the staleness threshold resets it.
-- [ ] It survives a restart.
-- [ ] An invalid sample neither accumulates nor resets.
+- [x] Continuous dryness accumulates correctly.
+- [x] One sample at or above target resets it.
+- [x] A sample gap longer than the staleness threshold resets it.
+- [x] It survives a restart.
+- [x] An invalid sample neither accumulates nor resets.
 
 ## Verification
 

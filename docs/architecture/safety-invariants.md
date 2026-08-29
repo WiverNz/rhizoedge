@@ -43,7 +43,7 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 | SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | PLANNED |
 | SAFETY-016 | Offline actions reconcile exactly once; no dose spans the seam twice | Edge + Device | M6 (edge), M9 (device) | PLANNED |
 | SAFETY-017 | A required measurement that is missing or stale blocks autonomous action | Device | M6 | PLANNED |
-| SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | PLANNED |
+| SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | ENFORCED |
 | SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | ENFORCED |
@@ -720,17 +720,25 @@ declared; **applying a species preset carrying dose and cooldown defaults to a
 plant with no actuator** (M5-018) — which must succeed and create measurement
 policies, while creating no actuator binding and no actuation path.
 
-**Planned tests.**
-- `safety_018_no_actuator_no_command` (integration, M5).
-- `safety_018_automation_rejected_without_actuator` (unit): both connected and
-  offline policies.
-- `safety_018_api_returns_422_not_409` (integration) — the distinction is the point.
-- `safety_018_policy_naming_undeclared_actuator_rejected` (unit).
-- `safety_018_preset_creates_no_actuation_path` (integration, M5) — applying a
-  preset to a monitoring-only plant succeeds and leaves the plant unwaterable.
-- SCEN-106.
+**Planned tests.** All present and green as of M5 (2026-08-29):
+- `api::plants::tests::safety_018_no_actuator_no_command` — `POST /water` on a
+  monitoring-only plant.
+- `api::offline_policy::tests::safety_018_automation_rejected_without_actuator`
+  — authoring is refused, and `validate::tests::safety_018_a_policy_without_an_actuator_is_rejected`
+  refuses it in the shared validator whether the policy is enabled or not.
+- `api::plants::tests::safety_018_api_returns_422_not_409` — the distinction is
+  the point, and the same test proves no `force`, `override`, or `bypass` field
+  is honoured.
+- `offline_policy::tests::safety_018_a_plant_with_no_actuator_cannot_have_an_offline_policy`
+  and `binding::tests::*` — a binding naming an undeclared capability is refused.
+- `api::plants::tests::safety_018_preset_creates_no_actuation_path` — applying a
+  preset to a monitoring-only plant succeeds, writes its measurement policies,
+  writes no `actuator_bindings` row, and leaves the plant unwaterable.
+- `recommend::tests::safety_018_a_plant_with_no_actuator_is_never_advised_to_water`.
+- SCEN-106, as `binding::tests::scen_106_a_monitoring_only_plant_binds_normally`
+  and `api::bindings::tests::scen_106_a_monitoring_only_plant_is_first_class`.
 
-**Becomes enforced.** M5 (validation and API); M12 (UI omission).
+**Enforced.** M5 (validation and API); M12 adds the UI omission.
 
 ---
 

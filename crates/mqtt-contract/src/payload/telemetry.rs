@@ -21,6 +21,11 @@ pub enum MeasurementKind {
     TankLevel,
     LeakState,
     NitrateConcentration,
+    /// Supply voltage. Telemetry only: power is never a safety input
+    /// ([ADR-018](../../../../docs/adr/018-battery-and-deep-sleep-device-mode.md) section 7).
+    BatteryVoltage,
+    /// Estimated state of charge. Telemetry only, for the same reason.
+    BatteryPercent,
     Unknown(String),
 }
 impl Serialize for MeasurementKind {
@@ -43,6 +48,8 @@ impl MeasurementKind {
             Self::TankLevel => "tank_level",
             Self::LeakState => "leak_state",
             Self::NitrateConcentration => "nitrate_concentration",
+            Self::BatteryVoltage => "battery_voltage",
+            Self::BatteryPercent => "battery_percent",
             Self::Unknown(v) => v,
         }
     }
@@ -65,6 +72,10 @@ impl MeasurementKind {
                 max: 1.0,
             }),
             Self::NitrateConcentration => Some(KindSpec::scalar(Unit::MgL, 0.0, 5000.0)),
+            // The range mqtt-v1.md section 5.1 states: a single lithium cell
+            // through a 24 V bank, which is every supply ADR-018 contemplates.
+            Self::BatteryVoltage => Some(KindSpec::scalar(Unit::Volt, 0.0, 30.0)),
+            Self::BatteryPercent => Some(KindSpec::scalar(Unit::Percent, 0.0, 100.0)),
             Self::Unknown(_) => None,
         }
     }
@@ -80,6 +91,14 @@ impl MeasurementKind {
     remains an independent hard veto — gate step 3 — and is never the control
     measurement. */
     pub const fn control_eligible(&self) -> bool {
+        // Power is never a safety input (ADR-018 section 7): battery voltage
+        // and state of charge are telemetry, chartable and alertable like any
+        // other reading, and they grant and refuse nothing. Excluding them here
+        // means a policy naming one is refused by the shared validator rather
+        // than by a reviewer noticing.
+        if self.is_power_telemetry() {
+            return false;
+        }
         matches!(
             self.spec(),
             Some(KindSpec {
@@ -87,6 +106,12 @@ impl MeasurementKind {
                 ..
             })
         )
+    }
+    /** Whether the kind describes the device's own supply rather than the
+    plant. Such a reading may be recorded, charted, and alerted on, and may never
+    reach an irrigation decision. */
+    pub const fn is_power_telemetry(&self) -> bool {
+        matches!(self, Self::BatteryVoltage | Self::BatteryPercent)
     }
 }
 impl<'de> Deserialize<'de> for MeasurementKind {
@@ -104,6 +129,8 @@ impl<'de> Deserialize<'de> for MeasurementKind {
             "tank_level" => Self::TankLevel,
             "leak_state" => Self::LeakState,
             "nitrate_concentration" => Self::NitrateConcentration,
+            "battery_voltage" => Self::BatteryVoltage,
+            "battery_percent" => Self::BatteryPercent,
             _ => Self::Unknown(s),
         })
     }
@@ -122,6 +149,7 @@ pub enum Unit {
     Percent,
     Boolean,
     MgL,
+    Volt,
 }
 /// Scalar versus boolean measurement class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

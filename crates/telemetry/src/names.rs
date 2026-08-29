@@ -65,3 +65,13 @@ pub const DEVICE_WAKE_MISSED_TOTAL: &str = "device_wake_missed_total";
 pub const DEVICE_RESTARTS_TOTAL: &str = "device_restarts_total";
 /// HTTP request latency.
 pub const HTTP_REQUEST_DURATION_SECONDS: &str = "http_request_duration_seconds";
+/// Plants currently configured.
+pub const PLANTS_TOTAL: &str = "plants_total";
+/// Plants in each operator-facing state.
+pub const PLANT_STATE: &str = "plant_state";
+/// Recommendations recorded, by decision.
+pub const RECOMMENDATIONS_TOTAL: &str = "recommendations_total";
+/// Waterings the system did not perform.
+pub const MANUAL_WATERING_DETECTED_TOTAL: &str = "manual_watering_detected_total";
+/// Threshold crossings, by measurement kind and severity.
+pub const THRESHOLD_CROSSINGS_TOTAL: &str = "threshold_crossings_total";

@@ -1,0 +1,1 @@
+{"v":1,"kind":"device.config","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6a51","device_id":"plant-node-01","data":{"config_version":9,"telemetry_interval_seconds":900,"pump":{"ml_per_second":8.2,"enabled":true},"tank":{"min_percent":15.0},"sensors":{},"power":{"mode":"battery","wake_interval_seconds":900,"sensor_warmup_ms":2000,"awake_budget_seconds":20}}}

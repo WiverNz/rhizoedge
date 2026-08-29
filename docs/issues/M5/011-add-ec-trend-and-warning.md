@@ -39,11 +39,11 @@ human to solve, not a reason to refuse water.
 
 ## Acceptance criteria
 
-- [ ] EC history is available via the API.
-- [ ] A trend is computed with the same robustness rules as moisture.
-- [ ] Exceeding the threshold raises a warning event.
-- [ ] EC never triggers a lockout.
-- [ ] No code derives a nutrient value from EC.
+- [x] EC history is available via the API.
+- [x] A trend is computed with the same robustness rules as moisture.
+- [x] Exceeding the threshold raises a warning event.
+- [x] EC never triggers a lockout.
+- [x] No code derives a nutrient value from EC.
 
 ## Verification
 

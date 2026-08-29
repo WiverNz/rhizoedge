@@ -1,6 +1,8 @@
 //! Bounded-cardinality ingestion metrics.
 #![allow(missing_docs)]
-use prometheus::{HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
+use prometheus::{
+    HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts,
+};
 use rhizo_telemetry::names::*;
 /// Registered M3 metric set.
 #[derive(Clone)]
@@ -25,6 +27,11 @@ pub struct Metrics {
     pub device_wake_missed: IntCounter,
     pub device_restarts: IntCounterVec,
     pub http_duration: HistogramVec,
+    pub plants_total: IntGauge,
+    pub plant_state: IntGaugeVec,
+    pub recommendations: IntCounterVec,
+    pub manual_watering_detected: IntCounter,
+    pub threshold_crossings: IntCounterVec,
 }
 impl Metrics {
     /// Registers the catalogue in a private registry-friendly process registry.
@@ -110,6 +117,26 @@ impl Metrics {
                 HistogramOpts::new(HTTP_REQUEST_DURATION_SECONDS, "HTTP request latency"),
                 &["route", "status"]
             )?),
+            plants_total: reg!(IntGauge::new(PLANTS_TOTAL, "Configured plants")?),
+            // Labelled by state, which is a closed set of six, not by plant id.
+            plant_state: reg!(IntGaugeVec::new(
+                Opts::new(PLANT_STATE, "Plants in each operator-facing state"),
+                &["state"]
+            )?),
+            recommendations: reg!(IntCounterVec::new(
+                Opts::new(RECOMMENDATIONS_TOTAL, "Recommendations recorded"),
+                &["decision"]
+            )?),
+            manual_watering_detected: reg!(IntCounter::new(
+                MANUAL_WATERING_DETECTED_TOTAL,
+                "Waterings the system did not perform"
+            )?),
+            // Kind is bounded by the contract's measurement kinds and severity
+            // by three values; neither is fleet-sized (ADR-010).
+            threshold_crossings: reg!(IntCounterVec::new(
+                Opts::new(THRESHOLD_CROSSINGS_TOTAL, "Threshold crossings"),
+                &["kind", "severity"]
+            )?),
         };
         for metric in [&metrics.received, &metrics.duplicate, &metrics.measurements] {
             metric.with_label_values(&["unknown"]);
@@ -125,6 +152,22 @@ impl Metrics {
         metrics.device_restarts.with_label_values(&["unknown"]);
         metrics
             .http_duration
+            .with_label_values(&["unknown", "unknown"]);
+        for state in [
+            "healthy",
+            "drying",
+            "water_recommended",
+            "sensor_fault",
+            "watering_locked",
+            "other",
+        ] {
+            metrics.plant_state.with_label_values(&[state]);
+        }
+        for decision in ["water", "no_water", "blocked"] {
+            metrics.recommendations.with_label_values(&[decision]);
+        }
+        metrics
+            .threshold_crossings
             .with_label_values(&["unknown", "unknown"]);
         let _ = INSTANCE.set(metrics.clone());
         Ok(metrics)

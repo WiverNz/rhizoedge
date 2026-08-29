@@ -1,5 +1,17 @@
 # Simulator Strategy
 
+> **Battery mode, added by M5-021 on 2026-08-29.** `--power-mode battery` makes
+> the simulator sleep between sampling cycles on the accelerated clock, so a
+> 900-second wake interval is sub-second at `--time-scale 600`. It announces each
+> sleep with a retained `offline` / `sleeping` status **before** disconnecting,
+> and leaves cleanly so its will does not overwrite that announcement. Two new
+> faults produce the absences SCEN-111 and SCEN-112 are about:
+> `miss-wake:<n>` skips wake cycles silently, and `sleep-without-announcing`
+> drops the socket so the will fires instead. The device stays awake for the
+> whole of an active watering cycle even when `--awake-budget-seconds` is shorter
+> than the dose.
+
+
 The Device Simulator is not a testing convenience. It is the component that
 makes M0–M8 possible without hardware, and it is the reference implementation of
 the device side of the protocol.

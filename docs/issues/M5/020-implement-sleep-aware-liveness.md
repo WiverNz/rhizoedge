@@ -104,6 +104,12 @@ battery device.
 
 ## Acceptance criteria
 
+> **Deliberately unticked.** Every criterion below was met by the dated
+> 2026-08-28 post-M4 correction and its review, not by M5, and ticking them here
+> would claim work this milestone did not do. M5 added a *producer* for the
+> behaviour they describe (M5-021); the criteria themselves belong to M4, where
+> SAFETY-021 is enforced.
+
 - [ ] A battery device inside its window derives `sleeping`, not `offline`.
 - [ ] `expected_wake_at` is computed from the **edge** `received_at`, and an
       announced `expected_wake_ms` far in the future does not extend it.

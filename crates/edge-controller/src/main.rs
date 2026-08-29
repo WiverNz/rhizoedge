@@ -112,17 +112,43 @@ async fn start() -> Result<(), String> {
         "device_health",
         edge_controller::device::health::run(
             db.clone(),
-            clock,
+            clock.clone(),
             client.clone(),
             metrics.clone(),
             supervisor.shutdown_receiver(),
         ),
     );
+    // The plant evaluation loop (M5-012). It takes no MQTT client, which is the
+    // strongest available form of "M5 issues no commands": the loop could not
+    // publish one if it wanted to.
+    supervisor.spawn(
+        "plant_control",
+        edge_controller::control::tick::run(
+            db.clone(),
+            clock.clone(),
+            metrics.clone(),
+            std::time::Duration::from_secs(c.control.tick_interval_seconds),
+            supervisor.shutdown_receiver(),
+        ),
+    );
+    // One sensible default profile, so a first-run system is usable without the
+    // operator inventing numbers. Inserted only when the id is free, so an
+    // operator who edits it keeps their edit.
+    if edge_controller::api::profiles::seed_default(&db, clock.now().timestamp_millis())
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        tracing::info!(
+            profile = edge_controller::api::profiles::DEFAULT_PROFILE_ID,
+            "seeded the default plant profile"
+        );
+    }
     let bind = c.api.bind;
     let cors_allowed_origins = c.api.cors_allowed_origins;
     let api_state = edge_controller::api::ApiState {
         db: db.clone(),
         metrics: metrics.clone(),
+        clock: clock.clone(),
     };
     let mut shutdown = supervisor.shutdown_receiver();
     supervisor.spawn("api", async move {

@@ -156,6 +156,12 @@ pub struct StateResponse {
     pub pump_running: bool,
     /// Cycles buffered while disconnected.
     pub buffered_cycles: usize,
+    /// The declared power mode, `always_on` or `battery`.
+    pub power_mode: String,
+    /// Whether the device is currently off the air.
+    pub sleeping: bool,
+    /// Simulated state of charge.
+    pub battery_percent: f64,
     /// Faults currently enabled.
     pub faults: Vec<String>,
     /// How many times the device has booted.
@@ -180,6 +186,10 @@ pub struct SetStateRequest {
     pub fertilise_us_cm: Option<f64>,
     /// Mark the actuator faulted or healthy.
     pub actuator_faulted: Option<bool>,
+    /// Set the simulated state of charge, for a test that needs a low battery
+    /// now rather than in a fortnight. Telemetry only: it changes no decision
+    /// anywhere (ADR-018 section 7).
+    pub battery_percent: Option<f64>,
 }
 
 /// `GET /sim/scale`.
@@ -255,6 +265,9 @@ async fn set_state(
     if let Some(us_cm) = request.fertilise_us_cm {
         device.environment_mut().ec.fertilise(us_cm);
     }
+    if let Some(percent) = request.battery_percent {
+        device.set_battery_percent(percent);
+    }
     if let Some(faulted) = request.actuator_faulted {
         device.set_actuator_faulted(faulted);
     }
@@ -325,6 +338,13 @@ fn snapshot(device: &Device) -> StateResponse {
         delivered_today_ml: device.delivered_today_ml(),
         pump_running: device.pump_running(),
         buffered_cycles: device.buffered_cycles(),
+        power_mode: if device.power_state().is_battery() {
+            "battery".to_owned()
+        } else {
+            "always_on".to_owned()
+        },
+        sleeping: device.is_sleeping(),
+        battery_percent: device.battery_percent(),
         faults: device.faults().active().map(|f| f.to_string()).collect(),
         boot_count: device.store().state().boot_count,
     }

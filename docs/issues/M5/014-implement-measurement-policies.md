@@ -42,13 +42,13 @@ existing plants is not a feature (ADR-016).
 
 ## Acceptance criteria
 
-- [ ] Policies can be set per plant and per kind.
-- [ ] Each validation rule rejects with its own error.
-- [ ] A missing optional field is genuinely optional and does not block evaluation.
-- [ ] `stale_after` is required and validated positive.
-- [ ] Creating a plant from a profile seeds policies.
-- [ ] Editing a profile afterwards does **not** modify existing plants.
-- [ ] Two plants can hold different thresholds for the same shared sensor.
+- [x] Policies can be set per plant and per kind.
+- [x] Each validation rule rejects with its own error.
+- [x] A missing optional field is genuinely optional and does not block evaluation.
+- [x] `stale_after` is required and validated positive.
+- [x] Creating a plant from a profile seeds policies.
+- [x] Editing a profile afterwards does **not** modify existing plants.
+- [x] Two plants can hold different thresholds for the same shared sensor.
 
 ## Verification
 

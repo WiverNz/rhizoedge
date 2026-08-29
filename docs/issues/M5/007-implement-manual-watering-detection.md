@@ -40,12 +40,12 @@ machine should wait.
 
 ## Acceptance criteria
 
-- [ ] A moisture step above the threshold creates a `detected` event.
-- [ ] A weight step creates one and gives a better volume estimate.
-- [ ] **A rise following a completed command creates no event.**
-- [ ] Detection resets time-since-last-watering.
-- [ ] `mode='detected'` rows are excluded from the automatic daily total.
-- [ ] Sub-threshold changes create nothing.
+- [x] A moisture step above the threshold creates a `detected` event.
+- [x] A weight step creates one and gives a better volume estimate.
+- [x] **A rise following a completed command creates no event.**
+- [x] Detection resets time-since-last-watering.
+- [x] `mode='detected'` rows are excluded from the automatic daily total.
+- [x] Sub-threshold changes create nothing.
 
 ## Verification
 

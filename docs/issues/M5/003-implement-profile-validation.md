@@ -40,11 +40,11 @@ firmware limit change automatically tightens profile validation.
 
 ## Acceptance criteria
 
-- [ ] Each rule rejects with its own error variant.
-- [ ] A valid profile passes.
-- [ ] `dose_ml = 200` against a hard limit of 80 is **rejected**, not clamped.
-- [ ] Boundary values (exactly at the limit) are accepted.
-- [ ] Validation is a pure function with no I/O.
+- [x] Each rule rejects with its own error variant.
+- [x] A valid profile passes.
+- [x] `dose_ml = 200` against a hard limit of 80 is **rejected**, not clamped.
+- [x] Boundary values (exactly at the limit) are accepted.
+- [x] Validation is a pure function with no I/O.
 
 ## Verification
 

@@ -31,6 +31,28 @@ impl PowerMode {
         }
     }
 }
+/// Why the device is awake.
+///
+/// Diagnostic only. Nothing decides anything from it — which is why an
+/// unrecognised value decodes to [`WakeReason::Unknown`] rather than failing:
+/// a field nobody acts on must never be able to take a fleet offline.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeReason {
+    /// The deep-sleep timer elapsed.
+    Timer,
+    /// A power-on or reset that is not a timer wake.
+    ColdBoot,
+    /// An external wake source, such as a pin.
+    External,
+    /// The watchdog fired.
+    Watchdog,
+    /// A reason this contract version does not recognise.
+    #[serde(other)]
+    #[default]
+    Unknown,
+}
+
 /// Advisory power information reported with status.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PowerStatus {
@@ -43,8 +65,8 @@ pub struct PowerStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_wake_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Reset/wake diagnostic.
-    pub wake_reason: Option<String>,
+    /// Reset/wake diagnostic. Typed, and forward-compatible.
+    pub wake_reason: Option<WakeReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Supply voltage where measurable.
     pub battery_mv: Option<u32>,
@@ -257,6 +279,36 @@ pub struct SensorConfig {
     /** Leak. */
     pub leak: bool,
 }
+/// Desired power behaviour (M5-019, ADR-018).
+///
+/// Every field is optional and an **absent block means always-on**, so a v1
+/// configuration written before ADR-018 keeps its meaning exactly. An
+/// unrecognised `mode` resolves to always-on for the same reason the status side
+/// does: sleeping is the branch that makes a device unreachable, and uncertainty
+/// must not take it (SAFETY-012).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PowerConfig {
+    #[serde(default)]
+    /** Desired mode. */
+    pub mode: PowerMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /** How long the device should sleep between wakes. */
+    pub wake_interval_seconds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /** How long peripherals need after power-on before a reading is usable. */
+    pub sensor_warmup_ms: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /** How long an *idle* wake may last. An active watering cycle extends it;
+    a budget that could truncate a dose would be a way to strand an energised
+    pump (ADR-018 §5). */
+    pub awake_budget_seconds: Option<u32>,
+}
+impl PowerConfig {
+    /** The mode this configuration actually asks for, resolved conservatively. */
+    pub const fn effective_mode(&self) -> PowerMode {
+        self.mode.effective()
+    }
+}
 /// Retained desired device configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeviceConfig {
@@ -271,6 +323,9 @@ pub struct DeviceConfig {
     #[serde(default)]
     /** Sensor switches. */
     pub sensors: SensorConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /** Desired power behaviour. An absent block means always-on. */
+    pub power: Option<PowerConfig>,
 }
 /// Config validation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -278,7 +333,25 @@ pub enum ConfigError {
     TelemetryInterval,
     PumpRate,
     TankMinimum,
+    /// `power.wake_interval_seconds` is outside the range the status side
+    /// publishes. **Rejected, never clamped** (ADR-011).
+    WakeInterval,
+    /// `power.sensor_warmup_ms` is outside 0..=60000 (mqtt-v1.md §5.7).
+    SensorWarmup,
+    /// `power.awake_budget_seconds` is outside 5..=300 (mqtt-v1.md §5.7).
+    ///
+    /// The floor matters: a budget short enough to end a wake before its
+    /// readings are published would be a device that samples nothing.
+    AwakeBudget,
 }
+/// Shortest peripheral warm-up a configuration may ask for.
+pub const SENSOR_WARMUP_MIN_MS: u32 = 0;
+/// Longest peripheral warm-up a configuration may ask for.
+pub const SENSOR_WARMUP_MAX_MS: u32 = 60_000;
+/// Shortest idle awake budget a configuration may ask for.
+pub const AWAKE_BUDGET_MIN_SECONDS: u32 = 5;
+/// Longest idle awake budget a configuration may ask for.
+pub const AWAKE_BUDGET_MAX_SECONDS: u32 = 300;
 impl DeviceConfig {
     /** Rejects, never clamps, invalid configuration. */
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -291,6 +364,29 @@ impl DeviceConfig {
         }
         if !self.tank.min_percent.is_finite() || !(0.0..=100.0).contains(&self.tank.min_percent) {
             return Err(ConfigError::TankMinimum);
+        }
+        // The bounds are the status side's, not a second copy: a device may not
+        // be *configured* to sleep for a duration it could not legally
+        // *announce*, and one constant cannot drift from the other.
+        if let Some(power) = self.power
+            && power.effective_mode() == PowerMode::Battery
+            && let Some(seconds) = power.wake_interval_seconds
+            && !(SLEEP_WAKE_INTERVAL_MIN_SECONDS..=SLEEP_WAKE_INTERVAL_MAX_SECONDS)
+                .contains(&seconds)
+        {
+            return Err(ConfigError::WakeInterval);
+        }
+        if let Some(power) = self.power {
+            if let Some(ms) = power.sensor_warmup_ms
+                && !(SENSOR_WARMUP_MIN_MS..=SENSOR_WARMUP_MAX_MS).contains(&ms)
+            {
+                return Err(ConfigError::SensorWarmup);
+            }
+            if let Some(seconds) = power.awake_budget_seconds
+                && !(AWAKE_BUDGET_MIN_SECONDS..=AWAKE_BUDGET_MAX_SECONDS).contains(&seconds)
+            {
+                return Err(ConfigError::AwakeBudget);
+            }
         }
         Ok(())
     }
@@ -348,7 +444,7 @@ mod tests {
             mode: PowerMode::Battery,
             wake_interval_seconds: Some(900),
             expected_wake_ms: Some(u64::MAX),
-            wake_reason: Some("timer".into()),
+            wake_reason: Some(WakeReason::Timer),
             battery_mv: Some(3_280),
             awake_ms: Some(4_120),
         };
@@ -429,5 +525,163 @@ mod tests {
         assert!(!status.announces_sleep());
         assert_eq!(status.validate(), Ok(()));
         assert!(!serde_json::to_string(&status).unwrap().contains("power"));
+    }
+}
+
+#[cfg(test)]
+mod power_mode {
+    use super::*;
+    use alloc::format;
+
+    fn config() -> DeviceConfig {
+        DeviceConfig {
+            config_version: 9,
+            telemetry_interval_seconds: 900,
+            pump: PumpConfig {
+                ml_per_second: 8.2,
+                enabled: true,
+            },
+            tank: TankConfig { min_percent: 15.0 },
+            sensors: SensorConfig::default(),
+            power: None,
+        }
+    }
+
+    /// An absent block is what a pre-ADR-018 configuration carries. It declares
+    /// nothing, and it must keep meaning always-on.
+    #[test]
+    fn an_absent_power_block_decodes_to_always_on() {
+        let json = r#"{"config_version":9,"telemetry_interval_seconds":900,"pump":{"ml_per_second":8.2,"enabled":true},"tank":{"min_percent":15.0}}"#;
+        let decoded: DeviceConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded.power, None);
+        assert_eq!(decoded.validate(), Ok(()));
+        assert!(!serde_json::to_string(&decoded).unwrap().contains("power"));
+    }
+
+    /// An unrecognised mode resolves to always-on: sleeping is the branch that
+    /// makes a device unreachable, and uncertainty must not take it.
+    #[test]
+    fn an_unrecognised_mode_decodes_to_always_on() {
+        let json = r#"{"config_version":9,"telemetry_interval_seconds":900,"pump":{"ml_per_second":8.2,"enabled":true},"tank":{"min_percent":15.0},"power":{"mode":"solar_only","wake_interval_seconds":5}}"#;
+        let decoded: DeviceConfig = serde_json::from_str(json).unwrap();
+        let power = decoded.power.unwrap();
+        assert_eq!(power.mode, PowerMode::Unknown);
+        assert_eq!(power.effective_mode(), PowerMode::AlwaysOn);
+        assert_eq!(
+            decoded.validate(),
+            Ok(()),
+            "an always-on device has no wake interval to bound"
+        );
+    }
+
+    /// Rejected, never clamped — and against the *same* bounds the status side
+    /// publishes, so a device cannot be configured to sleep for a duration it
+    /// could not legally announce.
+    #[test]
+    fn a_wake_interval_outside_its_range_is_rejected_not_clamped() {
+        for seconds in [0, 1, SLEEP_WAKE_INTERVAL_MIN_SECONDS - 1] {
+            let mut candidate = config();
+            candidate.power = Some(PowerConfig {
+                mode: PowerMode::Battery,
+                wake_interval_seconds: Some(seconds),
+                ..PowerConfig::default()
+            });
+            assert_eq!(
+                candidate.validate(),
+                Err(ConfigError::WakeInterval),
+                "{seconds} s"
+            );
+            assert_eq!(
+                candidate.power.unwrap().wake_interval_seconds,
+                Some(seconds),
+                "validation never rewrites the value it refuses"
+            );
+        }
+        let mut candidate = config();
+        candidate.power = Some(PowerConfig {
+            mode: PowerMode::Battery,
+            wake_interval_seconds: Some(SLEEP_WAKE_INTERVAL_MAX_SECONDS + 1),
+            ..PowerConfig::default()
+        });
+        assert_eq!(candidate.validate(), Err(ConfigError::WakeInterval));
+
+        // Both bounds are inclusive, and they are the status side's constants.
+        for seconds in [
+            SLEEP_WAKE_INTERVAL_MIN_SECONDS,
+            SLEEP_WAKE_INTERVAL_MAX_SECONDS,
+        ] {
+            let mut candidate = config();
+            candidate.power = Some(PowerConfig {
+                mode: PowerMode::Battery,
+                wake_interval_seconds: Some(seconds),
+                ..PowerConfig::default()
+            });
+            assert_eq!(candidate.validate(), Ok(()), "{seconds} s");
+        }
+    }
+
+    /// The other two documented ranges, refused rather than trimmed.
+    #[test]
+    fn the_warmup_and_budget_ranges_are_enforced_too() {
+        let bounded = |warmup: Option<u32>, budget: Option<u32>| {
+            let mut candidate = config();
+            candidate.power = Some(PowerConfig {
+                mode: PowerMode::Battery,
+                wake_interval_seconds: Some(900),
+                sensor_warmup_ms: warmup,
+                awake_budget_seconds: budget,
+            });
+            candidate.validate()
+        };
+        assert_eq!(bounded(Some(60_001), None), Err(ConfigError::SensorWarmup));
+        assert_eq!(bounded(Some(60_000), None), Ok(()));
+        assert_eq!(bounded(Some(0), None), Ok(()));
+        assert_eq!(bounded(None, Some(4)), Err(ConfigError::AwakeBudget));
+        assert_eq!(bounded(None, Some(301)), Err(ConfigError::AwakeBudget));
+        assert_eq!(bounded(None, Some(5)), Ok(()));
+        assert_eq!(bounded(None, Some(300)), Ok(()));
+        assert_eq!(bounded(None, None), Ok(()), "both are optional");
+    }
+
+    #[test]
+    fn an_unrecognised_wake_reason_decodes_rather_than_failing() {
+        let reason: WakeReason = serde_json::from_str("\"brownout\"").unwrap();
+        assert_eq!(
+            reason,
+            WakeReason::Unknown,
+            "a diagnostic nobody acts on must never take a fleet offline"
+        );
+        for (wire, expected) in [
+            ("timer", WakeReason::Timer),
+            ("cold_boot", WakeReason::ColdBoot),
+            ("external", WakeReason::External),
+            ("watchdog", WakeReason::Watchdog),
+        ] {
+            let decoded: WakeReason = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
+            assert_eq!(decoded, expected);
+            assert_eq!(
+                serde_json::to_string(&decoded).unwrap(),
+                format!("\"{wire}\"")
+            );
+        }
+    }
+
+    /// The power block round-trips through a status without losing a field.
+    #[test]
+    fn the_status_power_block_round_trips_with_a_typed_wake_reason() {
+        let power = PowerStatus {
+            mode: PowerMode::Battery,
+            wake_interval_seconds: Some(900),
+            expected_wake_ms: Some(900_000),
+            wake_reason: Some(WakeReason::Timer),
+            battery_mv: Some(3_940),
+            awake_ms: Some(4_120),
+        };
+        let encoded = serde_json::to_string(&power).unwrap();
+        assert!(encoded.contains("\"wake_reason\":\"timer\""), "{encoded}");
+        assert_eq!(
+            serde_json::from_str::<PowerStatus>(&encoded).unwrap(),
+            power
+        );
     }
 }

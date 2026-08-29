@@ -142,6 +142,7 @@ mod tests {
             },
             tank: TankConfig { min_percent: 15.0 },
             sensors: Default::default(),
+            power: None,
         }
     }
 

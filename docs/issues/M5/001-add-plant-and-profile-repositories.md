@@ -39,11 +39,11 @@ reference or use a soft delete, and assert it in a test.
 
 ## Acceptance criteria
 
-- [ ] Plants and profiles can be created, read, updated, and deleted.
-- [ ] A new plant has `auto_watering_enabled = false`.
-- [ ] Deleting a profile in use is refused.
-- [ ] Deleting a plant leaves its `watering_events` rows intact.
-- [ ] Foreign key violations are rejected.
+- [x] Plants and profiles can be created, read, updated, and deleted.
+- [x] A new plant has `auto_watering_enabled = false`.
+- [x] Deleting a profile in use is refused.
+- [x] Deleting a plant leaves its `watering_events` rows intact.
+- [x] Foreign key violations are rejected.
 
 ## Verification
 

@@ -34,11 +34,21 @@ pub enum SensorGroup {
     Tank,
     /// Tray leak detector.
     Leak,
+    /// The device's own supply gauge. Declared automatically by
+    /// `--power-mode battery`; selectable here for a mains device that still
+    /// reports a backup pack.
+    Battery,
 }
 
 impl SensorGroup {
     /// Every group, in declaration order.
-    pub const ALL: [Self; 4] = [Self::Soil, Self::Weight, Self::Tank, Self::Leak];
+    pub const ALL: [Self; 5] = [
+        Self::Soil,
+        Self::Weight,
+        Self::Tank,
+        Self::Leak,
+        Self::Battery,
+    ];
 
     /// The lowercase name accepted by `--sensors`.
     #[must_use]
@@ -48,6 +58,7 @@ impl SensorGroup {
             Self::Weight => "weight",
             Self::Tank => "tank",
             Self::Leak => "leak",
+            Self::Battery => "battery",
         }
     }
 }
@@ -302,6 +313,16 @@ pub enum Fault {
         /// Step after which the process dies.
         step: PolicyStep,
     },
+    /// Sleep through the next `count` wake cycles without announcing anything,
+    /// so an edge sees a device that stopped waking (SCEN-111).
+    MissWake {
+        /// Consecutive wake cycles to skip.
+        count: u32,
+    },
+    /// Leave the broker from battery mode without publishing the sleep
+    /// announcement, so the Last Will fires and the absence is unexplained
+    /// (SCEN-112).
+    SleepWithoutAnnouncing,
 }
 
 impl Fault {
@@ -324,11 +345,13 @@ impl Fault {
             Self::RestartMidDose => "restart-mid-dose",
             Self::Restart => "restart",
             Self::PolicyInterrupt { .. } => "policy-interrupt",
+            Self::MissWake { .. } => "miss-wake",
+            Self::SleepWithoutAnnouncing => "sleep-without-announcing",
         }
     }
 
     /// Every fault specification in the catalogue, for help text and tests.
-    pub const NAMES: [&'static str; 14] = [
+    pub const NAMES: [&'static str; 16] = [
         "disconnect:<sec>",
         "duplicate:<rate>",
         "reorder:<rate>",
@@ -343,6 +366,8 @@ impl Fault {
         "restart-mid-dose",
         "restart",
         "policy-interrupt:<step>",
+        "miss-wake:<n>",
+        "sleep-without-announcing",
     ];
 }
 
@@ -355,6 +380,7 @@ impl fmt::Display for Fault {
             Self::InvalidSoil { rate } => write!(f, "invalid-soil:{rate}"),
             Self::ClockSkew { seconds } => write!(f, "clock-skew:{seconds}"),
             Self::PolicyInterrupt { step } => write!(f, "policy-interrupt:{step}"),
+            Self::MissWake { count } => write!(f, "miss-wake:{count}"),
             other => f.write_str(other.name()),
         }
     }
@@ -412,7 +438,61 @@ impl FromStr for Fault {
             "policy-interrupt" => Ok(Self::PolicyInterrupt {
                 step: need(name, arg)?.parse()?,
             }),
+            "miss-wake" => Ok(Self::MissWake {
+                count: number(s, name, arg)?,
+            }),
+            "sleep-without-announcing" => Ok(Self::SleepWithoutAnnouncing),
             other => Err(CliError::UnknownFault(other.to_owned())),
+        }
+    }
+}
+
+/// The `--power-mode` value.
+///
+/// A separate type from the contract's `PowerMode` because the command line
+/// admits only the two modes a simulator can actually run; `unknown` is a wire
+/// value, not something anyone can ask for.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PowerModeArg {
+    /// Stay connected, as every device did before ADR-018.
+    #[default]
+    AlwaysOn,
+    /// Sleep between sampling cycles.
+    Battery,
+}
+
+impl PowerModeArg {
+    /// The wire value this mode declares.
+    #[must_use]
+    pub const fn wire(self) -> rhizo_mqtt_contract::payload::PowerMode {
+        match self {
+            Self::AlwaysOn => rhizo_mqtt_contract::payload::PowerMode::AlwaysOn,
+            Self::Battery => rhizo_mqtt_contract::payload::PowerMode::Battery,
+        }
+    }
+    /// Whether this device sleeps.
+    #[must_use]
+    pub const fn is_battery(self) -> bool {
+        matches!(self, Self::Battery)
+    }
+}
+
+impl fmt::Display for PowerModeArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::AlwaysOn => "always_on",
+            Self::Battery => "battery",
+        })
+    }
+}
+
+impl FromStr for PowerModeArg {
+    type Err = CliError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "always_on" | "always-on" => Ok(Self::AlwaysOn),
+            "battery" => Ok(Self::Battery),
+            other => Err(CliError::UnknownPowerMode(other.to_owned())),
         }
     }
 }
@@ -421,7 +501,7 @@ impl FromStr for Fault {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CliError {
     /// `--sensors` named a group that does not exist.
-    #[error("unknown sensor group `{0}`; expected one of soil, weight, tank, leak")]
+    #[error("unknown sensor group `{0}`; expected one of soil, weight, tank, leak, battery")]
     UnknownSensor(String),
     /// `--actuators` named an id that is not a valid local identifier.
     #[error("invalid actuator id `{0}`")]
@@ -429,6 +509,9 @@ pub enum CliError {
     /// `--actuators` named a kind outside the protocol enumeration.
     #[error("unknown actuator kind `{0}`")]
     UnknownActuatorKind(String),
+    /// `--power-mode` named a mode that does not exist.
+    #[error("unknown power mode `{0}`; expected always_on or battery")]
+    UnknownPowerMode(String),
     /// `--fault` named a fault that is not in the catalogue.
     #[error("unknown fault `{0}`")]
     UnknownFault(String),
@@ -555,6 +638,28 @@ pub struct Cli {
     /// controller that only works on clean signals does not work.
     #[arg(long)]
     pub no_noise: bool,
+
+    /// Power mode. `battery` sleeps between sampling cycles and announces each
+    /// sleep before disconnecting (ADR-018).
+    #[arg(long, value_name = "MODE", default_value = "always_on")]
+    pub power_mode: PowerModeArg,
+
+    /// How long a battery device sleeps between wakes, in seconds of virtual
+    /// time. Bounded by the protocol so a device cannot announce a sleep the
+    /// edge would refuse.
+    #[arg(long, value_name = "SECONDS", default_value_t = 900)]
+    pub wake_interval_seconds: u32,
+
+    /// How long an *idle* wake may last, in seconds of virtual time. An active
+    /// watering cycle extends it: a budget that could truncate a dose would be a
+    /// way to strand an energised pump.
+    #[arg(long, value_name = "SECONDS", default_value_t = 20)]
+    pub awake_budget_seconds: u32,
+
+    /// Simulated peripheral warm-up after power-on, in milliseconds of virtual
+    /// time. A reading taken before it elapses is not taken at all.
+    #[arg(long, value_name = "MS", default_value_t = 2_000)]
+    pub sensor_warmup_ms: u32,
 
     /// Log format: `json` or `pretty`.
     #[arg(long, value_name = "FORMAT", default_value = "pretty")]
@@ -698,7 +803,20 @@ mod tests {
         assert_eq!(cli.telemetry_interval, 300);
         assert_eq!(cli.time_scale, 1.0);
         assert_eq!(cli.control_port, DEFAULT_CONTROL_PORT);
-        assert_eq!(cli.sensors.groups(), SensorGroup::ALL);
+        // The default sensor list is the plant hardware. The battery gauge is
+        // declared by `--power-mode battery` rather than selected here, because
+        // a mains device has no pack to report.
+        assert_eq!(
+            cli.sensors.groups(),
+            [
+                SensorGroup::Soil,
+                SensorGroup::Weight,
+                SensorGroup::Tank,
+                SensorGroup::Leak
+            ]
+        );
+        assert_eq!(cli.power_mode, PowerModeArg::AlwaysOn);
+        assert_eq!(cli.wake_interval_seconds, 900);
         assert_eq!(cli.actuators.specs().len(), 1);
         assert!(!cli.no_noise, "noise is on by default");
         assert_eq!(
@@ -839,6 +957,8 @@ mod tests {
                     step: PolicyStep::Stage,
                 },
             ),
+            ("miss-wake:2", Fault::MissWake { count: 2 }),
+            ("sleep-without-announcing", Fault::SleepWithoutAnnouncing),
         ];
         assert_eq!(
             cases.len(),

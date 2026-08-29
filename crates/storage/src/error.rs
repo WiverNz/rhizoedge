@@ -28,10 +28,23 @@ pub enum StorageError {
 impl StorageError {
     pub(crate) fn from_sqlx(error: sqlx::Error) -> Self {
         if let sqlx::Error::Database(db) = &error {
-            return match db.code().as_deref() {
-                Some("5" | "6") => Self::Busy(error.to_string()),
-                Some("13") => Self::Full(error.to_string()),
-                Some("19" | "1555" | "2067") => Self::Constraint(error.to_string()),
+            // SQLite reports *extended* result codes: the low byte is the
+            // primary code and the high bits say which flavour of it. A foreign
+            // key violation is 787, which is `19 | (3 << 8)` — the same
+            // `SQLITE_CONSTRAINT` as a unique violation. Listing the extended
+            // codes one at a time is how 787 came to be classified `Fatal`
+            // rather than `Permanent`, which would have made a caller retry a
+            // write that can never succeed. Masking to the primary code covers
+            // every flavour, including the ones SQLite has not added yet.
+            let primary = db
+                .code()
+                .as_deref()
+                .and_then(|code| code.parse::<u32>().ok())
+                .map(|code| code & 0xFF);
+            return match primary {
+                Some(5 | 6) => Self::Busy(error.to_string()),
+                Some(13) => Self::Full(error.to_string()),
+                Some(19) => Self::Constraint(error.to_string()),
                 _ => Self::Database(error.to_string()),
             };
         }

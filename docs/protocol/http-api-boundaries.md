@@ -134,9 +134,10 @@ The deadline is re-checked on **every read**, so an overdue sleeper reports
 one stored half, because it counts events rather than describing the present, and
 it may therefore still be zero on the first read after a missed wake.
 
-`power_mode` is `always_on` or `battery`. Until the edge publishes device
-configuration (M5-019), its source is the device's own `power` declaration on
-`device.status`: `battery` while the device declares it, `always_on` on any
+`power_mode` is `always_on` or `battery`. M5-019 added the
+`device.config.power` block the edge will publish, but **nothing publishes device
+configuration yet** — the config publisher is M6's — so the field's source is
+still the device's own `power` declaration on `device.status`: `battery` while the device declares it, `always_on` on any
 other explicit declaration, and unchanged when a status carries no `power` block
 at all. `wake_interval_seconds` is the interval of the most recent accepted sleep
 announcement and is cleared when the device stops declaring battery mode. Neither

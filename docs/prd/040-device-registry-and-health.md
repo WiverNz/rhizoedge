@@ -216,7 +216,7 @@ Delivered by the dated post-M4 battery-compatibility correction:
 
 | ID | Requirement |
 |---|---|
-| F-040-20 | `power_mode` and `wake_interval_seconds` persisted per device. Until the edge publishes device configuration (M5-019) the source is the device's own `power` declaration on `device.status`: an absent block declares nothing and changes nothing, any explicit non-battery mode retires the battery state, and a Last Will never redeclares either |
+| F-040-20 | `power_mode` and `wake_interval_seconds` persisted per device. M5-019 defined the `device.config.power` block, but no config publisher exists yet (M6), so the source remains the device's own `power` declaration on `device.status`: an absent block declares nothing and changes nothing, any explicit non-battery mode retires the battery state, and a Last Will never redeclares either |
 | F-040-21 | `connectivity` gains `sleeping`, **derived at read time** alongside `connected`, `isolated`, and `reconciling`. The `connectivity_mode` column is the raw material the timer maintains for events and metrics; the reported value re-checks `overdue_at` against the edge clock on every read, so an overdue sleeper reads `isolated` even if the timer never ran |
 | F-040-22 | `expected_wake_at = received_at(announcement) + wake_interval_seconds`, and `overdue_at = expected_wake_at + max(wake_interval_seconds, 300 s)`, both on the **edge** clock |
 | F-040-23 | Past `overdue_at` the device derives `isolated`, with the transition made **by the liveness timer** and no inbound message required |

@@ -125,6 +125,15 @@ pub struct Device {
     unpersisted_runtime_ms: u64,
     /// What the most recent `event.ack` did.
     last_ack_outcome: Option<AckOutcome>,
+    /// The wake cycle. Always-on devices carry an inert one.
+    power: crate::power::PowerState,
+    /// Set when the device has announced its sleep and is ready to leave the
+    /// broker, so the run loop drops the socket *after* the publication.
+    sleep_notice: bool,
+    /// Whether that sleep was announced. An announced sleep leaves cleanly so
+    /// the retained announcement survives; an unannounced one drops the socket
+    /// so the will fires, which is the whole point of the fault.
+    sleep_announced: bool,
 }
 
 impl Device {
@@ -221,6 +230,17 @@ impl Device {
             last_policy_rejection: None,
             unpersisted_runtime_ms: 0,
             last_ack_outcome: None,
+            power: if cli.power_mode.is_battery() {
+                crate::power::PowerState::battery(
+                    cli.wake_interval_seconds,
+                    cli.awake_budget_seconds,
+                    cli.sensor_warmup_ms,
+                )
+            } else {
+                crate::power::PowerState::always_on()
+            },
+            sleep_notice: false,
+            sleep_announced: false,
         };
         // A boot always begins with the pump off, and a dose that was in flight
         // when the power went is reported before anything else happens
@@ -472,6 +492,12 @@ impl Device {
             // (protocol §5.12).
             self.on_disconnected();
         }
+        if let Some(count) = self.faults.miss_wakes() {
+            // Consumed at the next sleep: the device skips that many wakes and
+            // says nothing at all about it, which is what makes the absence
+            // unexplained from the Edge's side (SCEN-111).
+            self.power.miss_wakes(count);
+        }
         if !self.faults.is_enabled("stuck-sensor") {
             // Disabling really unfreezes. A fault that could not be undone
             // would make a scenario's later phases untestable — and a sensor
@@ -547,6 +573,17 @@ impl Device {
         }
         self.monotonic.advance_ms(elapsed_ms);
         self.environment.step(elapsed_ms);
+        // The plant does not sleep. Soil, reservoir, and pot keep evolving while
+        // the device is off the air, which is what makes a missed wake visible
+        // in the readings that follow it.
+        if self.power.advance(elapsed_ms) {
+            // One wake, one charge.
+            self.environment.battery.drain_wake();
+            tracing::debug!("woke from deep sleep");
+        }
+        if self.power.is_sleeping() {
+            return Vec::new();
+        }
         if self.isolation_remaining_ms > 0 {
             self.isolation_remaining_ms = self.isolation_remaining_ms.saturating_sub(elapsed_ms);
             if self.isolation_remaining_ms == 0 {
@@ -561,6 +598,7 @@ impl Device {
         // the broker is reachable: an isolated device is still a fully
         // functioning sensor node (protocol §5.12, ADR-015).
         if let Some(batch) = self.due_sample() {
+            self.power.note_sampled();
             match self.telemetry_publication(batch.clone()) {
                 Ok(p) if self.connected => publications.push(p),
                 Ok(_) => self.telemetry_ring.push(batch),
@@ -599,7 +637,75 @@ impl Device {
                 Err(e) => tracing::error!(error = %e, "could not build the status heartbeat"),
             }
         }
+        // A battery device goes back to sleep once its wake has done its work.
+        // The announcement is published *before* the disconnect: the run loop
+        // drops the socket only after this publication has gone out.
+        let busy = self.actuator_active || self.pump.is_running();
+        if self.power.should_sleep(busy) {
+            if self.faults.is_enabled("sleep-without-announcing") {
+                // Leave without a word. The will fires, the edge sees
+                // `connection_lost`, and the absence is unexplained -- which is
+                // exactly what SCEN-112 is about.
+                tracing::warn!("sleep-without-announcing: leaving the broker silently");
+                self.sleep_announced = false;
+            } else {
+                match self
+                    .status_publication(DeviceStatusValue::Offline, Some(String::from("sleeping")))
+                {
+                    Ok(p) => publications.push(p),
+                    Err(e) => {
+                        tracing::error!(error = %e, "could not build the sleep announcement");
+                    }
+                }
+                self.sleep_announced = true;
+            }
+            self.power.sleep();
+            self.sleep_notice = true;
+        }
         publications
+    }
+
+    /// Whether the device has announced its sleep and is waiting for the run
+    /// loop to drop the socket. Consuming the flag means it is acted on once.
+    pub const fn take_sleep_notice(&mut self) -> bool {
+        let notice = self.sleep_notice;
+        self.sleep_notice = false;
+        notice
+    }
+
+    /// Whether the device is currently off the air.
+    #[must_use]
+    pub const fn is_sleeping(&self) -> bool {
+        self.power.is_sleeping()
+    }
+
+    /// Whether the sleep now beginning was announced.
+    ///
+    /// An announced sleep leaves the broker **cleanly**, so no will fires and
+    /// the retained `sleeping` status stays the last word on the device. An
+    /// unannounced one drops the socket, the will fires, and the edge sees
+    /// `connection_lost` -- which is the distinction SAFETY-021 turns on.
+    #[must_use]
+    pub const fn sleep_was_announced(&self) -> bool {
+        self.sleep_announced
+    }
+
+    /// The wake cycle, for tests and the control API.
+    #[must_use]
+    pub const fn power_state(&self) -> &crate::power::PowerState {
+        &self.power
+    }
+
+    /// Sets the simulated state of charge, for a test that needs a low battery
+    /// now rather than in a fortnight.
+    pub fn set_battery_percent(&mut self, percent: f64) {
+        self.environment.battery.set_percent(percent);
+    }
+
+    /// The simulated state of charge.
+    #[must_use]
+    pub fn battery_percent(&self) -> f64 {
+        self.environment.battery.true_percent()
     }
 
     /// Advances the persisted offline runtime state by observed time.
@@ -655,8 +761,14 @@ impl Device {
         let now = self.monotonic.elapsed_ms();
         let leak = self.environment.tank.leak();
         let leak_changed = leak != self.last_leak;
-        let scheduled =
-            now.saturating_sub(self.last_sample_ms) >= self.config.telemetry_interval_ms();
+        // A reading taken before the peripherals have settled is not a reading
+        // (ADR-018 section 5). A mains device is always settled.
+        if !self.power.readings_usable() {
+            return None;
+        }
+        // A battery device samples once per wake: the wake *is* the schedule.
+        let scheduled = self.power.is_battery()
+            || now.saturating_sub(self.last_sample_ms) >= self.config.telemetry_interval_ms();
         if !scheduled && !leak_changed {
             return None;
         }
@@ -921,6 +1033,27 @@ impl Device {
         match self.config.consider(&envelope.data) {
             ConfigOutcome::Applied { version } => {
                 tracing::info!(config_version = version, "configuration applied");
+                // The edge owns the wake cycle from here (M5-019). A
+                // configuration changes what the *next* cycle does; it cannot
+                // wake a sleeping device or put an awake one to sleep mid-cycle,
+                // because a retained message that could do either would be a way
+                // to strand a device.
+                //
+                // An **absent** `power` block declares nothing and changes
+                // nothing — it is what every configuration written before
+                // ADR-018 carries, and treating it as an explicit `always_on`
+                // would let a stale retained config silently retire a battery
+                // device's sleep. That is not hypothetical: it is exactly what a
+                // broker holding a pre-ADR-018 retained `device.config` does on
+                // the device's very first subscribe.
+                if let Some(power) = envelope.data.power {
+                    self.power.reconfigure(
+                        power.mode,
+                        power.wake_interval_seconds,
+                        power.sensor_warmup_ms,
+                        power.awake_budget_seconds,
+                    );
+                }
                 // Persisted immediately: a config the device is running but has
                 // not stored would be silently forgotten by the next restart,
                 // and the edge would see no drift because the device would
@@ -1398,7 +1531,12 @@ impl Device {
             rssi_dbm: Some(SIMULATED_RSSI_DBM),
             applied_policy_versions: self.store.state().applied_policy_versions.clone(),
             connectivity: Some(self.connectivity()),
-            power: None,
+            // A mains device declares nothing at all, which is byte-for-byte
+            // what every pre-ADR-018 device published.
+            power: self
+                .power
+                .status(Some(self.environment.battery.sample_millivolts()))
+                .map(Box::new),
             capabilities: self.capabilities.declaration(|_| (true, 0)),
             limits: Some(ReportedLimits {
                 max_run_seconds: FIRMWARE_MAX_RUN_SECONDS,
@@ -1475,6 +1613,7 @@ mod tests {
                 },
                 tank: TankConfig { min_percent: 15.0 },
                 sensors: SensorConfig::default(),
+                power: None,
             })
             .unwrap(),
         )

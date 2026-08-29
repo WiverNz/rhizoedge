@@ -49,7 +49,7 @@ fn sleep_announcement(base: &Envelope<DeviceStatus>) -> Envelope<DeviceStatus> {
         mode: PowerMode::Battery,
         wake_interval_seconds: Some(u32::try_from(WAKE_INTERVAL_SECONDS).unwrap()),
         expected_wake_ms: Some(u64::MAX),
-        wake_reason: Some("timer".into()),
+        wake_reason: Some(rhizo_mqtt_contract::payload::WakeReason::Timer),
         battery_mv: Some(3_280),
         awake_ms: Some(4_120),
     }));

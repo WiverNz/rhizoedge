@@ -1,13 +1,16 @@
 //! Axum assembly with bounded requests and explicit-origin CORS.
 #![allow(missing_docs)]
-use super::{ApiState, devices, health};
+use super::{
+    ApiState, bindings, devices, health, measurement_policies, offline_policy, plants, presets,
+    profiles, recommendation,
+};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
     http::{HeaderValue, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{delete, get, post, put},
 };
 use std::time::Duration;
 
@@ -28,6 +31,80 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
         )
         .route("/api/v1/devices/{id}/events", get(devices::events))
         .route("/api/v1/quarantined-messages", get(devices::quarantined))
+        // ------------------------------------------------------------ plants
+        .route("/api/v1/plants", get(plants::list).post(plants::create))
+        .route(
+            "/api/v1/plants/{id}",
+            get(plants::get)
+                .patch(plants::patch)
+                .delete(plants::delete),
+        )
+        .route(
+            "/api/v1/plants/{id}/measurements",
+            get(plants::measurements),
+        )
+        .route(
+            "/api/v1/plants/{id}/watering-events",
+            get(plants::watering_events),
+        )
+        .route("/api/v1/plants/{id}/events", get(plants::events))
+        .route(
+            "/api/v1/plants/{id}/recommendation",
+            get(recommendation::get),
+        )
+        // Present so that SAFETY-018's refusal is *distinguishable*. M5 issues
+        // no commands; see `plants::water`.
+        .route("/api/v1/plants/{id}/water", post(plants::water))
+        .route(
+            "/api/v1/plants/{id}/apply-preset",
+            post(plants::apply_preset),
+        )
+        // ---------------------------------------------------------- bindings
+        .route(
+            "/api/v1/plants/{id}/bindings/sensors",
+            get(bindings::list_sensors).put(bindings::put_sensor),
+        )
+        .route(
+            "/api/v1/plants/{id}/bindings/sensors/{binding_id}",
+            delete(bindings::delete_sensor),
+        )
+        .route(
+            "/api/v1/plants/{id}/bindings/actuator",
+            get(bindings::get_actuator)
+                .put(bindings::put_actuator)
+                .delete(bindings::delete_actuator),
+        )
+        // ------------------------------------------------ measurement policies
+        .route(
+            "/api/v1/plants/{id}/measurement-policies",
+            get(measurement_policies::list),
+        )
+        .route(
+            "/api/v1/plants/{id}/measurement-policies/{kind}",
+            put(measurement_policies::put).delete(measurement_policies::delete),
+        )
+        // ---------------------------------------------------- offline policy
+        .route(
+            "/api/v1/plants/{id}/offline-policy",
+            get(offline_policy::get).put(offline_policy::put),
+        )
+        .route(
+            "/api/v1/plants/{id}/offline-policy/enable",
+            post(offline_policy::enable),
+        )
+        .route(
+            "/api/v1/plants/{id}/offline-policy/disable",
+            post(offline_policy::disable),
+        )
+        // ---------------------------------------------------------- profiles
+        .route(
+            "/api/v1/profiles",
+            get(profiles::list).post(profiles::create),
+        )
+        .route("/api/v1/profiles/{id}", get(profiles::get).put(profiles::put))
+        // ----------------------------------------------------------- presets
+        .route("/api/v1/presets", get(presets::list))
+        .route("/api/v1/presets/{id}", get(presets::get))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(middleware::from_fn(
             move |request: axum::extract::Request, next: middleware::Next| {
@@ -60,7 +137,7 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
                             .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
                         response.headers_mut().insert(
                             header::ACCESS_CONTROL_ALLOW_METHODS,
-                            HeaderValue::from_static("GET, PATCH"),
+                            HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE"),
                         );
                     }
                     response
@@ -78,6 +155,11 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
         .with_state(state)
 }
 
+/// Collapses a request path to one of a fixed set of labels.
+///
+/// The label set is closed on purpose: a metric labelled with the raw path would
+/// grow a new series per plant id, which is the cardinality explosion ADR-010
+/// exists to prevent.
 fn bounded_route(path: &str) -> &'static str {
     if path == "/api/v1/devices" {
         "/api/v1/devices"
@@ -85,6 +167,40 @@ fn bounded_route(path: &str) -> &'static str {
         "/api/v1/devices/{id}/events"
     } else if path.starts_with("/api/v1/devices/") {
         "/api/v1/devices/{id}"
+    } else if path == "/api/v1/plants" {
+        "/api/v1/plants"
+    } else if path.starts_with("/api/v1/plants/") {
+        let tail = path.trim_start_matches("/api/v1/plants/");
+        match tail.split_once('/').map(|(_, rest)| rest) {
+            None => "/api/v1/plants/{id}",
+            Some("measurements") => "/api/v1/plants/{id}/measurements",
+            Some("watering-events") => "/api/v1/plants/{id}/watering-events",
+            Some("events") => "/api/v1/plants/{id}/events",
+            Some("recommendation") => "/api/v1/plants/{id}/recommendation",
+            Some("water") => "/api/v1/plants/{id}/water",
+            Some("apply-preset") => "/api/v1/plants/{id}/apply-preset",
+            Some(rest) if rest.starts_with("bindings/actuator") => {
+                "/api/v1/plants/{id}/bindings/actuator"
+            }
+            Some(rest) if rest.starts_with("bindings/sensors") => {
+                "/api/v1/plants/{id}/bindings/sensors"
+            }
+            Some(rest) if rest.starts_with("measurement-policies") => {
+                "/api/v1/plants/{id}/measurement-policies"
+            }
+            Some(rest) if rest.starts_with("offline-policy") => {
+                "/api/v1/plants/{id}/offline-policy"
+            }
+            Some(_) => "unknown",
+        }
+    } else if path == "/api/v1/profiles" {
+        "/api/v1/profiles"
+    } else if path.starts_with("/api/v1/profiles/") {
+        "/api/v1/profiles/{id}"
+    } else if path == "/api/v1/presets" {
+        "/api/v1/presets"
+    } else if path.starts_with("/api/v1/presets/") {
+        "/api/v1/presets/{id}"
     } else if path == "/health/live" {
         "/health/live"
     } else if path == "/health/ready" {
@@ -121,6 +237,9 @@ mod tests {
             ApiState {
                 db,
                 metrics: crate::metrics::Metrics::new().unwrap(),
+                clock: std::sync::Arc::new(rhizo_testkit::TestClock::new(
+                    chrono::DateTime::from_timestamp_millis(1_000).unwrap(),
+                )),
             },
             origins,
         )

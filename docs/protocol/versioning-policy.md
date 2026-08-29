@@ -44,6 +44,16 @@ mechanism with no wire representation at all, which is what kept the change
 additive — a retained command topic, or a widened TTL, would have been neither
 additive nor safe. Recorded in [mqtt-v1.md](mqtt-v1.md) §9.
 
+**Delivered in two dated halves.** The `device.status` half — `PowerMode`, the
+`power` block, and the `sleeping` reason — shipped with the 2026-08-28 post-M4
+correction. The rest shipped with **M5-019** on 2026-08-29: the two battery
+`MeasurementKind` variants, the optional `device.config.power` block, and a typed
+`wake_reason`. Both halves are append-only against the fixture corpus (§6), and
+the compatibility fixtures that assert a pre-ADR-018 status and a pre-ADR-018
+configuration still decode — and still materialise no `power` field on re-encode
+— are what makes "additive" a checked claim rather than an intention. The device
+subscription set is unchanged at seven exact topics.
+
 ---
 
 ## 1. MQTT protocol versioning

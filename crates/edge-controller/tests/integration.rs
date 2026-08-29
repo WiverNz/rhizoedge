@@ -253,7 +253,7 @@ async fn intentional_sleep_and_duplicate_each_receive_edge_time() {
         mode: PowerMode::Battery,
         wake_interval_seconds: Some(900),
         expected_wake_ms: Some(u64::MAX),
-        wake_reason: Some("timer".into()),
+        wake_reason: Some(rhizo_mqtt_contract::payload::WakeReason::Timer),
         battery_mv: None,
         awake_ms: None,
     }));
@@ -865,4 +865,588 @@ async fn a_replay_of_sequence_zero_is_acknowledged_with_zero_on_the_wire() {
     let ack = publish_replay_and_wait_ack(&b, &raw).await;
     assert_eq!(ack.json()["data"]["through_device_seq"], 0);
     assert!(!ack.retain, "event.ack must never be retained");
+}
+
+// ---------------------------------------------------------------------------
+// M5 — the plant model, end to end.
+//
+// The property that defines the milestone is the *absence* of an action:
+// `no_commands_in_m5` runs a full drying cycle against a real broker and
+// asserts that nothing at all appears on any `commands/*` topic. It is the
+// reason M5 exists as a separate milestone — the recommendation logic can be
+// validated against a living plant for a week before anything can pump.
+
+/// A plant configured the way the plant tick expects, with a drying series.
+async fn drying_plant(db: &rhizo_storage::EdgeDb, now: chrono::DateTime<Utc>) {
+    use rhizo_storage::repo::{binding, plant};
+    // Measurements reference a device row, so the registry has to know about
+    // the node before any reading can be stored against it.
+    sqlx::query(
+        "INSERT OR IGNORE INTO devices(device_id,created_at,status,sensors_json) \
+         VALUES('plant-node-01',?,'online',?)",
+    )
+    .bind(now.timestamp_millis())
+    .bind(
+        serde_json::json!([
+            {"sensor_id":"soil-0","point":"default","kinds":["soil_moisture","soil_temperature"],
+             "present":true,"healthy":true,"errors":0}
+        ])
+        .to_string(),
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    plant::create(
+        db,
+        &plant::NewPlant {
+            plant_id: "monstera-01".to_owned(),
+            name: "Monstera".to_owned(),
+            pot_volume_ml: Some(2_000.0),
+            ..Default::default()
+        },
+        now.timestamp_millis(),
+    )
+    .await
+    .unwrap();
+    binding::upsert_sensor_binding(
+        db,
+        &binding::SensorBindingRow {
+            binding_id: "b-control".to_owned(),
+            plant_id: "monstera-01".to_owned(),
+            device_id: "plant-node-01".to_owned(),
+            sensor_id: "soil-0".to_owned(),
+            point: "default".to_owned(),
+            kind: "soil_moisture".to_owned(),
+            role: "control".to_owned(),
+            created_at: now.timestamp_millis(),
+        },
+    )
+    .await
+    .unwrap();
+    binding::upsert_actuator_binding(
+        db,
+        &binding::ActuatorBindingRow {
+            plant_id: "monstera-01".to_owned(),
+            device_id: "plant-node-01".to_owned(),
+            actuator_id: "pump-0".to_owned(),
+            kind: "irrigation_pump".to_owned(),
+            created_at: now.timestamp_millis(),
+        },
+    )
+    .await
+    .unwrap();
+    binding::upsert_measurement_policy(
+        db,
+        &binding::MeasurementPolicyRow {
+            plant_id: "monstera-01".to_owned(),
+            kind: "soil_moisture".to_owned(),
+            target_min: Some(28.0),
+            target_max: Some(45.0),
+            warning_low: None,
+            warning_high: None,
+            critical_low: None,
+            critical_high: None,
+            stale_after_ms: 900_000,
+            hysteresis: None,
+            confirm_duration_ms: Some(1_800_000),
+        },
+        now.timestamp_millis(),
+    )
+    .await
+    .unwrap();
+}
+
+async fn record_sample(db: &rhizo_storage::EdgeDb, at: i64, kind: &str, unit: &str, value: f64) {
+    sqlx::query(
+        "INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,unit,quality,received_at,batch_id,origin) \
+         VALUES('plant-node-01','soil-0','default',?,?,?,'ok',?,?,'live')",
+    )
+    .bind(kind)
+    .bind(value)
+    .bind(unit)
+    .bind(at)
+    .bind(uuid::Uuid::new_v4().to_string())
+    .execute(db.pool())
+    .await
+    .unwrap();
+}
+
+/// **The M5 exit criterion.** A real broker, a real edge, a full drying cycle
+/// that reaches `water_recommended` — and not one byte on any command topic.
+#[tokio::test]
+async fn no_commands_in_m5() {
+    let Some(b) = support::broker("no_commands_in_m5").await else {
+        return;
+    };
+    let edge = EdgeHarness::start(&b).await;
+
+    // A subscriber on every command topic in the fleet, for the whole run.
+    let mut watcher = b
+        .edge_subscriber(
+            &format!("m5-command-watch-{}", uuid::Uuid::new_v4()),
+            "rhizo/v1/devices/+/commands/#",
+        )
+        .await;
+
+    let start = Utc
+        .timestamp_millis_opt(1_900_000_000_000)
+        .single()
+        .unwrap();
+    let clock = TestClock::new(start);
+    drying_plant(&edge.db, start).await;
+    // Six hours of five-minute readings drying from 40 % through 28 %.
+    for i in 0i64..72 {
+        record_sample(
+            &edge.db,
+            (start - chrono::Duration::minutes((71 - i) * 5)).timestamp_millis(),
+            "soil_moisture",
+            "vwc_percent",
+            40.0 - i as f64 * 0.25,
+        )
+        .await;
+    }
+
+    let metrics = Metrics::new().unwrap();
+    for _ in 0..5 {
+        edge_controller::control::tick::tick(&edge.db, &clock, &metrics)
+            .await
+            .unwrap();
+        clock.advance(chrono::Duration::seconds(30));
+    }
+
+    let state = rhizo_storage::repo::plant::plant_state(&edge.db, "monstera-01")
+        .await
+        .unwrap();
+    assert_eq!(
+        state.as_deref(),
+        Some("water_recommended"),
+        "the drying cycle must actually reach the state the criterion is about"
+    );
+    let recommendation = rhizo_storage::repo::plant::latest_recommendation(&edge.db, "monstera-01")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recommendation.decision, "water");
+    let reasons: Vec<serde_json::Value> =
+        serde_json::from_str(&recommendation.reasons_json).unwrap();
+    assert!(
+        !reasons.is_empty(),
+        "the recommendation must carry a non-empty structured reason list"
+    );
+    assert!(reasons.iter().any(|r| r["code"] == "moisture_below_target"));
+    assert!(reasons.iter().any(|r| r["code"] == "dry_for"));
+
+    let seen = watcher.drain_for(Duration::from_millis(750)).await;
+    assert!(
+        seen.is_empty(),
+        "M5 issues no commands, and something published {:?}",
+        seen.iter().map(|m| m.topic.clone()).collect::<Vec<_>>()
+    );
+
+    // And nothing was recorded as having watered anything.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM commands")
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM watering_events")
+            .fetch_one(edge.db.pool())
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+/// A manual watering is detected, resets the cooldown, and a rise following a
+/// completed command creates no second event (F-050-14, F-050-16).
+#[tokio::test]
+async fn manual_watering_detection() {
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let start = Utc
+        .timestamp_millis_opt(1_900_000_000_000)
+        .single()
+        .unwrap();
+    drying_plant(&db, start).await;
+    record_sample(
+        &db,
+        (start - chrono::Duration::minutes(5)).timestamp_millis(),
+        "soil_moisture",
+        "vwc_percent",
+        24.0,
+    )
+    .await;
+    record_sample(
+        &db,
+        start.timestamp_millis(),
+        "soil_moisture",
+        "vwc_percent",
+        44.0,
+    )
+    .await;
+
+    let loaded = edge_controller::plant::load(&db, "monstera-01")
+        .await
+        .unwrap()
+        .unwrap();
+    let outcome = edge_controller::plant::detect::run(&db, &loaded, start)
+        .await
+        .unwrap();
+    assert!(outcome.recorded);
+    assert_eq!(
+        rhizo_storage::repo::plant::last_watering_at(&db, "monstera-01")
+            .await
+            .unwrap(),
+        Some(start.timestamp_millis()),
+        "a detected watering resets time-since-last-watering"
+    );
+    assert_eq!(
+        rhizo_storage::repo::plant::delivered_since(&db, "monstera-01", 0)
+            .await
+            .unwrap(),
+        0.0,
+        "and is excluded from the automatic daily budget"
+    );
+
+    // Now the same rise, but with a command that completed inside the
+    // absorption window: no second event.
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    drying_plant(&db, start).await;
+    sqlx::query(
+        "INSERT INTO commands(command_id,device_id,plant_id,kind,requested_ml,mode,issued_at,expires_at,status) \
+         VALUES('cmd-1','plant-node-01','monstera-01','water',40.0,'manual',?,?,'completed')",
+    )
+    .bind(start.timestamp_millis() - 300_000)
+    .bind(start.timestamp_millis())
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO watering_events(watering_event_id,plant_id,device_id,command_id,mode,origin,started_at,completed_at,requested_ml,delivered_ml,status) \
+         VALUES('we-1','monstera-01','plant-node-01','cmd-1','manual','edge_command',?,?,40.0,40.0,'completed')",
+    )
+    .bind(start.timestamp_millis() - 300_000)
+    .bind(start.timestamp_millis() - 120_000)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    record_sample(
+        &db,
+        (start - chrono::Duration::minutes(5)).timestamp_millis(),
+        "soil_moisture",
+        "vwc_percent",
+        24.0,
+    )
+    .await;
+    record_sample(
+        &db,
+        start.timestamp_millis(),
+        "soil_moisture",
+        "vwc_percent",
+        44.0,
+    )
+    .await;
+    let loaded = edge_controller::plant::load(&db, "monstera-01")
+        .await
+        .unwrap()
+        .unwrap();
+    let outcome = edge_controller::plant::detect::run(&db, &loaded, start)
+        .await
+        .unwrap();
+    assert!(!outcome.recorded, "the command explains the rise");
+    assert!(outcome.attributed_to_command);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM watering_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1,
+        "the command's own event, and no second one"
+    );
+}
+
+/// SCEN-024: a sensor stuck on one value is marked, once.
+#[tokio::test]
+async fn stuck_sensor() {
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let start = Utc
+        .timestamp_millis_opt(1_900_000_000_000)
+        .single()
+        .unwrap();
+    drying_plant(&db, start).await;
+    let loaded = edge_controller::plant::load(&db, "monstera-01")
+        .await
+        .unwrap()
+        .unwrap();
+    for i in 0i64..25 {
+        let at = start + chrono::Duration::minutes(i * 5);
+        record_sample(
+            &db,
+            at.timestamp_millis(),
+            "soil_moisture",
+            "vwc_percent",
+            31.25,
+        )
+        .await;
+        edge_controller::plant::detect::stuck(&db, &loaded, at)
+            .await
+            .unwrap();
+    }
+    let events = rhizo_storage::repo::plant::plant_events(&db, "monstera-01", 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|(kind, ..)| kind == "sensor_stuck")
+            .count(),
+        1,
+        "one event per stuck run, not one per sample"
+    );
+    let stuck = events
+        .iter()
+        .find(|(kind, ..)| kind == "sensor_stuck")
+        .unwrap();
+    assert_eq!(stuck.1, "warning");
+}
+
+/// A critical threshold alerts on a plant that cannot be watered, and waters
+/// nothing on a plant that can.
+#[tokio::test]
+async fn threshold_alerts() {
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let start = Utc
+        .timestamp_millis_opt(1_900_000_000_000)
+        .single()
+        .unwrap();
+    drying_plant(&db, start).await;
+    // A monitoring-only plant sharing the same probe, with its own bands.
+    rhizo_storage::repo::plant::create(
+        &db,
+        &rhizo_storage::repo::plant::NewPlant {
+            plant_id: "fern-01".to_owned(),
+            name: "Fern".to_owned(),
+            ..Default::default()
+        },
+        start.timestamp_millis(),
+    )
+    .await
+    .unwrap();
+    rhizo_storage::repo::binding::upsert_sensor_binding(
+        &db,
+        &rhizo_storage::repo::binding::SensorBindingRow {
+            binding_id: "b-fern".to_owned(),
+            plant_id: "fern-01".to_owned(),
+            device_id: "plant-node-01".to_owned(),
+            sensor_id: "soil-0".to_owned(),
+            point: "default".to_owned(),
+            kind: "soil_temperature".to_owned(),
+            role: "advisory".to_owned(),
+            created_at: start.timestamp_millis(),
+        },
+    )
+    .await
+    .unwrap();
+    rhizo_storage::repo::binding::upsert_measurement_policy(
+        &db,
+        &rhizo_storage::repo::binding::MeasurementPolicyRow {
+            plant_id: "fern-01".to_owned(),
+            kind: "soil_temperature".to_owned(),
+            target_min: Some(16.0),
+            target_max: Some(24.0),
+            warning_low: Some(12.0),
+            warning_high: Some(28.0),
+            critical_low: Some(8.0),
+            critical_high: Some(32.0),
+            stale_after_ms: 900_000,
+            hysteresis: Some(1.0),
+            confirm_duration_ms: None,
+        },
+        start.timestamp_millis(),
+    )
+    .await
+    .unwrap();
+    record_sample(
+        &db,
+        start.timestamp_millis(),
+        "soil_temperature",
+        "celsius",
+        34.0,
+    )
+    .await;
+
+    let fern = edge_controller::plant::load(&db, "fern-01")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        fern.actuator.is_none(),
+        "the point of the test is a plant that cannot be watered"
+    );
+    let crossings = edge_controller::control::threshold::run(&db, &fern, start)
+        .await
+        .unwrap();
+    assert_eq!(crossings.len(), 1);
+    assert_eq!(
+        crossings[0].1.to,
+        rhizo_domain::threshold::Severity::Critical
+    );
+    let events = rhizo_storage::repo::plant::plant_events(&db, "fern-01", 50)
+        .await
+        .unwrap();
+    assert!(events.iter().any(|(kind, ..)| kind == "threshold.critical"));
+
+    // The crossing waters nothing, here or anywhere.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM commands")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM watering_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+/// SCEN-110 and SCEN-111, end to end: a *simulated* battery device drives the
+/// M4 liveness model that until now had nothing to reason about.
+///
+/// The edge derives `sleeping` from its own receipt time while the window is
+/// open, and `isolated` once the device stops waking — with the transition made
+/// by the liveness timer, with no inbound message (SAFETY-021).
+#[tokio::test]
+async fn a_simulated_sleeping_device_is_sleeping_then_isolated() {
+    let Some(b) = support::broker("simulated_battery_liveness").await else {
+        return;
+    };
+    // Retention outlives a test process; start from a clean slate.
+    let publisher = b
+        .edge_subscriber(
+            &format!("battery-clear-{}", uuid::Uuid::new_v4()),
+            "rhizo/v1/devices/+/status",
+        )
+        .await;
+    publisher
+        .client()
+        .publish(
+            "rhizo/v1/devices/plant-node-01/status",
+            QoS::AtLeastOnce,
+            true,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let edge = EdgeHarness::start(&b).await;
+    let device = support::SimulatedDevice::start(
+        &b,
+        "plant-node-01",
+        &[
+            "--power-mode",
+            "battery",
+            "--wake-interval-seconds",
+            "60",
+            "--awake-budget-seconds",
+            "5",
+            "--sensor-warmup-ms",
+            "500",
+            "--telemetry-interval",
+            "10",
+            "--time-scale",
+            "60",
+            "--no-control-api",
+            "--no-noise",
+            // Two consecutive missed wakes, so the device stops waking after
+            // its first announced sleep.
+            "--fault",
+            "miss-wake:2",
+        ],
+    )
+    .await;
+
+    // Wait for the announced sleep to reach the registry.
+    let mut mode = String::new();
+    for _ in 0..80 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        mode = sqlx::query_scalar::<_, String>(
+            "SELECT connectivity_mode FROM devices WHERE device_id='plant-node-01'",
+        )
+        .fetch_optional(edge.db.pool())
+        .await
+        .unwrap()
+        .unwrap_or_default();
+        if mode == "sleeping" {
+            break;
+        }
+    }
+    assert_eq!(
+        mode, "sleeping",
+        "an announced, bounded sleep is not an offline device"
+    );
+    let (expected_wake_at, overdue_at) = sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
+        "SELECT expected_wake_at, overdue_at FROM devices WHERE device_id='plant-node-01'",
+    )
+    .fetch_one(edge.db.pool())
+    .await
+    .unwrap();
+    let expected_wake_at = expected_wake_at.expect("an open window has a wake instant");
+    let overdue_at = overdue_at.expect("and a deadline");
+    assert!(
+        overdue_at > expected_wake_at,
+        "the deadline is past the expected wake, not at it"
+    );
+
+    // The read-side derivation is what SAFETY-021 turns on: past the deadline
+    // the device is `isolated`, whether or not the timer has run.
+    let derived = |now: i64| {
+        edge_controller::device::connectivity::from_projection(
+            "sleeping",
+            Some(expected_wake_at),
+            Some(overdue_at),
+            now,
+        )
+    };
+    assert_eq!(derived(expected_wake_at).api_name(), "sleeping");
+    assert_eq!(
+        derived(overdue_at).api_name(),
+        "isolated",
+        "a device past its window is isolated, never sleeping"
+    );
+
+    // And the timer makes the durable transition with no inbound message: the
+    // device is asleep and publishing nothing at all.
+    let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(TestClock::new(
+        Utc.timestamp_millis_opt(overdue_at + 1).single().unwrap(),
+    ));
+    let metrics = Metrics::new().unwrap();
+    let (client, _events) = ingress::connect(MqttOptions::new("liveness-timer", "127.0.0.1", 9), 4);
+    edge_controller::device::health::tick(&edge.db, clock.as_ref(), &client, &metrics)
+        .await
+        .unwrap();
+    let (mode, missed) = sqlx::query_as::<_, (String, i64)>(
+        "SELECT connectivity_mode, missed_wake_count FROM devices WHERE device_id='plant-node-01'",
+    )
+    .fetch_one(edge.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(mode, "isolated");
+    assert_eq!(
+        missed, 1,
+        "one sleep window opened and one closed unmet; M4's timer counts each \
+         window at most once, and a device that stops waking opens no further \
+         windows to miss"
+    );
+    drop(device);
 }

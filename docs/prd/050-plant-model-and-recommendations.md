@@ -1,6 +1,6 @@
 # PRD 050 — Plant Model and Recommendations
 
-**Milestone:** M5 · **Status:** PLANNED · **Depends on:** M4
+**Milestone:** M5 · **Status:** DELIVERED · **Depends on:** M4
 
 > **Revised 2026-08-26.** `PlantProfile` is demoted to a **template**; the
 > authoritative per-plant configuration is now bindings plus per-measurement
@@ -425,20 +425,34 @@ that reaches the same conclusion as the previous tick is not news.
    deferred: multi-dose feedback (M6) achieves the same convergence with a
    bounded worst case.
 
-**Preset catalogue licensing — must be resolved inside M5-017.** Trefle and
-Perenual are the obvious import sources for building the curated catalogue, and
-both are attractive because they are free to query. Free to query is not the
-same as free to redistribute, and Rhizo would be shipping their data inside a
-binary. Each source's licence must be read and the outcome recorded here before
-any of its rows are committed. If redistribution is not clearly permitted, the
-catalogue is written from horticultural references with per-entry citation
-instead — smaller, slower, and unambiguous.
+**Preset catalogue licensing — resolved in M5-017 on 2026-08-29.** The question
+was whether Trefle or Perenual data could be redistributed inside the Rhizo
+binary. It was not answered in Rhizo's favour and, more to the point, it was not
+answerable from inside this repository: neither service's terms could be read and
+verified here, and "free to query" was never evidence of a redistribution
+licence. **The second branch was therefore taken.** No third-party row is
+committed and no external API is contacted at build time or at run time. The
+shipped catalogue is Rhizo-authored from general horticultural guidance, with a
+`source`, `source_ref`, `license`, and `retrieved_at` on every entry; `license`
+reads `rhizo-authored` precisely because there is no third-party licence to
+honour.
 
-**How many species does the first catalogue need?** The working assumption is
-that twenty genuinely curated entries beat four hundred scraped ones: a small
-catalogue keeps the provenance discipline visible while it is cheap to
-establish, and an operator with an unlisted species still has the manual path.
-Revisit once real usage shows what people actually plant.
+That constrains what the entries may claim, which is why the `Provenance`
+discriminator matters more than it first appears. Temperature and pH ranges are
+`source_fact` values in their source's own units, citing the reference they came
+from. Every soil-moisture band is a `rhizo_default` carrying its
+`derived_from`, because converting horticultural advice such as "let the top
+third dry" into a volumetric water content is an interpretation with a guess
+inside it. Should a redistributable source be verified later, importing it is an
+additive change to the same shape rather than a rewrite.
+
+**How many species does the first catalogue need?** The working assumption held:
+`presets.v1.json` ships **twenty-two** curated entries — houseplants, herbs, and
+container edibles — rather than a scraped list. A small catalogue kept the
+provenance discipline visible while it was still cheap to establish, and an
+operator with an unlisted species still has the manual path, which M5-018's tests
+check is unchanged by presets existing. Revisit once real usage shows what people
+actually plant.
 
 
 ## Future work

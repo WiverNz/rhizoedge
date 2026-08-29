@@ -38,11 +38,11 @@ write thousands of rows recording that nothing changed.
 
 ## Acceptance criteria
 
-- [ ] Each state is derived under its documented conditions.
-- [ ] Transitions are persisted as events; steady state is not.
-- [ ] State appears in the plant API.
-- [ ] `PlantState` and `IrrigationState` are separate types.
-- [ ] A plant with automation off can sit in `WaterRecommended` indefinitely.
+- [x] Each state is derived under its documented conditions.
+- [x] Transitions are persisted as events; steady state is not.
+- [x] State appears in the plant API.
+- [x] `PlantState` and `IrrigationState` are separate types.
+- [x] A plant with automation off can sit in `WaterRecommended` indefinitely.
 
 ## Verification
 

@@ -40,12 +40,12 @@ now keeps the API stable.
 
 ## Acceptance criteria
 
-- [ ] All endpoints return the documented shapes.
-- [ ] A new plant defaults to `auto_watering_enabled: false`.
-- [ ] Measurement queries respect `from`/`to` and the 5000-point cap.
-- [ ] Exceeding the cap returns a specific error, not truncated data.
-- [ ] Cursor pagination works on list endpoints.
-- [ ] 404 for unknown plants.
+- [x] All endpoints return the documented shapes.
+- [x] A new plant defaults to `auto_watering_enabled: false`.
+- [x] Measurement queries respect `from`/`to` and the 5000-point cap.
+- [x] Exceeding the cap returns a specific error, not truncated data.
+- [x] Cursor pagination works on list endpoints.
+- [x] 404 for unknown plants.
 
 ## Verification
 

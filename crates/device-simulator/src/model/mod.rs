@@ -10,6 +10,7 @@
 //! therefore produce identical readings, which is what turns "the controller
 //! behaved correctly" into an assertion rather than an observation.
 
+pub mod battery;
 pub mod ec;
 pub mod soil;
 pub mod tank;

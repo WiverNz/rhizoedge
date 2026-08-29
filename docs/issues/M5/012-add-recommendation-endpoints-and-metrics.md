@@ -43,12 +43,12 @@ real plant for a week before anything can pump.
 
 ## Acceptance criteria
 
-- [ ] Recommendations are evaluated on the tick.
-- [ ] A row is written only on change.
-- [ ] The endpoint returns the documented shape with structured reasons.
-- [ ] Reasons render to prose in exactly one place.
-- [ ] Metrics are exported.
-- [ ] **An integration test asserts zero MQTT command publishes during a full drying cycle.**
+- [x] Recommendations are evaluated on the tick.
+- [x] A row is written only on change.
+- [x] The endpoint returns the documented shape with structured reasons.
+- [x] Reasons render to prose in exactly one place.
+- [x] Metrics are exported.
+- [x] **An integration test asserts zero MQTT command publishes during a full drying cycle.**
 
 ## Verification
 

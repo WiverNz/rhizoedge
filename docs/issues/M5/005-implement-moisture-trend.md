@@ -38,12 +38,12 @@ least-squares rather than an endpoint difference.
 
 ## Acceptance criteria
 
-- [ ] A known falling series produces a negative slope of the expected magnitude.
-- [ ] Four samples return `None`.
-- [ ] Five clustered samples return `None` (sparsity rule).
-- [ ] Invalid samples are excluded.
-- [ ] Noise does not flip the sign of a clear trend.
-- [ ] The function is pure.
+- [x] A known falling series produces a negative slope of the expected magnitude.
+- [x] Four samples return `None`.
+- [x] Five clustered samples return `None` (sparsity rule).
+- [x] Invalid samples are excluded.
+- [x] Noise does not flip the sign of a clear trend.
+- [x] The function is pure.
 
 ## Verification
 

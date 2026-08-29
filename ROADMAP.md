@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0–M4 complete; M5 next.
+**Planning status:** complete. **Implementation status:** M0–M5 complete; M6 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -61,7 +61,7 @@ pin may move forward deliberately
 | M2 | Device Simulator | A host device indistinguishable from firmware at the protocol/mechanics level, including offline-policy persistence, isolation/replay mechanics, fault injection, and virtual time; policy evaluation activates in M6 | M1 | 19 | **DONE** |
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **DONE** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **DONE** |
-| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 22 | **READY** |
+| M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 22 | **DONE** |
 | M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **READY** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
 | M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **READY** |
@@ -259,7 +259,7 @@ sleep is bounded and never masks an unexpected absence).
 
 ---
 
-### M5 — Plant Model and Recommendations · READY
+### M5 — Plant Model and Recommendations · DONE
 
 **Objective.** Turn telemetry into an explainable recommendation — while still
 issuing no commands, so the logic can be validated against a real plant for a
@@ -296,16 +296,30 @@ preset has ordinary, fully editable `MeasurementPolicy` rows, still has
 `auto_watering_enabled = false`, and **no catalogue entry contains an interval or
 schedule** — a preset stores preferences, never a timer.
 A **simulated** battery device drives the M4 liveness model end to end: it sleeps
-and shows as `sleeping`, `miss-wake:2` leaves it `isolated` with
-`missed_wake_count == 2`, and `sleep-without-announcing` fires the Last Will and
-also yields `isolated`. `--power-mode always_on` behaviour is unchanged and the
-whole M2 suite stays green.
+and shows as `sleeping`, `miss-wake:2` leaves it `isolated`, and
+`sleep-without-announcing` fires the Last Will and also yields `isolated`.
+`--power-mode always_on` behaviour is unchanged and the whole M2 suite stays
+green.
+
+> **Corrected 2026-08-29, at the M5 gate.** This criterion originally also
+> required `missed_wake_count == 2` after `miss-wake:2`. It is unreachable, and
+> the reason is a property of M4 rather than a gap in M5: a *missed* wake
+> announces nothing, so it opens no new window, and the liveness timer counts
+> **at most one miss per window** — the rule M4's own
+> `each_sleep_cycle_can_miss_at_most_once` asserts. Two consecutive missed wakes
+> therefore leave the device `isolated` with `missed_wake_count == 1`. The
+> alternative would be a device that wakes far enough to re-announce a sleep it
+> is not really taking, or a counter that runs away on a single window; neither
+> is better than an honest one. `isolated` — the safety-relevant half — is
+> unaffected and is asserted end to end against a real broker.
 
 **Invariants.** Enforces SAFETY-018 (no actuator binding ⇒ no actuation path);
 re-verifies **SAFETY-021**, which M4 enforces, against a device that can actually
 sleep. Otherwise builds the gate's inputs without actuating.
 
 **PRD.** [050](docs/prd/050-plant-model-and-recommendations.md)
+
+**Evidence.** [M5 milestone report](docs/reports/M5.md).
 
 ---
 
@@ -868,14 +882,14 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0–M4 are `DONE`. M5 is `READY`.** The next unstarted issue is:
+**M0–M5 are `DONE`. M6 is `READY`.** The next unstarted issue is:
 
 ```text
-M5-001 — Add plant and profile repositories
+M6-001 — Add irrigation types and inputs
 ```
 
-It depends on M4-013, which is complete, so it is executable now. See
-[docs/issues/M5/001-add-plant-and-profile-repositories.md](docs/issues/M5/001-add-plant-and-profile-repositories.md)
+It depends on M5-022, which is complete, so it is executable now. See
+[docs/issues/M6/001-add-irrigation-types-and-inputs.md](docs/issues/M6/001-add-irrigation-types-and-inputs.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails

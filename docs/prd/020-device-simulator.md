@@ -2,6 +2,27 @@
 
 **Milestone:** M2 · **Status:** DELIVERED · **Depends on:** M1
 
+> **Extended 2026-08-29 by M5-021 — battery mode.** The simulator gained
+> `--power-mode always_on|battery`, `--wake-interval-seconds`,
+> `--awake-budget-seconds`, and `--sensor-warmup-ms`, plus a battery model that
+> publishes `battery_voltage` and `battery_percent` and drains per wake cycle and
+> per pump-second. A battery device runs the wake cycle of
+> [ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §5: wake, warm up,
+> sample, connect, publish, receive, **announce the sleep, then disconnect**.
+>
+> The ordering and the *kind* of disconnect are the whole point. An announced
+> sleep leaves the broker **cleanly**, so no will fires and the retained
+> `offline` / `sleeping` status stays the last word on the device. Two faults
+> produce the failures that matters: `miss-wake:<n>` skips whole wake cycles
+> without announcing anything, and `sleep-without-announcing` drops the socket so
+> the will fires and the absence reads as `connection_lost`. The awake window is
+> bounded by *work*, not by a clock — an active watering cycle holds the device
+> up however long the dose takes, because a budget that could truncate a dose
+> would be a way to strand an energised pump.
+>
+> M2's boundary is unchanged: no evaluator, no decision type, and no dose
+> scheduler, and `tests/single_actuation_path.rs` still enforces it.
+
 > **Boundary clarified 2026-08-27.** M2 models every device-side mechanic needed
 > for later offline autonomy: capabilities, atomic policy persistence,
 > monotonic runtime-state persistence, isolation/reconnect behaviour, and the

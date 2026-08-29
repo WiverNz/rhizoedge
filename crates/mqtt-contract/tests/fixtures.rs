@@ -199,6 +199,7 @@ enum Expected {
     PolicyNonScalarControlKind,
     EventDuplicateId,
     StatusSleepWakeInterval,
+    ConfigWakeIntervalOutOfRange,
 }
 
 impl Expected {
@@ -215,6 +216,7 @@ impl Expected {
             "policy_non_scalar_control_kind" => Self::PolicyNonScalarControlKind,
             "event_duplicate_id" => Self::EventDuplicateId,
             "status_sleep_wake_interval" => Self::StatusSleepWakeInterval,
+            "config_wake_interval_out_of_range" => Self::ConfigWakeIntervalOutOfRange,
             other => panic!(
                 "invalid/{other}/ declares no expected failure variant. Every invalid \
                  fixture must state what it proves: add {other:?} to `Expected::from_dir` \
@@ -338,6 +340,21 @@ impl Expected {
                     "{ctx}: a rejected announcement must yield no interval"
                 );
             }
+            // A wake interval the edge may not *configure*, bounded by the same
+            // constants the status side publishes: a device must not be told to
+            // sleep for a duration it could not legally announce. Rejected,
+            // never clamped (ADR-011).
+            Self::ConfigWakeIntervalOutOfRange => {
+                let config = Envelope::<DeviceConfig>::from_json(bytes)
+                    .unwrap_or_else(|e| panic!("{ctx}: envelope must still decode: {e}"))
+                    .data;
+                assert_eq!(
+                    config.power.map(|p| p.effective_mode()),
+                    Some(PowerMode::Battery),
+                    "{ctx}: the fixture must actually ask for battery mode"
+                );
+                assert_eq!(config.validate(), Err(ConfigError::WakeInterval), "{ctx}");
+            }
         }
     }
 }
@@ -369,7 +386,7 @@ fn invalid_fixtures_fail_with_their_documented_variant() {
         }
         classes += 1;
     }
-    assert!(classes >= 11 && files >= 14, "the corpus lost fixtures");
+    assert!(classes >= 12 && files >= 16, "the corpus lost fixtures");
 }
 
 /// The `power` block is optional, so every status fixture written before
@@ -418,12 +435,72 @@ fn the_sleep_announcement_fixture_yields_a_bounded_relative_interval() {
     assert_eq!(status.announced_sleep_interval_seconds(), Some(900));
     // The diagnostic fields survive the round trip but decide nothing.
     let power = status.power.as_deref().unwrap();
-    assert_eq!(power.wake_reason.as_deref(), Some("timer"));
+    assert_eq!(power.wake_reason, Some(WakeReason::Timer));
     assert_eq!(power.battery_mv, Some(3_280));
     assert!(
         power.expected_wake_ms.is_some(),
         "the fixture must carry the diagnostic it is not allowed to use"
     );
+}
+
+/// The battery kinds round-trip inside an ordinary batch, and are **not**
+/// eligible to be a policy's control measurement: power is telemetry, and it
+/// grants and refuses nothing (ADR-018 section 7).
+#[test]
+fn the_battery_kinds_round_trip_and_can_never_be_a_control_measurement() {
+    let bytes = fs::read(root().join("valid/telemetry-battery-kinds.json")).unwrap();
+    let batch = Envelope::<TelemetryBatch>::from_json(&bytes).unwrap().data;
+    let kinds: Vec<&str> = batch.samples.iter().map(|s| s.kind.as_str()).collect();
+    assert!(kinds.contains(&"battery_voltage"), "{kinds:?}");
+    assert!(kinds.contains(&"battery_percent"), "{kinds:?}");
+    for sample in &batch.samples {
+        assert!(sample.validate().is_valid(), "{sample:?}");
+    }
+    for kind in [
+        MeasurementKind::BatteryVoltage,
+        MeasurementKind::BatteryPercent,
+    ] {
+        assert!(kind.is_known());
+        assert!(kind.is_power_telemetry());
+        assert!(
+            !kind.control_eligible(),
+            "{} must never trigger a dose",
+            kind.as_str()
+        );
+    }
+    // And the units are the ones the spec names.
+    assert_eq!(
+        MeasurementKind::BatteryVoltage.spec().unwrap().unit,
+        Unit::Volt
+    );
+    assert_eq!(
+        MeasurementKind::BatteryPercent.spec().unwrap().unit,
+        Unit::Percent
+    );
+}
+
+/// An absent `power` block in `device.config` means always-on, exactly as a
+/// pre-ADR-018 configuration always did.
+#[test]
+fn a_configuration_without_a_power_block_stays_valid_and_means_always_on() {
+    let bytes = fs::read(root().join("valid/config.json")).unwrap();
+    let config = Envelope::<DeviceConfig>::from_json(&bytes).unwrap().data;
+    assert_eq!(config.power, None);
+    assert_eq!(config.validate(), Ok(()));
+    assert!(
+        !serde_json::to_string(&config)
+            .unwrap()
+            .contains("\"power\""),
+        "an absent block must not be materialised on re-encode"
+    );
+
+    let battery = fs::read(root().join("valid/config-battery-mode.json")).unwrap();
+    let config = Envelope::<DeviceConfig>::from_json(&battery).unwrap().data;
+    let power = config.power.unwrap();
+    assert_eq!(power.effective_mode(), PowerMode::Battery);
+    assert_eq!(power.wake_interval_seconds, Some(900));
+    assert_eq!(power.sensor_warmup_ms, Some(2_000));
+    assert_eq!(power.awake_budget_seconds, Some(20));
 }
 
 /// An unrecognised measurement kind is stored and marked advisory rather than

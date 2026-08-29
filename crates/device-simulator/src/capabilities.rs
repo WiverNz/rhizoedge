@@ -41,6 +41,22 @@ pub struct Capabilities {
     actuators: Vec<ActuatorCapability>,
 }
 
+/// The gauge a battery device declares.
+fn battery_sensor() -> SensorSpec {
+    SensorSpec {
+        sensor_id: local_id("battery-0"),
+        point: point("default"),
+        group: SensorGroup::Battery,
+        kinds: vec![
+            MeasurementKind::BatteryVoltage,
+            MeasurementKind::BatteryPercent,
+        ],
+        // A divider on an ADC is not a calibrated instrument, and saying so
+        // keeps the reading advisory at the edge.
+        calibrated: Some(false),
+    }
+}
+
 impl Capabilities {
     /// Derives capabilities from `--sensors` and `--actuators`.
     ///
@@ -98,7 +114,14 @@ impl Capabilities {
                     kinds: vec![MeasurementKind::LeakState],
                     calibrated: None,
                 }),
+                SensorGroup::Battery => sensors.push(battery_sensor()),
             }
+        }
+        // A battery device measures its own supply whether or not anybody asked
+        // for the group, because the reading is how an operator finds out the
+        // pack is flat before the plant does. It is declared exactly once.
+        if cli.power_mode.is_battery() && !sensors.iter().any(|s| s.group == SensorGroup::Battery) {
+            sensors.push(battery_sensor());
         }
         let actuators = cli
             .actuators

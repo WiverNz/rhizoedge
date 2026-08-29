@@ -1,7 +1,13 @@
 //! Pure, `no_std` shared offline-policy types.
 #![no_std]
 #![forbid(unsafe_code)]
-#![allow(missing_docs)] // Refusal variants mirror ADR-015's named gate steps.
+#![allow(missing_docs)]
+// Refusal variants mirror ADR-015's named gate steps.
+// Tests may `unwrap()`: a panic in a test is a failed assertion, not an
+// unhandled failure (workspace lint policy, root Cargo.toml).
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 extern crate alloc;
 pub mod types;
+pub mod validate;
 pub use types::*;
+pub use validate::validate_authored;

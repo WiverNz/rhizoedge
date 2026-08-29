@@ -79,24 +79,32 @@ interval is the anti-goal named in
 
 ## Acceptance criteria
 
-- [ ] `--power-mode battery` produces alternating sleep and wake cycles at the
+- [x] `--power-mode battery` produces alternating sleep and wake cycles at the
       configured interval on the accelerated clock.
-- [ ] Each wake publishes status and telemetry, and applies `edge.time`, config,
+- [x] Each wake publishes status and telemetry, and applies `edge.time`, config,
       and policy before sleeping again.
-- [ ] The sleep announcement is retained, carries `reason: "sleeping"`, and is
+- [x] The sleep announcement is retained, carries `reason: "sleeping"`, and is
       published before the disconnect.
-- [ ] A fresh subscriber after a sleep sees the sleeping status and **nothing**
+- [x] A fresh subscriber after a sleep sees the sleeping status and **nothing**
       on any `commands/*`, `telemetry`, `events`, or `time` topic.
-- [ ] `miss-wake:2` produces an edge-side `isolated` state and
+- [~] `miss-wake:2` produces an edge-side `isolated` state and
       `missed_wake_count == 2`. Note that `missed_wake_count` is *consecutive*
       misses and is reset by any successful wake, so the two misses must not be
       separated by one.
-- [ ] `sleep-without-announcing` fires the Last Will and yields `isolated`.
-- [ ] A dose delivered at wake completes without the device sleeping, even with
+      **Half demonstrated, and the other half is unreachable.** `isolated` is
+      asserted end to end against a real broker
+      (`a_simulated_sleeping_device_is_sleeping_then_isolated`). The count
+      reaches **1**, not 2: a missed wake announces nothing, so it opens no new
+      window, and M4's liveness timer counts at most one miss per window — the
+      rule its own `each_sleep_cycle_can_miss_at_most_once` asserts. Recorded in
+      [docs/reports/M5.md](../../reports/M5.md) §Deviations, and the ROADMAP exit
+      criterion was corrected in the same change.
+- [x] `sleep-without-announcing` fires the Last Will and yields `isolated`.
+- [x] A dose delivered at wake completes without the device sleeping, even with
       `awake_budget_seconds` set below the dose duration.
-- [ ] `--power-mode always_on` behaviour is unchanged; the whole M2 suite is
+- [x] `--power-mode always_on` behaviour is unchanged; the whole M2 suite is
       green.
-- [ ] `tests/single_actuation_path.rs` is still green.
+- [x] `tests/single_actuation_path.rs` is still green.
 
 ## Verification
 

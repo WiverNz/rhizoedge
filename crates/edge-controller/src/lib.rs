@@ -18,11 +18,13 @@
 
 pub mod api;
 pub mod config;
+pub mod control;
 pub mod device;
 pub mod error;
 pub mod metrics;
 pub mod mqtt;
 pub mod pipeline;
+pub mod plant;
 pub mod retention;
 pub mod state;
 pub mod supervisor;

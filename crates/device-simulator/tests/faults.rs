@@ -512,6 +512,8 @@ fn every_fault_in_the_catalogue_has_a_test_here() {
         "restart-mid-dose",
         "restart",
         "policy-interrupt",
+        "miss-wake",
+        "sleep-without-announcing",
     ];
     assert_eq!(
         covered.len(),
@@ -525,4 +527,253 @@ fn every_fault_in_the_catalogue_has_a_test_here() {
     // `duplicate` and `reorder` are transport faults, tested as a pure pipeline
     // in `fault::pipeline_tests`; `policy-interrupt` is tested with policy
     // activation in M2-016. Both are named here so the count cannot drift.
+}
+
+/// Builds a connected battery device that has just finished its warm-up.
+fn battery_device(extra: &[&str]) -> Device {
+    let mut args = vec![
+        "--power-mode",
+        "battery",
+        "--wake-interval-seconds",
+        "900",
+        "--sensor-warmup-ms",
+        "2000",
+        "--no-noise",
+    ];
+    if !extra.contains(&"--awake-budget-seconds") {
+        args.extend_from_slice(&["--awake-budget-seconds", "20"]);
+    }
+    args.extend_from_slice(extra);
+    let mut device = Device::new(&settings(&args));
+    device.on_connected().unwrap();
+    device.on_message(
+        &Topic::Time(id()),
+        &envelope(
+            "edge.time",
+            serde_json::json!({ "edge_time_ms": SYNCED_AT_MS }),
+        ),
+    );
+    device
+}
+
+/// Runs the device until it announces its sleep, returning the publications.
+fn until_asleep(device: &mut Device) -> Vec<Publication> {
+    let mut published = Vec::new();
+    for _ in 0..600 {
+        published.extend(device.tick(1_000));
+        if device.take_sleep_notice() {
+            return published;
+        }
+    }
+    panic!("the device never went to sleep");
+}
+
+/// A battery device announces its sleep **before** leaving, and the
+/// announcement is a retained offline status carrying `reason: "sleeping"`.
+#[test]
+fn a_battery_device_announces_its_sleep_before_disconnecting() {
+    let mut device = battery_device(&[]);
+    let published = until_asleep(&mut device);
+    let announcement = published
+        .last()
+        .expect("a sleeping device publishes before it leaves");
+    let value: serde_json::Value = serde_json::from_str(&announcement.payload).unwrap();
+    assert_eq!(value["kind"], "device.status");
+    assert_eq!(value["data"]["status"], "offline");
+    assert_eq!(value["data"]["reason"], "sleeping");
+    assert_eq!(value["data"]["power"]["mode"], "battery");
+    assert_eq!(value["data"]["power"]["wake_interval_seconds"], 900);
+    assert!(
+        announcement.retain,
+        "a fresh subscriber must see a sleeping device, not a stale online one"
+    );
+    // The announcement is the *last* thing published: the socket closes after it.
+    assert!(
+        published.iter().any(|p| {
+            let v: serde_json::Value = serde_json::from_str(&p.payload).unwrap();
+            v["kind"] == "telemetry.batch"
+        }),
+        "the wake must publish its readings before it sleeps"
+    );
+    assert!(device.is_sleeping());
+    // And nothing at all is published while it sleeps.
+    let mut asleep = Vec::new();
+    for _ in 0..600 {
+        asleep.extend(device.tick(1_000));
+    }
+    assert!(
+        asleep.is_empty(),
+        "a sleeping device publishes nothing: {asleep:?}"
+    );
+}
+
+/// `miss-wake:<n>` skips whole cycles **without announcing anything**. From the
+/// edge's side the device simply stopped waking, which is what SCEN-111 needs.
+#[test]
+fn miss_wake_skips_cycles_without_announcing() {
+    let mut device = battery_device(&["--fault", "miss-wake:2"]);
+    until_asleep(&mut device);
+    assert!(device.is_sleeping());
+
+    // Two whole intervals pass, and the device stays dark for both.
+    let mut published = Vec::new();
+    for _ in 0..1_800 {
+        published.extend(device.tick(1_000));
+    }
+    assert!(
+        published.is_empty(),
+        "a missed wake announces nothing at all: {published:?}"
+    );
+    assert!(
+        device.is_sleeping(),
+        "still asleep through the skipped wakes"
+    );
+
+    // The third wake happens normally.
+    for _ in 0..900 {
+        device.tick(1_000);
+        if !device.is_sleeping() {
+            break;
+        }
+    }
+    assert!(
+        !device.is_sleeping(),
+        "the device wakes once the misses run out"
+    );
+}
+
+/// `sleep-without-announcing` leaves the broker silently, so the Last Will is
+/// the only thing the edge hears — `connection_lost`, and therefore `isolated`
+/// rather than `sleeping` (SCEN-112, SAFETY-021).
+#[test]
+fn sleep_without_announcing_publishes_no_status() {
+    let mut device = battery_device(&["--fault", "sleep-without-announcing"]);
+    let published = until_asleep(&mut device);
+    assert!(device.is_sleeping());
+    let statuses: Vec<serde_json::Value> = published
+        .iter()
+        .map(|p| serde_json::from_str(&p.payload).unwrap())
+        .filter(|v: &serde_json::Value| v["kind"] == "device.status")
+        .collect();
+    assert!(
+        statuses.iter().all(|v| v["data"]["status"] == "online"),
+        "nothing may explain this absence: {statuses:?}"
+    );
+    // The will is still armed, and it says the session dropped rather than that
+    // the device is asleep.
+    let will: serde_json::Value = serde_json::from_str(&device.will().unwrap().payload).unwrap();
+    assert_eq!(will["data"]["status"], "offline");
+    assert_eq!(will["data"]["reason"], "connection_lost");
+}
+
+/// The awake window is bounded by *work*, not by a clock: a device mid-dose
+/// stays up however long the dose takes.
+#[test]
+fn a_dose_holds_the_device_awake_past_its_budget() {
+    // A one-second idle budget against a twenty-second dose: the budget is
+    // deliberately far shorter than the work.
+    let mut device = battery_device(&["--awake-budget-seconds", "1", "--ml-per-second", "1"]);
+    device.on_message(&Topic::CommandWater(id()), &water(1, 20.0));
+    assert!(device.pump_running(), "the dose must actually be running");
+    for second in 0..10 {
+        device.tick(1_000);
+        assert!(
+            !device.is_sleeping(),
+            "second {second}: a budget that could truncate a dose would strand an energised pump"
+        );
+        assert!(
+            device.pump_running(),
+            "second {second}: the dose is still running"
+        );
+    }
+    // Once the pump stops, the device is free to sleep again.
+    for _ in 0..40 {
+        device.tick(1_000);
+        if device.is_sleeping() {
+            return;
+        }
+    }
+    panic!("the device never slept after the dose completed");
+}
+
+/// Battery telemetry is published as ordinary measurements, and drains.
+#[test]
+fn a_battery_device_publishes_its_own_supply_as_telemetry() {
+    let mut device = battery_device(&[]);
+    let published = until_asleep(&mut device);
+    let batch = published
+        .iter()
+        .map(|p| serde_json::from_str::<serde_json::Value>(&p.payload).unwrap())
+        .find(|v| v["kind"] == "telemetry.batch")
+        .expect("a wake publishes a sampling cycle");
+    let kinds: Vec<&str> = batch["data"]["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"battery_voltage"), "{kinds:?}");
+    assert!(kinds.contains(&"battery_percent"), "{kinds:?}");
+    let volts = batch["data"]["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["kind"] == "battery_voltage")
+        .unwrap();
+    assert_eq!(volts["unit"], "volt");
+
+    let before = device.battery_percent();
+    for _ in 0..3_000 {
+        device.tick(1_000);
+    }
+    assert!(
+        device.battery_percent() < before,
+        "wake cycles cost charge: {before} -> {}",
+        device.battery_percent()
+    );
+}
+
+/// A `device.config` with **no** `power` block declares nothing and must change
+/// nothing. Treating its absence as an explicit `always_on` lets a stale
+/// retained configuration silently retire a battery device's sleep — which is
+/// exactly what a broker holding a pre-ADR-018 `device.config` does on the
+/// device's first subscribe.
+#[test]
+fn a_configuration_with_no_power_block_does_not_retire_battery_mode() {
+    let mut device = battery_device(&[]);
+    assert!(device.power_state().is_battery());
+    device.on_message(
+        &Topic::Config(id()),
+        &envelope(
+            "device.config",
+            serde_json::json!({
+                "config_version": 9,
+                "telemetry_interval_seconds": 300,
+                "pump": {"ml_per_second": 8.2, "enabled": true},
+                "tank": {"min_percent": 15.0}
+            }),
+        ),
+    );
+    assert!(
+        device.power_state().is_battery(),
+        "an absent power block declares nothing"
+    );
+
+    // An *explicit* always-on declaration does retire it, which is the
+    // difference the rule turns on.
+    device.on_message(
+        &Topic::Config(id()),
+        &envelope(
+            "device.config",
+            serde_json::json!({
+                "config_version": 10,
+                "telemetry_interval_seconds": 300,
+                "pump": {"ml_per_second": 8.2, "enabled": true},
+                "tank": {"min_percent": 15.0},
+                "power": {"mode": "always_on"}
+            }),
+        ),
+    );
+    assert!(!device.power_state().is_battery());
+    assert!(!device.is_sleeping());
 }

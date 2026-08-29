@@ -373,8 +373,21 @@ impl Connection {
             }
         };
         self.publish_all(&publications).await;
+        self.disconnect_cleanly().await;
+    }
+
+    /// Leaves the broker cleanly **without** saying anything first.
+    ///
+    /// What a device entering deep sleep does (M5-021): its retained sleep
+    /// announcement has already gone out and must remain the last word on this
+    /// device. A dropped socket would make the broker publish the will,
+    /// overwriting `sleeping` with `connection_lost` and turning an expected
+    /// absence into an unexplained one — which is precisely the distinction
+    /// SAFETY-021 exists to keep. A `shutdown` status would be wrong for the
+    /// opposite reason: the device has not shut down, it is asleep.
+    pub async fn disconnect_cleanly(&mut self) {
         // Release anything `reorder` was holding: the fault reorders, it does
-        // not drop, and a shutdown must not turn it into a silent loss.
+        // not drop, and leaving must not turn it into a silent loss.
         let held = self.pipeline.flush();
         self.publish_all(&held).await;
         if let Err(e) = self.client.disconnect().await {

@@ -188,6 +188,16 @@ fn read(
             // reassuring `false` (SAFETY-012).
             LeakState::Unknown => return None,
         },
+        // Power telemetry. Recorded and charted like any other reading, and an
+        // input to no decision anywhere (ADR-018 section 7).
+        MeasurementKind::BatteryVoltage => MeasurementValue::Scalar(
+            environment
+                .battery
+                .sample_volts(&mut environment.rng, noise),
+        ),
+        MeasurementKind::BatteryPercent => {
+            MeasurementValue::Scalar(environment.battery.sample_percent())
+        }
         // Kinds this hardware does not have. Reaching here would mean the
         // capability table declared something the sampler cannot produce, which
         // is the divergence `sampled_kinds` exists to prevent.

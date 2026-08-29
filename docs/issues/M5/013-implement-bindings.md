@@ -46,13 +46,13 @@ alertable, and must simply have no actuation route (SAFETY-018).
 
 ## Acceptance criteria
 
-- [ ] Bindings can be created, listed, updated, and deleted.
-- [ ] A binding naming an undeclared capability is rejected with a specific error.
-- [ ] A second `control` binding on one plant is rejected.
-- [ ] Removing the last `control` binding while automation is on is refused.
-- [ ] A plant with **no** actuator binding is fully functional for monitoring.
-- [ ] Leak and tank bindings cannot be set to `advisory` when an actuator exists.
-- [ ] Replacing a sensor is a binding edit that preserves history and policies.
+- [x] Bindings can be created, listed, updated, and deleted.
+- [x] A binding naming an undeclared capability is rejected with a specific error.
+- [x] A second `control` binding on one plant is rejected.
+- [x] Removing the last `control` binding while automation is on is refused.
+- [x] A plant with **no** actuator binding is fully functional for monitoring.
+- [x] Leak and tank bindings cannot be set to `advisory` when an actuator exists.
+- [x] Replacing a sensor is a binding edit that preserves history and policies.
 
 ## Verification
 
