@@ -36,7 +36,12 @@ deploy/mosquitto/passwd
 Thumbs.db
 .idea/
 .vscode/*
+# Shared editor configuration: the launch and build tasks a developer needs to
+# start a node and step through it. Everything else under .vscode/ is personal
+# (window layout, per-machine settings) and stays out.
 !.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
 
 # Rust build output from planning tooling
 /tools/docscheck/target/

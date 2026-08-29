@@ -6,18 +6,25 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0, M1, M2, and M3 complete. M4 ready.**
+> **Status: M0 through M5 complete. M6 ready.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
-> The engineering baseline, shared contracts/domain, device simulator, and Edge
-> ingestion/SQLite foundation are implemented and green. M3 delivered the
-> supervised `edge-controller`, real-Mosquitto ingestion with reconnect and
-> re-subscription, edge-stamped receipt time, bounded quarantine, crash-safe
-> deduplication, typed persistence, replay acknowledgement, and retention.
-> Device registry and health behavior remains M4 work.
+> Implemented and green: the engineering baseline, the shared wire contract and
+> pure domain, the device simulator, Edge ingestion and SQLite, the device
+> registry and health model, and — as of M5 — the whole plant model. Plants,
+> bindings, per-measurement thresholds, trends, manual-watering detection,
+> species presets, offline-policy authoring, and an explainable recommendation
+> engine all work, **and the system still issues no watering command at all.**
+> That is deliberate: the recommendation logic can be validated against a living
+> plant for a week before anything is able to pump.
+>
+> **M6 is the milestone where software can move water** — the safety gate, the
+> irrigation state machine, the command lifecycle, and the offline evaluator.
 > Start at [ROADMAP.md](ROADMAP.md); the next issue is
-> [M4-001](docs/issues/M4/001-implement-device-status-ingestion.md).
+> [M6-001](docs/issues/M6/001-add-irrigation-types-and-inputs.md).
+>
+> To run it now, see [Running it locally](#running-it-locally).
 
 ---
 
@@ -45,7 +52,7 @@ watering input has no cloud-derived field.
 
 **Safety-first.** When any input is missing, stale, invalid, or contradictory,
 the answer is *do not water*, plus a visible lockout — never *water anyway*.
-Twenty numbered invariants
+Twenty-one numbered invariants
 ([SAFETY-001…021](docs/architecture/safety-invariants.md)) state this precisely,
 each with named automated tests and the milestone where it becomes enforced.
 From M6 onward, `cargo test safety_` is the executable safety-invariant gate.
@@ -231,7 +238,12 @@ and a verified licence — never as a runtime dependency.
 
 Configuring a plant entirely by hand remains an equal path, not a fallback.
 
-Planned for M5 (catalogue and application) and M12 (picker and review step).
+**Implemented in M5.** The catalogue ships twenty-two curated entries compiled
+into the binary; applying one writes ordinary per-plant threshold rows resolved
+against the bindings the plant already has. Tests assert over the whole
+catalogue that no entry contains an interval or a schedule, and that no field
+names a device, sensor, point, or capability — a preset describes a plant, not
+an installation. The picker and the review step are M12.
 
 ## The pump is optional
 
@@ -299,10 +311,10 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 |---|---|
 | `rhizo-mqtt-contract` | `no_std` wire contract, measurement kinds, hard limits, the shared command validator |
 | `rhizo-policy` | `no_std` offline-policy state and decision contract; M6-019 adds the one evaluator shared by simulator, firmware, and any required edge use |
-| `rhizo-domain` | Pure M1 plant, binding, policy, state, validation, and clock abstractions; later milestones add recommendation and irrigation behaviour |
+| `rhizo-domain` | Pure plants, bindings, per-measurement policies, trends, detection, thresholds, the species preset catalogue, and the recommendation engine; M6 adds the irrigation state machine and the safety gate |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
-| `edge-controller` | The control plane — the only component that decides while connected |
-| `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, and faults; M6 connects the shared evaluator |
+| `edge-controller` | The control plane — the only component that decides while connected. Its M5 evaluation loop holds no MQTT client, which is why it cannot yet publish a command even by accident |
+| `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; M6 connects the shared evaluator |
 | `cloud-api` | Idempotent event ingestion into PostgreSQL |
 | `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
@@ -360,6 +372,95 @@ ecosystem requires it; that exception is isolated and documented in
 | ESP32 | ESP32-C3, `esp-idf-svc` (std) |
 | UI | Tauri 2 + Leptos (CSR) + Trunk |
 
+## Running it locally
+
+No hardware is needed. One broker, one edge, one simulated plant node.
+
+**First run only** — the broker needs accounts, and they are generated rather
+than committed:
+
+```bash
+cp .env.example .env                    # then replace every placeholder
+./scripts/gen-mosquitto-passwd.sh
+docker compose -f deploy/docker-compose.yml up -d --wait mosquitto
+```
+
+Then, in two terminals:
+
+```bash
+# the control plane
+RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 RHIZO_EDGE__LOG__FORMAT=pretty cargo run -p edge-controller
+
+# a plant node, drying ten simulated minutes per real second
+cargo run -p device-simulator --   --device-id plant-node-01   --broker mqtt://localhost:1883   --initial-moisture 42   --time-scale 600
+```
+
+`--time-scale` is what makes any of this watchable: a six-hour drying curve
+takes about half a minute. Nothing in the system reads a wall clock to decide
+anything, which is why accelerating time is honest rather than a shortcut
+([time-model.md](docs/architecture/time-model.md) §8).
+
+With both running, the edge is on `http://localhost:8080`:
+
+```bash
+curl -s localhost:8080/api/v1/devices | jq              # the node, its sensors, its health
+curl -s localhost:8080/api/v1/presets | jq '.presets[].display_name'
+curl -s localhost:8080/api/v1/plants | jq
+```
+
+Creating a plant takes three calls — a plant, a binding that says which probe
+supplies which measurement, and a threshold policy — after which
+`GET /api/v1/plants/{id}/recommendation` explains itself:
+
+```json
+{
+  "recommendation": "water",
+  "recommended_ml": 40.0,
+  "reasons": [
+    { "code": "moisture_below_target", "vwc": 24.1, "target_min": 28.0,
+      "message": "moisture 24.1% is below the target minimum of 28.0%" },
+    { "code": "dry_for", "minutes": 42, "required": 30 }
+  ]
+}
+```
+
+Through M5 that is where it stops. `POST /plants/{id}/water` answers **422**
+`no_actuator_bound` for a plant with no pump — distinguishable from a safety
+refusal, which is a 409 — and **501** for one that has a pump, because this
+milestone issues no commands. Watch `rhizo/v1/devices/+/commands/#` while a
+plant dries: it stays silent, and a test asserts that it does.
+
+### Debugging in VS Code
+
+`.vscode/launch.json` is checked in, so `F5` works on a fresh clone once `.env`
+exists. It carries the configurations worth having rather than one per binary:
+
+| Configuration | What it is for |
+|---|---|
+| **Edge controller** | The control plane, loopback API, cloud off. A second entry raises the log level to `debug` |
+| **Simulator: plant-node-01** | The standard node — soil, weight, tank, leak, one pump — at 600× virtual time |
+| **Simulator: plant-node-02** | A second node, on its own control port, for shared-sensor and two-plant setups |
+| **Simulator: monitoring only** | No actuators at all: the common shape in a real home, and the one SAFETY-018 is about |
+| **Simulator: battery node** | Sleeps between samples and announces each sleep, so the `sleeping` connectivity state has a producer |
+| **Simulator: with a fault…** | Prompts for any fault in the catalogue — leak, tank-empty, clock-unsync, stuck-sensor, miss-wake, and the rest |
+| **Simulator: choose device and time scale…** | Prompts for both |
+
+Three compounds start the usual pairings in one keystroke: *Edge + one plant
+node*, *Edge + two plant nodes*, and *Edge + battery node*.
+
+`.vscode/tasks.json` carries the broker (`Mosquitto: up`, `logs`, `down`), the
+gate commands, and two `mosquitto_sub` watchers — including one on the command
+topics alone, which is the fastest way to confirm the edge is still not acting.
+
+The launch configurations use the MSVC debugger, matching the
+`x86_64-pc-windows-msvc` host. On Linux and macOS use the two `(lldb)` entries
+as the pattern; they need the CodeLLDB extension and build through cargo
+themselves.
+
+More: [local development](docs/testing/local-development.md) — watching MQTT
+directly, injecting faults through the simulator's control API, and what each
+symptom usually means.
+
 ## Development flow
 
 ```text
@@ -410,6 +511,7 @@ Start here: **[docs/README.md](docs/README.md)** — the documentation index.
 | [Failure model](docs/architecture/failure-model.md) | Every failure and its expected behaviour |
 | [Testing strategy](docs/testing/strategy.md) | How the safety claims are proven |
 | [Local development](docs/testing/local-development.md) | Running and debugging |
+| [Milestone reports](docs/reports/) | What each completed milestone actually delivered, and what it deliberately did not |
 | [Home node hardware guide](docs/hardware/home-node-hardware-guide.md) | What to buy and how to build one physical node |
 
 ## Known V1 limitations

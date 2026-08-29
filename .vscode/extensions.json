@@ -1,0 +1,20 @@
+{
+  // What this repository is easiest to work in with. None of it is required to
+  // build or test — `cargo` is the whole toolchain.
+  "recommendations": [
+    // The language server. Everything else is optional.
+    "rust-lang.rust-analyzer",
+    // The MSVC debugger the launch configurations use on Windows.
+    "ms-vscode.cpptools",
+    // The debugger the two `(lldb)` launch configurations use on Linux and
+    // macOS. Harmless to install on Windows as well.
+    "vadimcn.vscode-lldb",
+    // Compile-time-checked SQL and the .sqlx offline cache both live in TOML
+    // and JSON; this keeps Cargo.toml navigable.
+    "tamasfe.even-better-toml"
+  ],
+  "unwantedRecommendations": [
+    // Superseded by rust-analyzer and known to conflict with it.
+    "rust-lang.rust"
+  ]
+}

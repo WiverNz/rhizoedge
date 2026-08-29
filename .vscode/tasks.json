@@ -1,0 +1,127 @@
+{
+  // Build tasks for the launch configurations, plus the broker and the gate.
+  //
+  // Nothing here is required to build the project — `cargo build` does that.
+  // These exist so F5 rebuilds the right binary first, and so the things a
+  // developer does constantly are one keystroke away.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo: build edge-controller",
+      "type": "cargo",
+      "command": "build",
+      "args": ["--package", "edge-controller", "--bin", "edge-controller"],
+      "problemMatcher": ["$rustc"],
+      "group": "build",
+      "presentation": { "reveal": "silent", "clear": true }
+    },
+    {
+      "label": "cargo: build device-simulator",
+      "type": "cargo",
+      "command": "build",
+      "args": ["--package", "device-simulator", "--bin", "device-simulator"],
+      "problemMatcher": ["$rustc"],
+      "group": "build",
+      "presentation": { "reveal": "silent", "clear": true }
+    },
+    {
+      "label": "cargo: build workspace",
+      "type": "cargo",
+      "command": "build",
+      "args": ["--workspace"],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      // Warnings are errors here, exactly as CI runs it.
+      "label": "cargo: clippy (warnings are errors)",
+      "type": "cargo",
+      "command": "clippy",
+      "args": [
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      // Without RHIZO_REQUIRE_BROKER the broker-backed tests print a loud skip
+      // and pass, so this is green on a fresh clone. Use the task below to run
+      // them for real.
+      "label": "cargo: test workspace",
+      "type": "cargo",
+      "command": "test",
+      "args": ["--workspace", "--all-features"],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "test", "isDefault": true }
+    },
+    {
+      // What CI does: a missing Mosquitto is a failure rather than a skip,
+      // because a suite that can silently skip its own subject proves nothing.
+      "label": "cargo: test workspace (broker required)",
+      "type": "cargo",
+      "command": "test",
+      "args": ["--workspace", "--all-features"],
+      "options": { "env": { "RHIZO_REQUIRE_BROKER": "1" } },
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      // Runs first in CI: dependency-free, no network, seconds.
+      "label": "docs: validate planning artefacts",
+      "type": "cargo",
+      "command": "run",
+      "args": ["-p", "rhizo-docscheck"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Mosquitto: up",
+      "type": "shell",
+      "command": "docker compose -f deploy/docker-compose.yml up -d --wait mosquitto",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "detail": "Starts the broker the edge and the simulators connect to."
+    },
+    {
+      "label": "Mosquitto: logs",
+      "type": "shell",
+      "command": "docker compose -f deploy/docker-compose.yml logs -f mosquitto",
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Mosquitto: down",
+      "type": "shell",
+      "command": "docker compose -f deploy/docker-compose.yml down",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      // The fastest way to understand what is actually on the wire.
+      // Needs mosquitto_sub on PATH, and MQTT_PASSWORD from .env.
+      "label": "MQTT: watch everything",
+      "type": "shell",
+      "command": "mosquitto_sub -h localhost -u rhizo-edge -P \"$MQTT_PASSWORD\" -t 'rhizo/v1/#' -v",
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "detail": "Every topic. Export MQTT_PASSWORD from .env first."
+    },
+    {
+      // The property M5 exists to keep: nothing may appear here before M6.
+      "label": "MQTT: watch command topics only",
+      "type": "shell",
+      "command": "mosquitto_sub -h localhost -u rhizo-edge -P \"$MQTT_PASSWORD\" -t 'rhizo/v1/devices/+/commands/#' -v",
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "detail": "Silent through M5: the edge recommends, it does not act."
+    }
+  ]
+}
