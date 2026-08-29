@@ -208,8 +208,11 @@ not describe their shape.
 Both SQLite and PostgreSQL use forward-only numbered migrations
 (`sqlx migrate`).
 
-- Migrations are **never edited after being applied anywhere**, including a
-  developer machine. A mistake is corrected by a new migration.
+- Before the first release or deployment, development-only migrations may be
+  squashed into the canonical `0001_initial.sql` baseline by recreating local
+  databases. Once the first release or deployment exists, `0001_initial.sql`
+  and every applied migration are **immutable**. A mistake is then corrected by
+  a new migration.
 - Migrations must be **additive where possible**. Dropping a column requires a
   deliberate two-step: stop writing it in release N, drop it in release N+1.
 - The edge takes an automatic backup when the schema version changes

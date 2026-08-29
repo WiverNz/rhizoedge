@@ -144,13 +144,12 @@ No HTTP interface yet — the read API is M4.
 ## Data model
 
 Exactly the schema in [ADR-004](../adr/004-sqlite-edge-persistence-model.md).
-M3 creates the ADR-004 baseline in `0001_initial.sql` and populates the ingestion
-tables, including `measurements`, `actuator_states`, `command_results`,
-`device_events`, `history_gaps`, `replay_progress`, `processed_messages`, and
-`quarantined_messages`. `0002_late_replay_effect_identity.sql` adds stable
-telemetry sample identity and `command_id` uniqueness. `0003_status_order.sql`
-adds `status_boot_generation`, `status_sequence`, and
-`status_lwt_message_id` to the bounded per-device status projection.
+The canonical pre-release `0001_initial.sql` creates the complete edge schema
+through M5, including the ingestion tables, stable telemetry and command-result
+effect identities, the bounded per-device status projection, M4 health and
+battery state, plant soft deletion, M5 analysis state, and preset provenance.
+Once the first release or deployment exists, this baseline is immutable and all
+schema changes use new forward-only numbered migrations.
 
 Indexes that matter for M3:
 

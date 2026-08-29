@@ -71,7 +71,7 @@ result is now `Option<u64>`: `None` means the edge publishes **no** `event.ack`
 at all, and `Some(0)` is a real acknowledgement of sequence 0. A suffix-only
 replay, where the device's buffer starts above anything the edge holds,
 therefore commits its events and stays silent rather than telling the device to
-discard sequence 0. Migration `0004_replay_progress_nullable.sql` makes
+discard sequence 0. The canonical `0001_initial.sql` makes
 `replay_progress.through_device_seq` nullable to carry the same distinction.
 
 **Consequence, recorded honestly.** An edge that has lost its `replay_progress`
