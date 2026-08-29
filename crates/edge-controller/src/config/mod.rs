@@ -233,7 +233,7 @@ pub struct LogConfig {
     /// A `RUST_LOG`-compatible directive, e.g. `info` or
     /// `info,rhizo_storage=debug`.
     pub level: String,
-    /// `json` or `pretty`.
+    /// `json`, `compact`, or `pretty`.
     pub format: String,
 }
 

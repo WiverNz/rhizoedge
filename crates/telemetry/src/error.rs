@@ -75,7 +75,7 @@ mod tests {
         let cases = [
             TelemetryError::UnknownLogFormat {
                 value: "yaml".into(),
-                accepted: "json, pretty".into(),
+                accepted: "json, compact, pretty".into(),
             },
             TelemetryError::InvalidLogFilter {
                 directive: "==".into(),

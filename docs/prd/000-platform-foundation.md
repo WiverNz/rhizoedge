@@ -56,7 +56,7 @@ clone → cargo test --workspace → green
 | F-000-02 | `rust-toolchain.toml` pins **Rust 1.98.0** with `rustfmt` and `clippy` |
 | F-000-03 | `clippy.toml` with `disallowed-methods` reserved (populated in M1-013) |
 | F-000-04 | Workspace lints: `unwrap_used` and `expect_used` denied for library crates, allowed in tests |
-| F-000-05 | `rhizo-telemetry` builds a `tracing` subscriber selectable between JSON and pretty |
+| F-000-05 | `rhizo-telemetry` builds a `tracing` subscriber selectable between JSON, compact, and pretty |
 | F-000-06 | `rhizo-telemetry` exposes a metrics registry and Prometheus text rendering |
 | F-000-07 | Edge configuration loads defaults → TOML → `RHIZO_EDGE__*` env → flags, and **exits non-zero** on invalid config |
 | F-000-08 | Config `Debug` impl redacts `password`, `token`, `secret` |

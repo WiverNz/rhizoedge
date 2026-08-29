@@ -235,7 +235,7 @@ async fn process(
                     .await
                     .map_err(|x| EdgeError::Mqtt(x.to_string()))?;
             } else if replay && commit.through_device_seq.is_none() {
-                tracing::info!(device=%e.device_id,"replay committed with no contiguous prefix; publishing no acknowledgement");
+                tracing::debug!(device=%e.device_id,"replay committed with no contiguous prefix; publishing no acknowledgement");
             }
             commit.dedup
         }

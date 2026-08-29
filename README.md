@@ -389,7 +389,7 @@ Then, in two terminals:
 
 ```bash
 # the control plane
-RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 RHIZO_EDGE__LOG__FORMAT=pretty cargo run -p edge-controller
+RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 RHIZO_EDGE__LOG__FORMAT=compact cargo run -p edge-controller
 
 # a plant node, drying ten simulated minutes per real second
 cargo run -p device-simulator --   --device-id plant-node-01   --broker mqtt://localhost:1883   --initial-moisture 42   --time-scale 600

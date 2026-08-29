@@ -57,7 +57,7 @@ Then run the edge against it:
 
 ```bash
 RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 \
-RHIZO_EDGE__LOG__FORMAT=pretty \
+RHIZO_EDGE__LOG__FORMAT=compact \
 cargo run -p edge-controller
 ```
 
@@ -104,6 +104,12 @@ useful tasks are:
   files named by `DEVICE_IDS`; use this when intentionally starting a clean
   disposable topology
 
+VS Code launches use `compact` logging: one event per line, with the component
+and the most useful correlation identifier before the message. Levels are
+coloured only when stdout is an interactive terminal, so CI logs and redirected
+files contain no escape sequences. Set the format to `pretty` when expanded span
+and source context is more useful than scanability; production remains `json`.
+
 These tasks call `rhizo-devctl`, a development-only Rust binary. It reads
 `.env`, with the process environment taking precedence. Edge remains governed
 by `RHIZO_EDGE__API__BIND`; the simulator and the tool share
@@ -142,7 +148,7 @@ docker compose -f deploy/docker-compose.yml up mosquitto
 # edge on the host, against the containerised broker
 RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 \
 RHIZO_EDGE__STORAGE__PATH=./data/edge.sqlite \
-RHIZO_EDGE__LOG__FORMAT=pretty \
+RHIZO_EDGE__LOG__FORMAT=compact \
 RHIZO_EDGE__CLOUD__ENABLED=false \
 cargo run -p edge-controller
 
@@ -328,7 +334,7 @@ stale. One file per checked query is the expected shape.
 ## 10. Logs
 
 ```bash
-RHIZO_EDGE__LOG__FORMAT=pretty RUST_LOG=debug cargo run -p edge-controller
+RHIZO_EDGE__LOG__FORMAT=compact RUST_LOG=debug cargo run -p edge-controller
 
 # JSON output, filtered
 docker compose logs -f edge-controller | jq 'select(.fields.plant_id == "monstera-01")'

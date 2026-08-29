@@ -185,9 +185,10 @@ Must never:
 
 ## 5. `rhizo-telemetry` — observability wiring
 
-Owns `tracing` subscriber construction, log format selection (JSON or pretty),
-the metric registry, and metric name constants. Shared by all three host
-binaries so field names stay consistent.
+Owns `tracing` subscriber construction, log format selection (JSON, compact, or
+pretty), the metric registry, and metric name constants. Shared by all three
+host binaries so field names stay consistent. Compact is the normal interactive
+development view; pretty retains the expanded span and source context.
 
 Deliberately small. See [ADR-010](../adr/010-observability-strategy.md).
 

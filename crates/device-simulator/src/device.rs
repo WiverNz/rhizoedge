@@ -1085,7 +1085,7 @@ impl Device {
                 Vec::new()
             }
             ConfigOutcome::IgnoredVersion { offered, applied } => {
-                tracing::info!(
+                tracing::debug!(
                     offered,
                     applied,
                     "configuration ignored: not newer than the applied version"
@@ -1111,10 +1111,17 @@ impl Device {
             );
             return Vec::new();
         }
-        tracing::info!(
-            edge_time_ms = envelope.data.edge_time_ms.0,
-            "wall clock synchronised from the edge"
-        );
+        if was_synced {
+            tracing::debug!(
+                edge_time_ms = envelope.data.edge_time_ms.0,
+                "wall clock synchronisation refreshed from the edge"
+            );
+        } else {
+            tracing::info!(
+                edge_time_ms = envelope.data.edge_time_ms.0,
+                "wall clock synchronised from the edge"
+            );
+        }
         // Announce the transition rather than waiting for the next heartbeat:
         // `clock_synced` is what tells the edge its commands will be accepted.
         if was_synced {

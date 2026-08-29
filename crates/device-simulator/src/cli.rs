@@ -674,8 +674,8 @@ pub struct Cli {
     #[arg(long, value_name = "MS", default_value_t = 2_000)]
     pub sensor_warmup_ms: u32,
 
-    /// Log format: `json` or `pretty`.
-    #[arg(long, value_name = "FORMAT", default_value = "pretty")]
+    /// Log format: `json`, `compact`, or `pretty`.
+    #[arg(long, value_name = "FORMAT", default_value = "compact")]
     pub log_format: String,
 
     /// Log filter directive, `RUST_LOG` syntax.
@@ -828,6 +828,7 @@ mod tests {
         assert_eq!(cli.resolved_username(), "plant-node-01");
         assert_eq!(cli.telemetry_interval, 300);
         assert_eq!(cli.time_scale, 1.0);
+        assert_eq!(cli.log_format, "compact");
         assert_eq!(cli.resolved_control_bind().port(), DEFAULT_CONTROL_PORT);
         assert!(cli.resolved_control_bind().ip().is_loopback());
         // The default sensor list is the plant hardware. The battery gauge is

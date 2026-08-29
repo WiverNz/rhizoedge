@@ -551,6 +551,7 @@ fn an_invalid_log_format_is_rejected_and_lists_the_accepted_values() {
     assert_eq!(err.key(), "log.format");
     assert!(err.to_string().contains("json"), "{err}");
     assert!(err.to_string().contains("pretty"), "{err}");
+    assert!(err.to_string().contains("compact"), "{err}");
 }
 
 #[test]
@@ -601,6 +602,20 @@ fn the_parsed_log_format_matches_the_configured_string() {
     assert_eq!(
         c.log.parsed_format().unwrap(),
         rhizo_telemetry::LogFormat::Pretty
+    );
+}
+
+#[test]
+fn compact_log_format_is_accepted() {
+    let c = load_from_env(
+        &CliOverrides::default(),
+        env(&[("RHIZO_EDGE__LOG__FORMAT", "compact")]),
+    )
+    .unwrap()
+    .config;
+    assert_eq!(
+        c.log.parsed_format().unwrap(),
+        rhizo_telemetry::LogFormat::Compact
     );
 }
 

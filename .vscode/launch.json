@@ -36,7 +36,7 @@
         "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
         "RHIZO_EDGE__STORAGE__PATH": "./data/edge.sqlite",
         "RHIZO_EDGE__CLOUD__ENABLED": "false",
-        "RHIZO_EDGE__LOG__FORMAT": "pretty",
+        "RHIZO_EDGE__LOG__FORMAT": "compact",
         "RHIZO_EDGE__LOG__LEVEL": "info",
         "RUST_BACKTRACE": "1"
       }
@@ -59,7 +59,7 @@
         "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
         "RHIZO_EDGE__STORAGE__PATH": "./data/edge.sqlite",
         "RHIZO_EDGE__CLOUD__ENABLED": "false",
-        "RHIZO_EDGE__LOG__FORMAT": "pretty",
+        "RHIZO_EDGE__LOG__FORMAT": "compact",
         "RHIZO_EDGE__LOG__LEVEL": "debug",
         "RUST_LOG": "edge_controller=debug,rhizo_storage=debug,info",
         "RUST_BACKTRACE": "1"
@@ -83,7 +83,7 @@
         "--broker", "mqtt://localhost:1883",
         "--initial-moisture", "42",
         "--time-scale", "600",
-        "--log-format", "pretty"
+        "--log-format", "compact"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -106,7 +106,7 @@
         "--initial-moisture", "38",
         "--time-scale", "600",
         "--control-port", "9091",
-        "--log-format", "pretty"
+        "--log-format", "compact"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -132,7 +132,7 @@
         "--initial-moisture", "30",
         "--time-scale", "600",
         "--control-port", "9091",
-        "--log-format", "pretty"
+        "--log-format", "compact"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -162,7 +162,7 @@
         "--sensor-warmup-ms", "500",
         "--telemetry-interval", "10",
         "--time-scale", "60",
-        "--log-format", "pretty"
+        "--log-format", "compact"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -184,7 +184,7 @@
         "--broker", "mqtt://localhost:1883",
         "--initial-moisture", "42",
         "--time-scale", "600",
-        "--log-format", "pretty",
+        "--log-format", "compact",
         "--fault", "${input:fault}"
       ],
       "cwd": "${workspaceFolder}",
@@ -207,7 +207,7 @@
         "--broker", "mqtt://localhost:1883",
         "--initial-moisture", "42",
         "--time-scale", "${input:timeScale}",
-        "--log-format", "pretty"
+        "--log-format", "compact"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",

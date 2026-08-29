@@ -22,8 +22,10 @@ correlation, not about log volume.
 
 ### Structured logging with `tracing`
 
-`tracing` + `tracing-subscriber`, JSON in production, pretty in development
-(`RHIZO_EDGE__LOG__FORMAT`).
+`tracing` + `tracing-subscriber`, JSON in production, compact single-line output
+in normal development, and pretty output when full span/source context is useful
+(`RHIZO_EDGE__LOG__FORMAT`). Compact output enables ANSI colours only on an
+interactive terminal; redirected output remains plain text.
 
 **Correlation fields.** Every span and event carries the identifiers relevant to
 its context, as structured fields — never interpolated into the message string:
@@ -282,8 +284,8 @@ Positive:
 
 Negative, accepted:
 
-- JSON logs are unpleasant to read raw. Mitigated by pretty format in
-  development and by `jq` in production.
+- JSON logs are unpleasant to read raw. Mitigated by compact or pretty formats
+  in development and by `jq` in production.
 - `#[instrument]` on hot paths has measurable overhead. At this message rate it
   is irrelevant; the annotation is omitted on per-sample inner functions.
 - Persisting device events adds write volume. Bounded by their low frequency and
