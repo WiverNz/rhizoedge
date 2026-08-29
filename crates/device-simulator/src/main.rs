@@ -58,7 +58,7 @@ async fn run(cli: Cli) -> ExitCode {
         sensors = %cli.sensors,
         actuators = %cli.actuators,
         state_file = %cli.resolved_state_file().display(),
-        control_port = if cli.no_control_api { None } else { Some(cli.control_port) },
+        control_bind = ?if cli.no_control_api { None } else { Some(cli.resolved_control_bind()) },
         noise = !cli.no_noise,
         seed = cli.seed,
         "device simulator starting"

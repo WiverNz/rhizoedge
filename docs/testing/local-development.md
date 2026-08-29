@@ -75,7 +75,58 @@ curl -s localhost:8080/metrics | grep -E 'devices_online|pending_cloud_events'
 
 ---
 
-## 3. Running pieces individually
+## 3. VS Code launch and simulation presets
+
+The normal interactive workflow needs no platform-specific HTTP commands:
+
+1. Run `Mosquitto: up` from **Tasks: Run Task**.
+2. Select `Edge + one plant node` (or a battery/two-node compound) in **Run and
+   Debug**, then press F5.
+3. Run any `Rhizo:` task from **Tasks: Run Task**.
+
+The launch compounds remain in `.vscode/launch.json`; the development controls
+are Cargo process tasks in `.vscode/tasks.json`, so VS Code starts the same Rust
+binary with the same argument boundaries on Windows, Linux, and WSL2. The most
+useful tasks are:
+
+- `Rhizo: Edge readiness`
+- `Rhizo: show Edge device state...`
+- `Rhizo: simulator state`
+- `Rhizo: set soil moisture...`
+- `Rhizo: simulate event...` (leak, tank, restart, missed wake, disconnect, and
+  recovery)
+- `Rhizo scenario: dry plant`
+- `Rhizo scenario: leak while dry`
+- `Rhizo scenario: battery missed wake`
+- `Rhizo scenario: recover normal`
+
+These tasks call `rhizo-devctl`, a development-only Rust binary. It reads
+`.env`, with the process environment taking precedence. Edge remains governed
+by `RHIZO_EDGE__API__BIND`; the simulator and the tool share
+`RHIZO_SIMULATOR__CONTROL_BIND`. Neither address is embedded in a task. An
+unspecified Edge bind such as `0.0.0.0:8080` is converted to the corresponding
+loopback address only for the client's connection.
+
+The simulator bind must stay loopback because its control API is a local test
+affordance, not a device or production API. A second simulator can still use
+the existing `--control-port` launch override; the standard presets intentionally
+control the primary simulator named by `.env`.
+
+The CLI is also available directly when an editor task is inconvenient:
+
+```text
+cargo run -p rhizo-devctl -- simulator state
+cargo run -p rhizo-devctl -- simulator set-soil 20
+cargo run -p rhizo-devctl -- simulator leak on
+cargo run -p rhizo-devctl -- simulator tank empty
+cargo run -p rhizo-devctl -- simulator missed-wake 1
+cargo run -p rhizo-devctl -- simulator disconnect 900
+cargo run -p rhizo-devctl -- simulator reconnect
+cargo run -p rhizo-devctl -- edge readiness
+cargo run -p rhizo-devctl -- edge device-state plant-node-01
+```
+
+## 4. Running pieces individually (manual fallback)
 
 Often faster than rebuilding a container:
 
@@ -104,7 +155,7 @@ on M0–M6: the cloud is genuinely optional
 
 ---
 
-## 4. Watching MQTT directly
+## 5. Watching MQTT directly
 
 The fastest way to understand what is happening:
 
@@ -142,7 +193,7 @@ that is the most serious class of bug this project has.
 
 ---
 
-## 5. Inspecting the database
+## 6. Inspecting the database
 
 ```bash
 sqlite3 ./data/edge.sqlite
@@ -176,7 +227,7 @@ SELECT status, COUNT(*) FROM pending_cloud_events GROUP BY status;
 
 ---
 
-## 6. Accelerated scenarios
+## 7. Accelerated scenarios
 
 Real time makes a watering cycle take an hour. Don't wait:
 
@@ -197,7 +248,11 @@ waits finishes in about six seconds.
 
 ---
 
-## 7. Injecting faults
+## 8. Injecting faults (manual fallback)
+
+Prefer `Rhizo: simulate event...` or one of the named scenario tasks in VS
+Code. The raw HTTP examples below are useful when inspecting the control API
+itself.
 
 ```bash
 # at startup
@@ -214,7 +269,7 @@ The full catalogue is in
 
 ---
 
-## 8. Tests
+## 9. Tests
 
 ```bash
 cargo test --workspace --all-features           # everything

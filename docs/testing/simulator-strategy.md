@@ -189,7 +189,10 @@ originates at the device must be reproducible on demand.
 
 Faults are also settable at runtime through the simulator's small control API
 (`POST /sim/fault`) so scenario tests can inject mid-run without a restart. That
-control API is simulator-only and does not exist in firmware.
+control API is simulator-only and does not exist in firmware. Its loopback bind
+comes from `RHIZO_SIMULATOR__CONTROL_BIND` (or the compatible `--control-port`
+override), which is also how `rhizo-devctl` and the VS Code simulation tasks
+discover it.
 
 The last two faults arrive with **battery power mode** in M5-021
 ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)). `--power-mode

@@ -8,6 +8,7 @@
 //! issues.
 
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -500,6 +501,9 @@ impl FromStr for PowerModeArg {
 /// Why an argument was rejected.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CliError {
+    /// The simulator-only HTTP control surface was configured beyond loopback.
+    #[error("--control-bind must use a loopback IP address, got {0}")]
+    ControlBindMustBeLoopback(SocketAddr),
     /// `--sensors` named a group that does not exist.
     #[error("unknown sensor group `{0}`; expected one of soil, weight, tank, leak, battery")]
     UnknownSensor(String),
@@ -610,9 +614,18 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub state_file: Option<PathBuf>,
 
-    /// Port for the simulator-only control API, bound to loopback.
-    #[arg(long, value_name = "PORT", default_value_t = DEFAULT_CONTROL_PORT)]
-    pub control_port: u16,
+    /// Bind address for the simulator-only control API. Must be loopback.
+    #[arg(
+        long,
+        value_name = "IP:PORT",
+        env = "RHIZO_SIMULATOR__CONTROL_BIND",
+        default_value = "127.0.0.1:9090"
+    )]
+    pub control_bind: SocketAddr,
+
+    /// Override only the control API port (backwards-compatible launch option).
+    #[arg(long, value_name = "PORT")]
+    pub control_port: Option<u16>,
 
     /// Disable the simulator-only control API entirely.
     #[arg(long)]
@@ -671,6 +684,14 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// The effective loopback address for the simulator-only control API.
+    #[must_use]
+    pub fn resolved_control_bind(&self) -> SocketAddr {
+        self.control_port.map_or(self.control_bind, |port| {
+            SocketAddr::new(self.control_bind.ip(), port)
+        })
+    }
+
     /// The broker username, defaulting to the device id.
     #[must_use]
     pub fn resolved_username(&self) -> String {
@@ -726,6 +747,11 @@ impl Cli {
     ///
     /// Returns the first violated constraint.
     pub fn validate(&self) -> Result<(), CliError> {
+        if !self.resolved_control_bind().ip().is_loopback() {
+            return Err(CliError::ControlBindMustBeLoopback(
+                self.resolved_control_bind(),
+            ));
+        }
         if !self.time_scale.is_finite() || self.time_scale <= 0.0 {
             return Err(CliError::TimeScale);
         }
@@ -802,7 +828,8 @@ mod tests {
         assert_eq!(cli.resolved_username(), "plant-node-01");
         assert_eq!(cli.telemetry_interval, 300);
         assert_eq!(cli.time_scale, 1.0);
-        assert_eq!(cli.control_port, DEFAULT_CONTROL_PORT);
+        assert_eq!(cli.resolved_control_bind().port(), DEFAULT_CONTROL_PORT);
+        assert!(cli.resolved_control_bind().ip().is_loopback());
         // The default sensor list is the plant hardware. The battery gauge is
         // declared by `--power-mode battery` rather than selected here, because
         // a mains device has no pack to report.
@@ -823,6 +850,21 @@ mod tests {
             cli.resolved_state_file().file_name().unwrap(),
             "plant-node-01.state.json"
         );
+    }
+
+    #[test]
+    fn the_control_api_cannot_be_exposed_beyond_loopback() {
+        let cli = parse(&[
+            "--device-id",
+            "plant-node-01",
+            "--control-bind",
+            "0.0.0.0:9090",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.validate(),
+            Err(CliError::ControlBindMustBeLoopback(_))
+        ));
     }
 
     #[test]

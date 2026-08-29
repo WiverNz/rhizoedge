@@ -104,6 +104,112 @@
       "isBackground": true,
       "presentation": { "reveal": "always", "panel": "dedicated" },
       "detail": "Silent through M5: the edge recommends, it does not act."
+    },
+    {
+      "label": "Rhizo: Edge readiness",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "edge", "readiness"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo: show Edge device state...",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "edge", "device-state", "${input:rhizoDeviceId}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo: simulator state",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "simulator", "state"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo: set soil moisture...",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "simulator", "set-soil", "${input:rhizoSoilMoisture}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo: simulate event...",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "event", "${input:rhizoEvent}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo scenario: dry plant",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "dry-plant"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo scenario: leak while dry",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "leak-while-dry"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo scenario: battery missed wake",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "battery-missed-wake"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo scenario: recover normal",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "recover-normal"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "rhizoDeviceId",
+      "type": "pickString",
+      "description": "Edge device to inspect",
+      "default": "plant-node-01",
+      "options": ["plant-node-01", "plant-node-02"]
+    },
+    {
+      "id": "rhizoSoilMoisture",
+      "type": "promptString",
+      "description": "Soil moisture VWC percentage (0-100)",
+      "default": "20"
+    },
+    {
+      "id": "rhizoEvent",
+      "type": "pickString",
+      "description": "Simulator event or recovery action",
+      "default": "dry-plant",
+      "options": [
+        "state",
+        "dry-plant",
+        "leak-on",
+        "leak-off",
+        "tank-empty",
+        "tank-restore",
+        "restart",
+        "missed-wake",
+        "disconnect",
+        "reconnect",
+        "recover-normal"
+      ]
     }
   ]
 }

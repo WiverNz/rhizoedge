@@ -47,10 +47,10 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
     let restarted = Arc::clone(&control_state.restarted);
     let control = (!cli.no_control_api).then(|| {
         let state = control_state.clone();
-        let port = cli.control_port;
+        let address = cli.resolved_control_bind();
         tokio::spawn(async move {
-            if let Err(e) = crate::control::serve(state, port).await {
-                tracing::error!(error = %e, port, "the control API could not start");
+            if let Err(e) = crate::control::serve(state, address).await {
+                tracing::error!(error = %e, %address, "the control API could not start");
             }
         })
     });

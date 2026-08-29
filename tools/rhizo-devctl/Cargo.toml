@@ -1,0 +1,22 @@
+[package]
+name = "rhizo-devctl"
+description = "Cross-platform local development controls for Rhizo Edge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+
+[[bin]]
+name = "rhizo-devctl"
+path = "src/main.rs"
+
+[lints]
+workspace = true

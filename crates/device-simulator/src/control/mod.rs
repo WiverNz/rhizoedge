@@ -28,7 +28,7 @@
 //! claimed. Binding to loopback is the containment that actually matters, and
 //! that is unconditional.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::State;
@@ -87,18 +87,18 @@ pub fn router(state: ControlState) -> Router {
 /// Loopback, always. A test affordance that accepted connections from the
 /// network would be a way to interfere with a device from off the machine, and
 /// the simulator is routinely run beside real services.
-#[must_use]
-pub const fn bind_address(port: u16) -> SocketAddr {
-    SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port)
-}
-
 /// Serves the control API until the process ends.
 ///
 /// # Errors
 ///
 /// Returns a bind or serve failure.
-pub async fn serve(state: ControlState, port: u16) -> std::io::Result<()> {
-    let address = bind_address(port);
+pub async fn serve(state: ControlState, address: SocketAddr) -> std::io::Result<()> {
+    if !address.ip().is_loopback() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("simulator control API bind must be loopback, got {address}"),
+        ));
+    }
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(
         %address,
@@ -394,12 +394,21 @@ mod tests {
 
     #[tokio::test]
     async fn the_api_binds_to_loopback_only() {
-        let address = bind_address(9090);
+        let address: SocketAddr = "127.0.0.1:9090".parse().unwrap();
         assert!(
             address.ip().is_loopback(),
             "a test affordance must not accept connections from the network"
         );
         assert_eq!(address.port(), 9090);
+    }
+
+    #[tokio::test]
+    async fn the_serving_boundary_rejects_a_non_loopback_bind() {
+        let state = state(&[]);
+        let address: SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let error = serve(state, address).await.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("must be loopback"));
     }
 
     #[tokio::test]

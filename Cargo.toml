@@ -18,6 +18,7 @@ members = [
     "crates/device-simulator",
     "crates/cloud-api",
     "tools/docscheck",
+    "tools/rhizo-devctl",
 ]
 exclude = ["firmware", "ui"]
 
