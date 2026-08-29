@@ -13,24 +13,24 @@
   //
   // Step 3 is also the "Mosquitto: up" task (Ctrl+Shift+P → Run Task).
   //
-  // Debugger: these use `cppvsdbg`, the MSVC debugger, because the host
-  // toolchain is `x86_64-pc-windows-msvc` and MSVC debug info is native to it.
-  // On Linux or macOS use the two `(lldb)` configurations at the bottom as the
-  // pattern — they need the CodeLLDB extension and build through cargo
-  // themselves, so they carry no `preLaunchTask`.
+  // Debugger: all configurations require the vadimcn.vscode-lldb extension
+  // (CodeLLDB). CodeLLDB builds and locates each binary through Cargo, making
+  // this launch file usable on Windows, Linux, and WSL2.
   "version": "0.2.0",
   "configurations": [
     {
       // The control plane. Bind loopback, talk to the containerised broker,
       // keep the cloud off — the normal way to work on M0-M6 (ADR-003).
       "name": "Edge controller",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build edge-controller",
-      "program": "${workspaceFolder}/target/debug/edge-controller.exe",
+      "cargo": {
+        "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
+        "filter": { "name": "edge-controller", "kind": "bin" }
+      },
       "args": [],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": {
         "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
@@ -45,13 +45,15 @@
       // Everything the edge does, narrated. Start here when a plant is not
       // reaching the state you expected.
       "name": "Edge controller (debug logging)",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build edge-controller",
-      "program": "${workspaceFolder}/target/debug/edge-controller.exe",
+      "cargo": {
+        "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
+        "filter": { "name": "edge-controller", "kind": "bin" }
+      },
       "args": [],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": {
         "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
@@ -70,10 +72,12 @@
       // six-hour drying curve takes about thirty-six seconds. Virtual time is
       // the reason a drying cycle is watchable at all (time-model.md §8).
       "name": "Simulator: plant-node-01 (fast virtual time)",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build device-simulator",
-      "program": "${workspaceFolder}/target/debug/device-simulator.exe",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
       "args": [
         "--device-id", "plant-node-01",
         "--broker", "mqtt://localhost:1883",
@@ -82,7 +86,7 @@
         "--log-format", "pretty"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -90,10 +94,12 @@
       // A second node, for testing two plants, a shared sensor, or one device
       // serving several plants. Its control API needs its own port.
       "name": "Simulator: plant-node-02 (second node)",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build device-simulator",
-      "program": "${workspaceFolder}/target/debug/device-simulator.exe",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
       "args": [
         "--device-id", "plant-node-02",
         "--broker", "mqtt://localhost:1883",
@@ -103,7 +109,7 @@
         "--log-format", "pretty"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -113,10 +119,12 @@
       // answers 422 `no_actuator_bound` rather than a safety refusal
       // (SAFETY-018).
       "name": "Simulator: monitoring only (no pump)",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build device-simulator",
-      "program": "${workspaceFolder}/target/debug/device-simulator.exe",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
       "args": [
         "--device-id", "plant-node-02",
         "--broker", "mqtt://localhost:1883",
@@ -127,7 +135,7 @@
         "--log-format", "pretty"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -139,10 +147,12 @@
       // Watch the edge report `connectivity: "sleeping"` between wakes, and
       // `isolated` if it stops waking.
       "name": "Simulator: battery node (sleeps between samples)",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build device-simulator",
-      "program": "${workspaceFolder}/target/debug/device-simulator.exe",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
       "args": [
         "--device-id", "plant-node-01",
         "--broker", "mqtt://localhost:1883",
@@ -155,7 +165,7 @@
         "--log-format", "pretty"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -163,10 +173,12 @@
       // Pick a fault and watch the device behave worse. Every fault in the
       // catalogue is here; `simulator-strategy.md` §7 explains each one.
       "name": "Simulator: with a fault...",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build device-simulator",
-      "program": "${workspaceFolder}/target/debug/device-simulator.exe",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
       "args": [
         "--device-id", "plant-node-01",
         "--broker", "mqtt://localhost:1883",
@@ -176,7 +188,7 @@
         "--fault", "${input:fault}"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -184,58 +196,17 @@
       // Choose the device and how fast time runs. Everything else stays at the
       // documented defaults.
       "name": "Simulator: choose device and time scale...",
-      "type": "cppvsdbg",
+      "type": "lldb",
       "request": "launch",
-      "preLaunchTask": "cargo: build device-simulator",
-      "program": "${workspaceFolder}/target/debug/device-simulator.exe",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
       "args": [
         "--device-id", "${input:deviceId}",
         "--broker", "mqtt://localhost:1883",
         "--initial-moisture", "42",
         "--time-scale", "${input:timeScale}",
-        "--log-format", "pretty"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
-    },
-    {
-      // ---- Linux / macOS: the same two things, through CodeLLDB ------------
-      // These build through cargo themselves, so they need no preLaunchTask.
-      // Copy the pattern for any of the configurations above.
-      "name": "Edge controller (lldb)",
-      "type": "lldb",
-      "request": "launch",
-      "cargo": {
-        "args": ["build", "--bin=edge-controller", "--package=edge-controller"],
-        "filter": { "name": "edge-controller", "kind": "bin" }
-      },
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "terminal": "integrated",
-      "envFile": "${workspaceFolder}/.env",
-      "env": {
-        "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
-        "RHIZO_EDGE__STORAGE__PATH": "./data/edge.sqlite",
-        "RHIZO_EDGE__CLOUD__ENABLED": "false",
-        "RHIZO_EDGE__LOG__FORMAT": "pretty",
-        "RUST_BACKTRACE": "1"
-      }
-    },
-    {
-      "name": "Simulator: plant-node-01 (lldb)",
-      "type": "lldb",
-      "request": "launch",
-      "cargo": {
-        "args": ["build", "--bin=device-simulator", "--package=device-simulator"],
-        "filter": { "name": "device-simulator", "kind": "bin" }
-      },
-      "args": [
-        "--device-id", "plant-node-01",
-        "--broker", "mqtt://localhost:1883",
-        "--initial-moisture", "42",
-        "--time-scale", "600",
         "--log-format", "pretty"
       ],
       "cwd": "${workspaceFolder}",

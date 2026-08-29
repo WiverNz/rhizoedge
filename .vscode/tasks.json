@@ -1,29 +1,11 @@
 {
-  // Build tasks for the launch configurations, plus the broker and the gate.
+  // Workspace checks and operational tasks for the broker and MQTT inspection.
   //
   // Nothing here is required to build the project — `cargo build` does that.
-  // These exist so F5 rebuilds the right binary first, and so the things a
-  // developer does constantly are one keystroke away.
+  // CodeLLDB builds launch binaries through its Cargo integration; these tasks
+  // keep the things a developer does constantly one keystroke away.
   "version": "2.0.0",
   "tasks": [
-    {
-      "label": "cargo: build edge-controller",
-      "type": "cargo",
-      "command": "build",
-      "args": ["--package", "edge-controller", "--bin", "edge-controller"],
-      "problemMatcher": ["$rustc"],
-      "group": "build",
-      "presentation": { "reveal": "silent", "clear": true }
-    },
-    {
-      "label": "cargo: build device-simulator",
-      "type": "cargo",
-      "command": "build",
-      "args": ["--package", "device-simulator", "--bin", "device-simulator"],
-      "problemMatcher": ["$rustc"],
-      "group": "build",
-      "presentation": { "reveal": "silent", "clear": true }
-    },
     {
       "label": "cargo: build workspace",
       "type": "cargo",
@@ -107,7 +89,7 @@
       // Needs mosquitto_sub on PATH, and MQTT_PASSWORD from .env.
       "label": "MQTT: watch everything",
       "type": "shell",
-      "command": "mosquitto_sub -h localhost -u rhizo-edge -P \"$MQTT_PASSWORD\" -t 'rhizo/v1/#' -v",
+      "command": "mosquitto_sub -h localhost -u rhizo-edge -P \"${env:MQTT_PASSWORD}\" -t 'rhizo/v1/#' -v",
       "problemMatcher": [],
       "isBackground": true,
       "presentation": { "reveal": "always", "panel": "dedicated" },
@@ -117,7 +99,7 @@
       // The property M5 exists to keep: nothing may appear here before M6.
       "label": "MQTT: watch command topics only",
       "type": "shell",
-      "command": "mosquitto_sub -h localhost -u rhizo-edge -P \"$MQTT_PASSWORD\" -t 'rhizo/v1/devices/+/commands/#' -v",
+      "command": "mosquitto_sub -h localhost -u rhizo-edge -P \"${env:MQTT_PASSWORD}\" -t 'rhizo/v1/devices/+/commands/#' -v",
       "problemMatcher": [],
       "isBackground": true,
       "presentation": { "reveal": "always", "panel": "dedicated" },
