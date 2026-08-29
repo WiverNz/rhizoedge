@@ -176,6 +176,15 @@
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "recover-normal"],
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Rhizo: reset local state (DELETES DEV DATA)",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "reset-local-state", "--confirm"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "detail": "Requires Edge and the simulator to be stopped; deletes only configured local SQLite and DEVICE_IDS simulator state files."
     }
   ],
   "inputs": [

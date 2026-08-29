@@ -99,6 +99,10 @@ useful tasks are:
 - `Rhizo scenario: leak while dry`
 - `Rhizo scenario: battery missed wake`
 - `Rhizo scenario: recover normal`
+- `Rhizo: reset local state (DELETES DEV DATA)` — after stopping the debug
+  session, removes the configured local SQLite database and the simulator state
+  files named by `DEVICE_IDS`; use this when intentionally starting a clean
+  disposable topology
 
 These tasks call `rhizo-devctl`, a development-only Rust binary. It reads
 `.env`, with the process environment taking precedence. Edge remains governed
@@ -124,6 +128,7 @@ cargo run -p rhizo-devctl -- simulator disconnect 900
 cargo run -p rhizo-devctl -- simulator reconnect
 cargo run -p rhizo-devctl -- edge readiness
 cargo run -p rhizo-devctl -- edge device-state plant-node-01
+cargo run -p rhizo-devctl -- reset-local-state --confirm
 ```
 
 ## 4. Running pieces individually (manual fallback)

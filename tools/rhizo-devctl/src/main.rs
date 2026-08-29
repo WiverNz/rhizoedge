@@ -19,8 +19,10 @@ use tokio::net::TcpStream;
 
 const EDGE_BIND_KEY: &str = "RHIZO_EDGE__API__BIND";
 const SIMULATOR_BIND_KEY: &str = "RHIZO_SIMULATOR__CONTROL_BIND";
+const EDGE_STORAGE_KEY: &str = "RHIZO_EDGE__STORAGE__PATH";
 const DEFAULT_EDGE_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_SIMULATOR_BIND: &str = "127.0.0.1:9090";
+const DEFAULT_EDGE_STORAGE: &str = "./data/edge.sqlite";
 
 #[derive(Debug, Parser)]
 #[command(name = "rhizo-devctl", version, about)]
@@ -51,6 +53,15 @@ enum Command {
     },
     /// Apply one common event; intended for editor pick lists.
     Event(EventArgs),
+    /// Delete disposable local Edge and simulator persistence.
+    ResetLocalState(ResetLocalStateArgs),
+}
+
+#[derive(Debug, Args)]
+struct ResetLocalStateArgs {
+    /// Confirm deletion of the explicitly listed development-state files.
+    #[arg(long)]
+    confirm: bool,
 }
 
 #[derive(Debug, Args)]
@@ -173,12 +184,29 @@ struct Addresses {
     simulator: SocketAddr,
 }
 
-impl Addresses {
+#[derive(Debug)]
+struct LocalConfig {
+    values: HashMap<String, String>,
+}
+
+impl LocalConfig {
     fn load(env_file: &Path) -> Result<Self> {
-        let file_values = read_env_file(env_file)?;
         Ok(Self {
-            edge: resolve_address(EDGE_BIND_KEY, DEFAULT_EDGE_BIND, &file_values)?,
-            simulator: resolve_address(SIMULATOR_BIND_KEY, DEFAULT_SIMULATOR_BIND, &file_values)?,
+            values: read_env_file(env_file)?,
+        })
+    }
+
+    fn value(&self, key: &str, default: &str) -> String {
+        env::var(key)
+            .ok()
+            .or_else(|| self.values.get(key).cloned())
+            .unwrap_or_else(|| default.to_owned())
+    }
+
+    fn addresses(&self) -> Result<Addresses> {
+        Ok(Addresses {
+            edge: resolve_address(EDGE_BIND_KEY, DEFAULT_EDGE_BIND, &self.values)?,
+            simulator: resolve_address(SIMULATOR_BIND_KEY, DEFAULT_SIMULATOR_BIND, &self.values)?,
         })
     }
 }
@@ -448,6 +476,133 @@ async fn event_command(addresses: &Addresses, event: Event) -> Result<Value> {
     }
 }
 
+async fn reset_local_state(config: &LocalConfig, confirmed: bool) -> Result<Value> {
+    if !confirmed {
+        bail!(
+            "refusing to delete local state without --confirm; stop Edge and all simulators first"
+        );
+    }
+    let addresses = config.addresses()?;
+    for (name, address) in [("Edge", addresses.edge), ("simulator", addresses.simulator)] {
+        if tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            TcpStream::connect(address),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok())
+        {
+            bail!(
+                "{name} is still listening at {address}; stop the VS Code debug session before resetting state"
+            );
+        }
+    }
+
+    let root = env::current_dir().context("could not resolve the workspace directory")?;
+    let storage = PathBuf::from(config.value(EDGE_STORAGE_KEY, DEFAULT_EDGE_STORAGE));
+    let storage = checked_local_path(&root, &storage)?;
+    let mut targets = vec![
+        storage.clone(),
+        PathBuf::from(format!("{}-wal", storage.display())),
+        PathBuf::from(format!("{}-shm", storage.display())),
+        PathBuf::from(format!("{}.pre-migration.bak", storage.display())),
+    ];
+
+    let device_ids = config.value("DEVICE_IDS", "plant-node-01,plant-node-02");
+    for device_id in device_ids
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        if !device_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        {
+            bail!("DEVICE_IDS contains unsafe filename component {device_id:?}");
+        }
+        for suffix in [".state.json", ".state.json.tmp", ".state.json.corrupt"] {
+            targets.push(checked_local_path(
+                &root,
+                &PathBuf::from(format!("{device_id}{suffix}")),
+            )?);
+        }
+    }
+
+    let mut removed = Vec::new();
+    for target in targets {
+        match fs::remove_file(&target) {
+            Ok(()) => removed.push(relative_display(&root, &target)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("could not remove {}", target.display()));
+            }
+        }
+    }
+    Ok(json!({
+        "status": "local development state reset",
+        "removed": removed,
+        "next": "restart Edge and the simulator; migrations will recreate the database"
+    }))
+}
+
+fn checked_local_path(root: &Path, configured: &Path) -> Result<PathBuf> {
+    if configured
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        bail!(
+            "refusing state path containing '..': {}",
+            configured.display()
+        );
+    }
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("could not resolve workspace {}", root.display()))?;
+    let target = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        root.join(configured)
+    };
+    if configured.is_absolute() && !target.starts_with(&root) {
+        bail!(
+            "refusing to remove state outside workspace {}: {}",
+            root.display(),
+            target.display()
+        );
+    }
+    let target_parent = target
+        .parent()
+        .context("state path has no parent directory")?;
+    let mut existing_ancestor = target_parent;
+    while !existing_ancestor.exists() {
+        existing_ancestor = existing_ancestor.parent().with_context(|| {
+            format!(
+                "could not find an existing parent directory for {}",
+                target.display()
+            )
+        })?;
+    }
+    let resolved_ancestor = existing_ancestor
+        .canonicalize()
+        .with_context(|| format!("could not resolve state directory for {}", target.display()))?;
+    if !resolved_ancestor.starts_with(&root) {
+        bail!(
+            "refusing to remove state outside workspace {}: {}",
+            root.display(),
+            target.display()
+        );
+    }
+    Ok(target)
+}
+
+fn relative_display(root: &Path, target: &Path) -> String {
+    target
+        .strip_prefix(root)
+        .unwrap_or(target)
+        .display()
+        .to_string()
+}
+
 fn pretty(value: &Value) -> Result<String> {
     serde_json::to_string_pretty(value).context("could not format JSON response")
 }
@@ -455,12 +610,14 @@ fn pretty(value: &Value) -> Result<String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let addresses = Addresses::load(&cli.env_file)?;
+    let config = LocalConfig::load(&cli.env_file)?;
+    let addresses = config.addresses()?;
     let value = match cli.command {
         Command::Simulator { command } => simulator_command(&addresses, command).await?,
         Command::Edge { command } => edge_command(&addresses, command).await?,
         Command::Scenario { command } => scenario_command(&addresses, command).await?,
         Command::Event(args) => event_command(&addresses, args.event).await?,
+        Command::ResetLocalState(args) => reset_local_state(&config, args.confirm).await?,
     };
     println!("{}", pretty(&value)?);
     Ok(())
@@ -494,5 +651,21 @@ mod tests {
     fn parses_a_successful_json_response() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
         assert_eq!(parse_response(response).unwrap()["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn reset_requires_explicit_confirmation_before_any_deletion() {
+        let config = LocalConfig {
+            values: HashMap::new(),
+        };
+        let error = reset_local_state(&config, false).await.unwrap_err();
+        assert!(error.to_string().contains("without --confirm"));
+    }
+
+    #[test]
+    fn reset_paths_cannot_escape_the_workspace() {
+        let root = env::current_dir().unwrap();
+        assert!(checked_local_path(&root, Path::new("../edge.sqlite")).is_err());
+        assert!(checked_local_path(&root, Path::new("data/edge.sqlite")).is_ok());
     }
 }
