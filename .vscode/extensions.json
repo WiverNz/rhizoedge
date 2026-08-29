@@ -11,7 +11,9 @@
     "vadimcn.vscode-lldb",
     // Compile-time-checked SQL and the .sqlx offline cache both live in TOML
     // and JSON; this keeps Cargo.toml navigable.
-    "tamasfe.even-better-toml"
+    "tamasfe.even-better-toml",
+    // Makes the repository's named task presets easier to discover and run.
+    "darthminos.workspace-tasks"
   ],
   "unwantedRecommendations": [
     // Superseded by rust-analyzer and known to conflict with it.
