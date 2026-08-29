@@ -116,6 +116,41 @@ async fn mixed_batch_keeps_rows_and_nulls_only_invalid_sample() {
 }
 
 #[tokio::test]
+async fn kind_value_class_mismatches_never_reach_typed_value_columns() {
+    let db = db().await;
+    let raw = br#"{"v":1,"kind":"telemetry.batch","message_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6b01","device_id":"plant-node-01","data":{"batch_id":"018fd6c4-7b4a-7c31-9e2a-3f5b1d8c6b02","samples":[{"point":"leak","kind":"leak_state","value":1.0,"unit":"boolean","quality":"ok","sensor_id":"leak-0"},{"point":"soil","kind":"soil_moisture","value":true,"unit":"vwc_percent","quality":"ok","sensor_id":"soil-0"}]}}"#;
+    let envelope = Envelope::<TelemetryBatch>::from_json(raw).unwrap();
+
+    let (dedup, accepted) = ingest::persist_telemetry(&db, &envelope, 9_000)
+        .await
+        .unwrap();
+    assert_eq!((dedup, accepted), (Dedup::New, 0));
+
+    let rows = sqlx::query_as::<_, (String, Option<f64>, Option<i64>)>(
+        "SELECT kind,value_num,value_bool FROM measurements ORDER BY sample_index",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("leak_state".into(), None, None),
+            ("soil_moisture".into(), None, None),
+        ]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM device_events WHERE kind='sensor_invalid'"
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap(),
+        2
+    );
+}
+
+#[tokio::test]
 async fn replay_and_gap_are_idempotent_by_event_id() {
     let db = db().await;
     let e = Envelope::<DeviceEventBatch>::from_json(include_bytes!(
