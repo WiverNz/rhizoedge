@@ -609,7 +609,7 @@ async fn a_replay_of_sequence_zero_is_acknowledged_with_zero() {
 /// holds — is committed but acknowledges nothing. Acknowledging 0 here would
 /// tell the device to discard sequence 0, which the edge does not have.
 #[tokio::test]
-async fn a_suffix_only_replay_commits_but_acknowledges_nothing() {
+async fn a_complete_suffix_only_replay_is_not_safe_reconciliation() {
     let db = db().await;
     let commit = ingest::persist_replay(&db, &replay_batch(&[118, 119, 120, 121], true), 10)
         .await
@@ -631,6 +631,16 @@ async fn a_suffix_only_replay_commits_but_acknowledges_nothing() {
             .unwrap()
             .is_none(),
         "no progress is recorded, so the column stays NULL rather than 0"
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (Option<i64>, i64)>(
+            "SELECT through_device_seq,complete FROM replay_progress"
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap(),
+        (None, 1),
+        "complete means only that the sender marked a final batch; without a proven prefix this replay remains unacknowledgeable"
     );
 }
 
@@ -708,6 +718,62 @@ async fn a_repartitioned_replay_is_idempotent_and_never_lowers_the_prefix() {
         .unwrap(),
         5,
         "five distinct event ids across four overlapping batches"
+    );
+}
+
+/// Durable event rows are sufficient to reconstruct a missing progress
+/// projection. This is the local-development recovery case: the simulator
+/// retains stable event ids while an Edge database restore may omit or lose
+/// `replay_progress`. Refusing to reconstruct here causes an infinite replay
+/// loop even though the contiguous prefix is fully proven.
+#[tokio::test]
+async fn duplicate_replay_reconstructs_missing_progress_from_durable_events() {
+    let db = db().await;
+    let first = replay_batch(&[0, 1, 2, 3], true);
+    assert_eq!(
+        ingest::persist_replay(&db, &first, 10)
+            .await
+            .unwrap()
+            .through_device_seq,
+        Some(3)
+    );
+
+    sqlx::query("DELETE FROM replay_progress")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let new_transport_message = replay_batch(&[0, 1, 2, 3], true);
+    let reconstructed = ingest::persist_replay(&db, &new_transport_message, 20)
+        .await
+        .unwrap();
+    assert_eq!(reconstructed.dedup, Dedup::Duplicate);
+    assert_eq!(reconstructed.through_device_seq, Some(3));
+
+    sqlx::query("DELETE FROM replay_progress")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let qos_duplicate = ingest::persist_replay(&db, &new_transport_message, 30)
+        .await
+        .unwrap();
+    assert_eq!(qos_duplicate.dedup, Dedup::Duplicate);
+    assert_eq!(qos_duplicate.through_device_seq, Some(3));
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT through_device_seq FROM replay_progress")
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        Some(3)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM device_events WHERE origin='offline_replay'"
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap(),
+        4,
+        "reconstruction must remain idempotent"
     );
 }
 

@@ -389,7 +389,7 @@ reconnection, oldest first.
 | Field | Type | Rules |
 |---|---|---|
 | `replay` | boolean | `true` for buffered history, `false` for live events |
-| `complete` | boolean | `true` on the final batch; the edge holds the plant in `Uncertain` until it sees this |
+| `complete` | boolean | `true` on the final batch of this replay attempt; sender framing only, not proof of a contiguous committed prefix or safe reconciliation |
 | `events[].event_id` | UUID | generated **once** at buffering time; MUST be stable across every replay |
 | `events[].device_seq` | integer | strictly increasing for the lifetime of the device, across reboots; used to detect gaps and to acknowledge (§5.13) |
 | `events[].tier` | string | `audit` \| `telemetry` |
@@ -432,7 +432,11 @@ Normative behaviour:
   gap marker that has not yet appeared in a replay batch, however high the
   acknowledged sequence.
 - The edge MUST NOT issue a water command to a plant whose replay has not
-  reported `"complete": true` (SAFETY-016).
+  reported `"complete": true` (SAFETY-016). This is necessary but not
+  sufficient: `complete` says only that the sender reached its final batch. A
+  non-empty suffix-only replay can report `complete: true` while the edge holds
+  no provable contiguous prefix; that state remains unacknowledgeable and MUST
+  NOT be considered safely reconciled merely because `complete` is true.
 
 ### 5.5 `device.status` → `status` (retained)
 
@@ -1316,9 +1320,10 @@ Receivers MUST NOT assume ordered delivery. Specifically:
    lost retained state (detected by an absent retained status on resubscribe).
 3. Do not re-issue in-flight commands; reconcile them per SAFETY-010.
 4. **Hold every plant on a reconnecting device in `Uncertain`** until its event
-   replay reports `"complete": true` and has been committed. Issuing a dose on
-   top of an autonomous dose delivered moments ago is exactly the failure
-   SAFETY-016 prevents.
+   replay reports `"complete": true`, has been committed, and the edge has the
+   contiguous coverage required for safe reconciliation. `complete` alone is
+   only the sender's final-batch marker. Issuing a dose on top of an autonomous
+   dose delivered moments ago is exactly the failure SAFETY-016 prevents.
 5. **Publish `event.ack` (§5.13) only after the transaction persisting the
    replayed events has committed**, covering the highest contiguous
    `device_seq`. Acknowledging earlier tells a device with a bounded buffer to

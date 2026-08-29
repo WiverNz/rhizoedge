@@ -19,7 +19,8 @@ Ingest replayed history exactly once, however many times it is replayed.
 - Deduplicate on `event_id`, not on `message_id`, for replayed events
 - Persist measurement samples with `origin = 'offline_replay'`
 - Persist autonomous doses as `watering_events` with `origin = 'offline_autonomous'`
-- Track `complete` and record when a device's replay has finished
+- Track `complete` as the sender's final-batch marker; it is necessary but not
+  sufficient evidence that reconciliation can finish
 - Publish `event.ack` (mqtt-v1.md §5.13) **after** the persisting transaction
   commits, covering the highest contiguous `device_seq`, non-retained, QoS 1
 
@@ -74,13 +75,11 @@ therefore commits its events and stays silent rather than telling the device to
 discard sequence 0. The canonical `0001_initial.sql` makes
 `replay_progress.through_device_seq` nullable to carry the same distinction.
 
-**Consequence, recorded honestly.** An edge that has lost its `replay_progress`
-while a device is still in the same boot will never acknowledge that device's
-remaining buffer, because it has no prefix and protocol section 5.13 forbids
-claiming one. The device replays indefinitely and eventually opens a
-`history.gap`. That is the fail-safe direction — repeated replay rather than
-deleted history — but it is a real operational edge, and closing it properly
-needs a protocol-level "nothing acknowledged" or a resynchronisation exchange.
+**Consequence, recorded honestly.** If durable event rows still prove a
+contiguous prefix, missing `replay_progress` is reconstructed from them. A
+genuine suffix-only buffer still cannot be acknowledged because the edge has no
+proof of the earlier prefix. Its final batch may set `complete = true`, but that
+flag is sender framing only and MUST NOT be treated as safe reconciliation.
 
 ## Acceptance criteria
 

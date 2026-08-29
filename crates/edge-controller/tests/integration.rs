@@ -797,6 +797,49 @@ async fn offline_replay_is_idempotent_and_acknowledged_after_commit() {
     );
 }
 
+/// A stale/restored Edge database can retain the durable replayed events while
+/// losing their reconstructable progress row. A reconnect uses stable event
+/// ids under a fresh transport message id; Edge must rebuild the proven prefix
+/// and acknowledge it rather than leaving the simulator in a replay loop.
+#[tokio::test]
+async fn missing_replay_progress_is_reconstructed_and_acknowledged() {
+    let Some(b) =
+        support::broker("missing_replay_progress_is_reconstructed_and_acknowledged").await
+    else {
+        return;
+    };
+    let edge = EdgeHarness::start(&b).await;
+    let fixture = include_bytes!("../../../test/fixtures/protocol/valid/events-replay-gap.json");
+    let first = replay_with_sequences(fixture, &[0, 1, 2, 3]);
+    assert_eq!(
+        publish_replay_and_wait_ack(&b, &first).await.json()["data"]["through_device_seq"],
+        3
+    );
+
+    sqlx::query("DELETE FROM replay_progress")
+        .execute(edge.db.pool())
+        .await
+        .unwrap();
+
+    let reconnect = replay_with_sequences(fixture, &[0, 1, 2, 3]);
+    let ack = publish_replay_and_wait_ack(&b, &reconnect).await;
+    assert_eq!(ack.json()["data"]["through_device_seq"], 3);
+    assert!(
+        !ack.retain,
+        "the reconstructed acknowledgement stays live-only"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM device_events WHERE origin='offline_replay'"
+        )
+        .fetch_one(edge.db.pool())
+        .await
+        .unwrap(),
+        4,
+        "reconstruction must not duplicate logical events"
+    );
+}
+
 /// The shipped fixture is a genuine suffix: it opens with a sealed gap marker
 /// at `device_seq` 118 covering 101-117. The edge holds nothing at or below
 /// 117, so protocol section 5.13's prefix rule leaves it nothing truthful to

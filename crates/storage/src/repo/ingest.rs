@@ -426,7 +426,13 @@ pub struct ReplayCommit {
     /// the device to discard the single event the edge does not hold. `None`
     /// means the edge publishes no acknowledgement and the device replays again.
     pub through_device_seq: Option<u64>,
-    pub complete: bool,
+    /// Whether the sender marked this as the final batch of its replay attempt.
+    ///
+    /// This is sender framing, not proof of a contiguous committed prefix and
+    /// not a reconciliation decision. In particular, `true` together with
+    /// `through_device_seq: None` remains unacknowledgeable and must not release
+    /// a plant from uncertainty.
+    pub sender_reports_complete: bool,
 }
 
 /// Persists replay events idempotently by stable event id.
@@ -444,12 +450,17 @@ pub async fn persist_replay(
         .map(ToString::to_string)
         .unwrap_or_default();
     if mark_processed(&mut tx, &msg, &dev, "device.events", at).await? == Dedup::Duplicate {
-        tx.rollback().await.map_err(StorageError::from_sqlx)?;
-        let through = replay_through(db, &dev, &boot).await?;
+        // The event rows are the durable proof; replay_progress is a
+        // reconstructable projection. A restored database may contain the
+        // former without the latter, so rebuild the prefix even on a QoS
+        // duplicate instead of returning a permanently missing projection.
+        let through = contiguous_in_tx(&mut tx, &dev, &boot).await?;
+        update_replay_progress(&mut tx, &dev, &boot, through, e.data.complete, at).await?;
+        tx.commit().await.map_err(StorageError::from_sqlx)?;
         return Ok(ReplayCommit {
             dedup: Dedup::Duplicate,
             through_device_seq: through,
-            complete: e.data.complete,
+            sender_reports_complete: e.data.complete,
         });
     }
     if !e.data.events.is_empty() {
@@ -469,12 +480,16 @@ pub async fn persist_replay(
             }
         }
         if all_events_exist {
-            tx.rollback().await.map_err(StorageError::from_sqlx)?;
-            let through = replay_through(db, &dev, &boot).await?;
+            // A reconnect uses a new transport message id but stable event ids.
+            // Recompute the projection so a database with intact event rows
+            // and missing replay_progress can recover without guessing.
+            let through = contiguous_in_tx(&mut tx, &dev, &boot).await?;
+            update_replay_progress(&mut tx, &dev, &boot, through, e.data.complete, at).await?;
+            tx.commit().await.map_err(StorageError::from_sqlx)?;
             return Ok(ReplayCommit {
                 dedup: Dedup::Duplicate,
                 through_device_seq: through,
-                complete: e.data.complete,
+                sender_reports_complete: e.data.complete,
             });
         }
     }
@@ -549,10 +564,27 @@ pub async fn persist_replay(
         }
     }
     let through = contiguous_in_tx(&mut tx, &dev, &boot).await?;
+    update_replay_progress(&mut tx, &dev, &boot, through, e.data.complete, at).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(ReplayCommit {
+        dedup: Dedup::New,
+        through_device_seq: through,
+        sender_reports_complete: e.data.complete,
+    })
+}
+
+async fn update_replay_progress(
+    tx: &mut Transaction<'_, Sqlite>,
+    dev: &str,
+    boot: &str,
+    through: Option<u64>,
+    complete: bool,
+    at: i64,
+) -> Result<(), StorageError> {
     // SQLite's `max(a,b)` returns NULL if either argument is NULL, so the
     // no-progress case has to be spelled out rather than folded into it.
-    let progress = through.map(|v| v as i64);
-    let complete = i64::from(e.data.complete);
+    let progress = through.map(|value| value as i64);
+    let complete = i64::from(complete);
     sqlx::query!(
         "INSERT INTO replay_progress(device_id,boot_id,through_device_seq,complete,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(device_id,boot_id) DO UPDATE SET through_device_seq=CASE WHEN excluded.through_device_seq IS NULL THEN through_device_seq WHEN through_device_seq IS NULL THEN excluded.through_device_seq ELSE max(through_device_seq,excluded.through_device_seq) END,complete=max(complete,excluded.complete),updated_at=excluded.updated_at",
         dev,
@@ -561,15 +593,10 @@ pub async fn persist_replay(
         complete,
         at
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    tx.commit().await.map_err(StorageError::from_sqlx)?;
-    Ok(ReplayCommit {
-        dedup: Dedup::New,
-        through_device_seq: through,
-        complete: e.data.complete,
-    })
+    Ok(())
 }
 /// The highest `device_seq` such that every sequence at or below it is committed.
 ///
@@ -623,19 +650,6 @@ async fn progress_in_tx(
     .flatten()
     .map(|v| v as u64))
 }
-async fn replay_through(db: &EdgeDb, dev: &str, boot: &str) -> Result<Option<u64>, StorageError> {
-    Ok(sqlx::query_scalar!(
-        "SELECT through_device_seq FROM replay_progress WHERE device_id=? AND boot_id=?",
-        dev,
-        boot
-    )
-    .fetch_optional(db.pool())
-    .await
-    .map_err(StorageError::from_sqlx)?
-    .flatten()
-    .map(|v| v as u64))
-}
-
 /// Persists status as raw prerequisite state without M4 health behaviour.
 ///
 /// Transport ids are only a short-lived QoS optimisation. The durable effect

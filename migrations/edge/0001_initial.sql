@@ -47,6 +47,8 @@ CREATE TABLE device_events (event_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, 
 CREATE INDEX idx_devevents_device_time ON device_events(device_id, occurred_at DESC);
 CREATE INDEX idx_devevents_replay ON device_events(device_id, boot_id, device_seq);
 CREATE TABLE history_gaps (gap_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, boot_id TEXT NOT NULL, from_seq INTEGER NOT NULL, to_seq INTEGER NOT NULL, lost_count INTEGER NOT NULL, tier TEXT NOT NULL, reported_at INTEGER NOT NULL);
+-- `complete` records only the sender's final-batch marker. It is not proof of
+-- a contiguous committed prefix and must never be used alone as reconciliation.
 CREATE TABLE replay_progress (device_id TEXT NOT NULL, boot_id TEXT NOT NULL, through_device_seq INTEGER, complete INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, PRIMARY KEY(device_id, boot_id));
 CREATE TABLE quarantined_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT, topic TEXT NOT NULL, payload BLOB, error TEXT NOT NULL, received_at INTEGER NOT NULL);
 CREATE TABLE commands (command_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, plant_id TEXT REFERENCES plants(plant_id), kind TEXT NOT NULL, requested_ml REAL, mode TEXT NOT NULL, issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, status TEXT NOT NULL, published_at INTEGER, settled_at INTEGER, reason TEXT);
