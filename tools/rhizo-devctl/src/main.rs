@@ -59,9 +59,9 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct ResetLocalStateArgs {
-    /// Confirm deletion of the explicitly listed development-state files.
+    /// Type RESET to confirm deletion of the listed development-state files.
     #[arg(long)]
-    confirm: bool,
+    confirmation: String,
 }
 
 #[derive(Debug, Args)]
@@ -685,12 +685,17 @@ async fn event_command(addresses: &Addresses, event: Event) -> Result<Output> {
     }
 }
 
-async fn reset_local_state(config: &LocalConfig, confirmed: bool) -> Result<Value> {
-    if !confirmed {
+fn validate_reset_confirmation(confirmation: &str) -> Result<()> {
+    if confirmation != "RESET" {
         bail!(
-            "refusing to delete local state without --confirm; stop Edge and all simulators first"
+            "refusing to delete local state: type RESET exactly to confirm destructive maintenance"
         );
     }
+    Ok(())
+}
+
+async fn reset_local_state(config: &LocalConfig, confirmation: &str) -> Result<Value> {
+    validate_reset_confirmation(confirmation)?;
     let addresses = config.addresses()?;
     for (name, address) in [("Edge", addresses.edge), ("simulator", addresses.simulator)] {
         if tokio::time::timeout(
@@ -827,7 +832,7 @@ async fn main() -> Result<()> {
         Command::Scenario { command } => scenario_command(&addresses, command).await?,
         Command::Event(args) => event_command(&addresses, args.event).await?,
         Command::ResetLocalState(args) => {
-            Output::Json(reset_local_state(&config, args.confirm).await?)
+            Output::Json(reset_local_state(&config, &args.confirmation).await?)
         }
     };
     match output {
@@ -1012,12 +1017,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_requires_explicit_confirmation_before_any_deletion() {
+    async fn reset_requires_exact_typed_confirmation_before_any_deletion() {
         let config = LocalConfig {
             values: HashMap::new(),
         };
-        let error = reset_local_state(&config, false).await.unwrap_err();
-        assert!(error.to_string().contains("without --confirm"));
+        for confirmation in ["", "reset", "RESET ", "yes"] {
+            let error = reset_local_state(&config, confirmation).await.unwrap_err();
+            assert!(error.to_string().contains("type RESET exactly"));
+        }
+        assert!(validate_reset_confirmation("RESET").is_ok());
     }
 
     #[test]

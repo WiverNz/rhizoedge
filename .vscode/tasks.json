@@ -144,7 +144,7 @@
       "command": "cargo",
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "simulator", "set-soil", "${input:rhizoSoilMoisture}"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+      "presentation": { "reveal": "never", "focus": false, "panel": "shared", "showReuseMessage": false }
     },
     {
       "label": "Rhizo: simulate event...",
@@ -152,7 +152,7 @@
       "command": "cargo",
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "event", "${input:rhizoEvent}"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+      "presentation": { "reveal": "never", "focus": false, "panel": "shared", "showReuseMessage": false }
     },
     {
       "label": "Rhizo scenario: dry plant",
@@ -160,7 +160,7 @@
       "command": "cargo",
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "dry-plant"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+      "presentation": { "reveal": "never", "focus": false, "panel": "shared", "showReuseMessage": false }
     },
     {
       "label": "Rhizo scenario: leak while dry",
@@ -168,7 +168,7 @@
       "command": "cargo",
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "leak-while-dry"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+      "presentation": { "reveal": "never", "focus": false, "panel": "shared", "showReuseMessage": false }
     },
     {
       "label": "Rhizo scenario: battery missed wake",
@@ -176,7 +176,7 @@
       "command": "cargo",
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "battery-missed-wake"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+      "presentation": { "reveal": "never", "focus": false, "panel": "shared", "showReuseMessage": false }
     },
     {
       "label": "Rhizo scenario: recover normal",
@@ -184,16 +184,16 @@
       "command": "cargo",
       "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "scenario", "recover-normal"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+      "presentation": { "reveal": "never", "focus": false, "panel": "shared", "showReuseMessage": false }
     },
     {
-      "label": "Rhizo: reset local state (DELETES DEV DATA)",
+      "label": "⚠ Rhizo maintenance: RESET local dev state",
       "type": "process",
       "command": "cargo",
-      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "reset-local-state", "--confirm"],
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "reset-local-state", "--confirmation", "${input:rhizoResetConfirmation}"],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
-      "detail": "Requires Edge and the simulator to be stopped; deletes only configured local SQLite and DEVICE_IDS simulator state files."
+      "presentation": { "reveal": "always", "focus": true, "panel": "shared", "clear": true, "showReuseMessage": false },
+      "detail": "DESTRUCTIVE MAINTENANCE: type RESET, after stopping Edge and all simulators, to delete configured local development state."
     }
   ],
   "inputs": [
@@ -234,6 +234,11 @@
         "reconnect",
         "recover-normal"
       ]
+    },
+    {
+      "id": "rhizoResetConfirmation",
+      "type": "promptString",
+      "description": "Destructive maintenance: type RESET to delete local Edge and simulator state"
     }
   ]
 }

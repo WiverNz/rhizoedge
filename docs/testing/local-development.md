@@ -101,10 +101,11 @@ useful tasks are:
 - `Rhizo scenario: leak while dry`
 - `Rhizo scenario: battery missed wake`
 - `Rhizo scenario: recover normal`
-- `Rhizo: reset local state (DELETES DEV DATA)` — after stopping the debug
-  session, removes the configured local SQLite database and the simulator state
-  files named by `DEVICE_IDS`; use this when intentionally starting a clean
-  disposable topology
+- `⚠ Rhizo maintenance: RESET local dev state` — a deliberately separate,
+  destructive maintenance task. After stopping the debug session, type `RESET`
+  exactly when prompted to remove the configured local SQLite database and the
+  simulator state files named by `DEVICE_IDS`. `rhizo-devctl` validates the
+  typed value; the VS Code prompt is not the safety boundary.
 
 VS Code launches use `compact` logging: one event per line, with the component
 and the most useful correlation identifier before the message. Levels are
@@ -129,6 +130,11 @@ not reported as success. Multi-step failures name the step that failed and exit
 non-zero, so a green task terminal means the displayed state was actually read
 from the running simulator.
 
+Mutation and scenario tasks run without revealing or focusing the shared task
+panel, so the visible Edge Controller or simulator debug terminal stays in
+place. Inspection tasks reveal their terminal because their read-back output is
+the purpose of running them.
+
 The simulator bind must stay loopback because its control API is a local test
 affordance, not a device or production API. A second simulator can still use
 the existing `--control-port` launch override; the standard presets intentionally
@@ -147,7 +153,7 @@ cargo run -p rhizo-devctl -- simulator reconnect
 cargo run -p rhizo-devctl -- edge readiness
 cargo run -p rhizo-devctl -- edge device-state plant-node-01
 cargo run -p rhizo-devctl -- edge plant-recommendation monstera-01
-cargo run -p rhizo-devctl -- reset-local-state --confirm
+cargo run -p rhizo-devctl -- reset-local-state --confirmation RESET
 ```
 
 ## 4. Running pieces individually (manual fallback)
