@@ -98,7 +98,7 @@ pub async fn tick(
 ) -> Result<(), rhizo_storage::StorageError> {
     use sqlx::Row as _;
     let now = clock.now().timestamp_millis();
-    let rows = sqlx::query("SELECT device_id,status,last_seen_at,telemetry_interval_seconds,desired_config_version,applied_config_version,drift_since,connectivity_mode,last_time_sync_at,power_mode,wake_interval_seconds,overdue_at FROM devices")
+    let rows = sqlx::query("SELECT device_id,status,last_seen_at,telemetry_interval_seconds,desired_config_version,applied_config_version,drift_since,connectivity_mode,last_time_sync_at,power_mode,wake_interval_seconds,expected_wake_at,overdue_at FROM devices")
         .fetch_all(db.pool()).await.map_err(|e| rhizo_storage::StorageError::Database(e.to_string()))?;
     let mut online = 0;
     let mut offline = 0;
@@ -117,10 +117,18 @@ pub async fn tick(
         });
         if stale {
             let id = format!("edge:{device}:stale:{}", last_seen.unwrap_or_default());
-            sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at,origin) VALUES(?,?,'stale','warning',?,?,'edge')")
+            let inserted = sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at,origin) VALUES(?,?,'stale','warning',?,?,'edge')")
                 .bind(id).bind(&device).bind(now).bind(now).execute(db.pool()).await.map_err(|e| rhizo_storage::StorageError::Database(e.to_string()))?;
+            if inserted.rows_affected() == 1 {
+                tracing::warn!(
+                    device_id = %device,
+                    last_seen_at = ?last_seen,
+                    "device telemetry became stale"
+                );
+            }
         }
         let mut connectivity: String = row.get("connectivity_mode");
+        let expected_wake_at: Option<i64> = row.get("expected_wake_at");
         let overdue_at: Option<i64> = row.get("overdue_at");
         if connectivity == "sleeping" && overdue_at.is_some_and(|deadline| now >= deadline) {
             let id = format!(
@@ -133,13 +141,22 @@ pub async fn tick(
             if changed.rows_affected() == 1 {
                 sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,origin) VALUES(?,?,'device_wake_missed','warning',?, ?,?,'edge')")
                     .bind(id).bind(&device)
-                    .bind(serde_json::json!({"expected_wake_at": overdue_at}).to_string())
+                    .bind(serde_json::json!({
+                        "expected_wake_at": expected_wake_at,
+                        "overdue_at": overdue_at
+                    }).to_string())
                     .bind(now).bind(now).execute(&mut *tx).await.map_err(|e| rhizo_storage::StorageError::Database(e.to_string()))?;
                 tx.commit()
                     .await
                     .map_err(|e| rhizo_storage::StorageError::Database(e.to_string()))?;
                 metrics.device_wake_missed.inc();
                 connectivity = "isolated".to_owned();
+                tracing::warn!(
+                    device_id = %device,
+                    expected_wake_at = ?expected_wake_at,
+                    overdue_at = ?overdue_at,
+                    "device missed its expected wake"
+                );
             } else {
                 tx.rollback()
                     .await
@@ -166,12 +183,26 @@ pub async fn tick(
                     .execute(db.pool())
                     .await
                     .map_err(|e| rhizo_storage::StorageError::Database(e.to_string()))?;
+                tracing::info!(
+                    device_id = %device,
+                    desired_config_version = desired,
+                    applied_config_version = ?applied,
+                    "configuration drift cleared"
+                );
             }
         } else if let Some(since) = drift_since {
             if now.saturating_sub(since) >= telemetry.saturating_mul(2000) {
                 let id = format!("edge:{device}:config_drift:{desired}");
-                sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at,origin) VALUES(?,?,'config_drift','warning',?,?,'edge')")
+                let inserted = sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,occurred_at,received_at,origin) VALUES(?,?,'config_drift','warning',?,?,'edge')")
                     .bind(id).bind(&device).bind(now).bind(now).execute(db.pool()).await.map_err(|e| rhizo_storage::StorageError::Database(e.to_string()))?;
+                if inserted.rows_affected() == 1 {
+                    tracing::warn!(
+                        device_id = %device,
+                        desired_config_version = desired,
+                        applied_config_version = ?applied,
+                        "configuration drift detected"
+                    );
+                }
             }
         } else {
             sqlx::query("UPDATE devices SET drift_since=? WHERE device_id=?")
@@ -319,6 +350,15 @@ mod staleness {
             .unwrap(),
             1
         );
+        let detail: String = sqlx::query_scalar(
+            "SELECT detail_json FROM device_events WHERE kind='device_wake_missed'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
+        assert_eq!(detail["expected_wake_at"], 61_000);
+        assert_eq!(detail["overdue_at"], 361_000);
         tick(&db, &clock, &client, &metrics).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT missed_wake_count FROM devices")

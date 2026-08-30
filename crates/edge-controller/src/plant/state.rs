@@ -28,19 +28,19 @@ pub fn state_from_str(name: &str) -> PlantState {
 }
 
 /// Derives the state from a recommendation and persists a transition if there
-/// is one. Returns the state now in force and whether it changed.
+/// is one. Returns the state now in force and the transition, when one occurred.
 pub async fn apply(
     db: &EdgeDb,
     plant_id: &str,
     recommendation: &Recommendation,
     now: DateTime<Utc>,
-) -> Result<(PlantState, bool), rhizo_storage::StorageError> {
+) -> Result<(PlantState, Option<plant_state::Transition>), rhizo_storage::StorageError> {
     let derived = plant_state::derive(recommendation);
     let previous = plant_repo::plant_state(db, plant_id)
         .await?
         .map(|name| state_from_str(&name));
     let Some(transition) = plant_state::transition(previous, derived) else {
-        return Ok((derived, false));
+        return Ok((derived, None));
     };
     plant_repo::record_state_transition(
         db,
@@ -50,5 +50,5 @@ pub async fn apply(
         now.timestamp_millis(),
     )
     .await?;
-    Ok((derived, true))
+    Ok((derived, Some(transition)))
 }

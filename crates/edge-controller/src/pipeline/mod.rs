@@ -161,30 +161,21 @@ async fn process(
         }
         Msg::Actuator(e) => retry_transient(m, || ingest::persist_actuator(db, &e, at)).await?,
         Msg::Status(e) => {
-            let dedup = retry_transient(m, || ingest::persist_status(db, &e, at)).await?;
+            let result =
+                retry_transient(m, || ingest::persist_status_with_transitions(db, &e, at)).await?;
             publish_edge_time(client, &e.device_id, at).await?;
-            if dedup == Dedup::New {
+            if result.dedup == Dedup::New {
                 let device_id = e.device_id.to_string();
-                let status_name = match e.data.status {
-                    rhizo_mqtt_contract::payload::DeviceStatusValue::Online => "online",
-                    rhizo_mqtt_contract::payload::DeviceStatusValue::Offline => "offline",
-                };
-                let transitioned: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM device_events WHERE device_id=? AND kind=? AND occurred_at=?",
-                ).bind(&device_id).bind(status_name).bind(at).fetch_one(db.pool()).await
-                    .map_err(|error| StorageError::Database(error.to_string()))?;
-                if transitioned != 0 {
-                    tracing::info!(device=%device_id, status=status_name, "device status transition");
-                }
-                let restarted: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM device_events WHERE device_id=? AND kind='device_restart' AND occurred_at=?",
-                ).bind(&device_id).bind(at).fetch_one(db.pool()).await
-                    .map_err(|error| StorageError::Database(error.to_string()))?;
-                if restarted != 0 {
+                if result
+                    .transitions
+                    .iter()
+                    .any(|transition| transition.kind == "device_restart")
+                {
                     m.device_restarts.with_label_values(&[&device_id]).inc();
                 }
+                log_device_transitions(&device_id, &result.transitions);
             }
-            dedup
+            result.dedup
         }
         Msg::Result(e) => retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?,
         Msg::Events(e) => {
@@ -247,6 +238,29 @@ async fn process(
         .with_label_values(&[kind])
         .observe(started.elapsed().as_secs_f64());
     Ok(())
+}
+
+fn log_device_transitions(
+    device_id: &str,
+    transitions: &[rhizo_storage::repo::ingest::StatusTransition],
+) {
+    for effect in transitions {
+        if effect.severity == "warning" {
+            tracing::warn!(
+                device_id = %device_id,
+                transition = %effect.kind,
+                detail = ?effect.detail,
+                "device state changed"
+            );
+        } else {
+            tracing::info!(
+                device_id = %device_id,
+                transition = %effect.kind,
+                detail = ?effect.detail,
+                "device state changed"
+            );
+        }
+    }
 }
 
 async fn publish_edge_time(
@@ -469,6 +483,45 @@ mod persist {
     fn typed_samples_are_the_only_telemetry_shape() {
         let e=rhizo_mqtt_contract::Envelope::<rhizo_mqtt_contract::payload::TelemetryBatch>::from_json(include_bytes!("../../../../test/fixtures/protocol/valid/telemetry-batch.json")).unwrap();
         assert!(e.data.samples.len() > 1);
+    }
+
+    /// Application logs are sourced from the exact status transaction result,
+    /// never by discovering events that another task may have inserted.
+    #[tokio::test]
+    async fn status_persistence_returns_only_its_committed_transitions() {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        let status = rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+            "../../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+        ))
+        .unwrap();
+
+        let result =
+            rhizo_storage::repo::ingest::persist_status_with_transitions(&db, &status, 1_000)
+                .await
+                .unwrap();
+        assert!(
+            result
+                .transitions
+                .iter()
+                .any(|effect| effect.kind == "device_registered")
+        );
+        assert!(
+            result
+                .transitions
+                .iter()
+                .any(|effect| effect.kind == "online")
+        );
+
+        let duplicate =
+            rhizo_storage::repo::ingest::persist_status_with_transitions(&db, &status, 2_000)
+                .await
+                .unwrap();
+        assert_eq!(
+            duplicate.dedup,
+            rhizo_storage::repo::ingest::Dedup::Duplicate
+        );
+        assert!(duplicate.transitions.is_empty());
     }
 }
 #[cfg(test)]

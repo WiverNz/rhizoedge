@@ -359,6 +359,28 @@ The Dev profile is intentionally dependency-quiet: application lifecycle and
 per-message DEBUG events remain visible without every SQL statement or MQTT
 packet. Select a focused compound only when that subsystem is the investigation.
 
+### Expected scenario logs through M5
+
+Simulator scenarios mutate the physical model; they do not create an Edge
+plant, binding, or measurement policy. Plant-level Edge logs therefore require
+a configured plant bound to that simulator sensor. After the next published
+sample and 30-second Edge evaluation tick, change-only logging behaves as
+follows:
+
+| Scenario | Immediate feedback | Expected Edge application log |
+|---|---|---|
+| `dry plant` | devctl confirms the read-back moisture | `recommendation changed` and `plant state changed` at INFO, only if the configured plant's decision/state actually changes |
+| `leak while dry` | Simulator warns about fault injection; devctl confirms moisture and leak | the same dry-plant transitions if dryness changes the M5 result; **no leak lockout log before M6**, because M5 does not interpret a detected leak as an irrigation lockout |
+| `recover normal` | devctl confirms moisture, leak, tank, connectivity, and remaining faults | recommendation/state recovery at INFO, only if those M5 values change |
+| `battery missed wake` | devctl confirms the active missed-wake fault | `device missed its expected wake` at WARN when the Edge health timer crosses the announced wake deadline |
+
+Edge also logs device connectivity/reconciliation events from their persisted
+M4 transitions, configuration drift detection/recovery, measurement-threshold
+warning/recovery, and stale telemetry. Repeated status, telemetry, replay, and
+steady evaluation ticks do not create INFO events. Use
+`Rhizo: show plant recommendation...` to distinguish “the value has not changed”
+from “this simulator is not bound to that plant.”
+
 ```bash
 RHIZO_EDGE__LOG__FORMAT=compact \
 RUST_LOG=warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info \

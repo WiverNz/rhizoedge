@@ -661,12 +661,40 @@ pub async fn persist_status(
     e: &Envelope<DeviceStatus>,
     at: i64,
 ) -> Result<Dedup, StorageError> {
+    Ok(persist_status_with_transitions(db, e, at).await?.dedup)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct StatusTransition {
+    pub kind: String,
+    pub severity: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct StatusPersistResult {
+    pub dedup: Dedup,
+    pub transitions: Vec<StatusTransition>,
+}
+
+/// Persists status and returns exactly the edge transitions committed by this
+/// transaction. Callers can therefore report effects without rediscovering
+/// unrelated events written concurrently.
+pub async fn persist_status_with_transitions(
+    db: &EdgeDb,
+    e: &Envelope<DeviceStatus>,
+    at: i64,
+) -> Result<StatusPersistResult, StorageError> {
     let mut tx = db.begin().await?;
+    let mut transitions = Vec::new();
     let id = e.message_id.to_string();
     let dev = e.device_id.to_string();
     if mark_processed(&mut tx, &id, &dev, "device.status", at).await? == Dedup::Duplicate {
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
-        return Ok(Dedup::Duplicate);
+        return Ok(StatusPersistResult {
+            dedup: Dedup::Duplicate,
+            transitions,
+        });
     }
     let generation = i64::try_from(e.data.boot_generation).map_err(|_| {
         StorageError::Constraint("status boot_generation exceeds SQLite INTEGER".into())
@@ -709,7 +737,10 @@ pub async fn persist_status(
     };
     if !apply {
         tx.rollback().await.map_err(StorageError::from_sqlx)?;
-        return Ok(Dedup::Duplicate);
+        return Ok(StatusPersistResult {
+            dedup: Dedup::Duplicate,
+            transitions,
+        });
     }
     let prior = sqlx::query("SELECT status,boot_id,connectivity_mode,expected_wake_at,power_mode FROM devices WHERE device_id=?")
             .bind(&dev)
@@ -734,7 +765,13 @@ pub async fn persist_status(
             .execute(&mut *tx)
             .await
             .map_err(StorageError::from_sqlx)?;
-        insert_edge_event(&mut tx, &dev, "device_registered", "info", None, at).await?;
+        record_status_transition(
+            &mut transitions,
+            insert_edge_event(&mut tx, &dev, "device_registered", "info", None, at).await?,
+            "device_registered",
+            "info",
+            None,
+        );
     }
     let prior_sequence = previous.as_ref().and_then(|(old_generation, sequence, _)| {
         (*old_generation == Some(generation))
@@ -853,36 +890,64 @@ pub async fn persist_status(
         } else {
             "info"
         };
-        insert_edge_event(
-            &mut tx,
-            &dev,
-            &status,
-            severity,
-            e.data.reason.as_deref(),
-            at,
-        )
-        .await?;
+        let detail = e.data.reason.as_deref();
+        let inserted = insert_edge_event(&mut tx, &dev, &status, severity, detail, at).await?;
+        record_status_transition(&mut transitions, inserted, &status, severity, detail);
     }
     if announced_sleep && prior_connectivity.as_deref() != Some("sleeping") {
-        insert_edge_event(&mut tx, &dev, "device_slept", "info", None, at).await?;
+        let inserted = insert_edge_event(&mut tx, &dev, "device_slept", "info", None, at).await?;
+        record_status_transition(&mut transitions, inserted, "device_slept", "info", None);
     } else if waking {
-        insert_edge_event(&mut tx, &dev, "device_woke", "info", None, at).await?;
+        let inserted = insert_edge_event(&mut tx, &dev, "device_woke", "info", None, at).await?;
+        record_status_transition(&mut transitions, inserted, "device_woke", "info", None);
     }
     if prior_boot.is_some() && prior_boot != boot {
-        insert_edge_event(&mut tx, &dev, "device_restart", "info", None, at).await?;
+        let inserted = insert_edge_event(&mut tx, &dev, "device_restart", "info", None, at).await?;
+        record_status_transition(&mut transitions, inserted, "device_restart", "info", None);
     }
-    replace_capabilities(&mut tx, &dev, &e.data.capabilities, at, prior_boot != boot).await?;
+    if replace_capabilities(&mut tx, &dev, &e.data.capabilities, at, prior_boot != boot).await? {
+        record_status_transition(
+            &mut transitions,
+            true,
+            "capabilities_changed",
+            "warning",
+            None,
+        );
+    }
     if prior_connectivity.as_deref() != Some(connectivity)
         && (connectivity == "isolated" || prior_connectivity.as_deref() == Some("isolated"))
         && connectivity != "sleeping"
         && prior_connectivity.as_deref() != Some("sleeping")
     {
         let reported_isolated_ms = e.data.connectivity.map_or(0, |value| value.isolated_ms);
-        apply_connectivity_transition(&mut tx, &dev, connectivity, at, reported_isolated_ms)
-            .await?;
+        if let Some(transition) =
+            apply_connectivity_transition(&mut tx, &dev, connectivity, at, reported_isolated_ms)
+                .await?
+        {
+            transitions.push(transition);
+        }
     }
     tx.commit().await.map_err(StorageError::from_sqlx)?;
-    Ok(Dedup::New)
+    Ok(StatusPersistResult {
+        dedup: Dedup::New,
+        transitions,
+    })
+}
+
+fn record_status_transition(
+    transitions: &mut Vec<StatusTransition>,
+    inserted: bool,
+    kind: &str,
+    severity: &str,
+    detail: Option<&str>,
+) {
+    if inserted {
+        transitions.push(StatusTransition {
+            kind: kind.to_owned(),
+            severity: severity.to_owned(),
+            detail: detail.map(|value| serde_json::json!({"reason": value}).to_string()),
+        });
+    }
 }
 
 async fn insert_edge_event(
@@ -892,13 +957,13 @@ async fn insert_edge_event(
     severity: &str,
     detail: Option<&str>,
     at: i64,
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let event_id = format!("edge:{device}:{kind}:{at}");
     let detail_json = detail.map(|value| serde_json::json!({"reason": value}).to_string());
-    sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,origin) VALUES(?,?,?,?,?,?,?,'edge')")
+    let result = sqlx::query("INSERT OR IGNORE INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,origin) VALUES(?,?,?,?,?,?,?,'edge')")
         .bind(event_id).bind(device).bind(kind).bind(severity).bind(detail_json).bind(at).bind(at)
         .execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 async fn replace_capabilities(
@@ -907,7 +972,7 @@ async fn replace_capabilities(
     capabilities: &rhizo_mqtt_contract::payload::DeviceCapabilities,
     at: i64,
     reboot: bool,
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let old: Vec<String> = sqlx::query_scalar("SELECT capability_id || ':' || class || ':' || kinds_json || ':' || COALESCE(point,'') FROM device_capabilities WHERE device_id=? ORDER BY capability_id,class")
         .bind(device).fetch_all(&mut **tx).await.map_err(StorageError::from_sqlx)?;
     sqlx::query("DELETE FROM device_capabilities WHERE device_id=?")
@@ -931,9 +996,9 @@ async fn replace_capabilities(
     let new: Vec<String> = sqlx::query_scalar("SELECT capability_id || ':' || class || ':' || kinds_json || ':' || COALESCE(point,'') FROM device_capabilities WHERE device_id=? ORDER BY capability_id,class")
         .bind(device).fetch_all(&mut **tx).await.map_err(StorageError::from_sqlx)?;
     if reboot && !old.is_empty() && old != new {
-        insert_edge_event(tx, device, "capabilities_changed", "warning", None, at).await?;
+        return insert_edge_event(tx, device, "capabilities_changed", "warning", None, at).await;
     }
-    Ok(())
+    Ok(false)
 }
 
 async fn apply_connectivity_transition(
@@ -942,7 +1007,7 @@ async fn apply_connectivity_transition(
     mode: &str,
     at: i64,
     reported_isolated_ms: u64,
-) -> Result<(), StorageError> {
+) -> Result<Option<StatusTransition>, StorageError> {
     if mode == "isolated" {
         let reported = i64::try_from(reported_isolated_ms).unwrap_or(i64::MAX);
         let started_at = at.saturating_sub(reported);
@@ -958,7 +1023,13 @@ async fn apply_connectivity_transition(
             .execute(&mut **tx)
             .await
             .map_err(StorageError::from_sqlx)?;
-        insert_edge_event(tx, device, "device.isolated", "warning", None, at).await?;
+        let inserted =
+            insert_edge_event(tx, device, "device.isolated", "warning", None, at).await?;
+        Ok(inserted.then(|| StatusTransition {
+            kind: "device.isolated".to_owned(),
+            severity: "warning".to_owned(),
+            detail: None,
+        }))
     } else {
         sqlx::query("UPDATE device_isolation_periods SET ended_at=?,duration_ms=?-started_at WHERE device_id=? AND ended_at IS NULL")
             .bind(at).bind(at).bind(device).execute(&mut **tx).await.map_err(StorageError::from_sqlx)?;
@@ -967,9 +1038,13 @@ async fn apply_connectivity_transition(
             .execute(&mut **tx)
             .await
             .map_err(StorageError::from_sqlx)?;
-        insert_edge_event(tx, device, "device.reconciled", "info", None, at).await?;
+        let inserted = insert_edge_event(tx, device, "device.reconciled", "info", None, at).await?;
+        Ok(inserted.then(|| StatusTransition {
+            kind: "device.reconciled".to_owned(),
+            severity: "info".to_owned(),
+            detail: None,
+        }))
     }
-    Ok(())
 }
 #[cfg(test)]
 mod dedup {

@@ -173,6 +173,25 @@ pub async fn evaluate_plant(
             .threshold_crossings
             .with_label_values(&[&kind, crossing.to.as_str()])
             .inc();
+        if crossing.to == rhizo_domain::threshold::Severity::Normal {
+            tracing::info!(
+                plant_id = %plant_id,
+                measurement_kind = %kind,
+                old_state = %crossing.from.as_str(),
+                new_state = %crossing.to.as_str(),
+                value = ?crossing.value,
+                "measurement threshold recovered"
+            );
+        } else {
+            tracing::warn!(
+                plant_id = %plant_id,
+                measurement_kind = %kind,
+                old_state = %crossing.from.as_str(),
+                new_state = %crossing.to.as_str(),
+                value = ?crossing.value,
+                "measurement threshold changed"
+            );
+        }
     }
 
     // EC is recorded and trended; a rise raises a warning and no more.
@@ -249,18 +268,23 @@ pub async fn evaluate_plant(
             .with_label_values(&[recommendation.decision.as_str()])
             .inc();
         tracing::info!(
-            plant = plant_id,
-            decision = recommendation.decision.as_str(),
+            plant_id = %plant_id,
+            old_decision = %previous.as_ref().map_or("none", |row| row.decision.as_str()),
+            new_decision = %recommendation.decision.as_str(),
+            recommended_ml = ?recommendation.recommended_ml,
             reasons = ?codes,
             "recommendation changed"
         );
     }
 
-    let (state, state_changed) = plant::state::apply(db, plant_id, &recommendation, now).await?;
-    if state_changed {
+    let (_state, transition) = plant::state::apply(db, plant_id, &recommendation, now).await?;
+    if let Some(transition) = transition {
         tracing::info!(
-            plant = plant_id,
-            state = plant::state::state_name(state),
+            plant_id = %plant_id,
+            old_state = %transition
+                .from
+                .map_or_else(|| "none".to_owned(), plant::state::state_name),
+            new_state = %plant::state::state_name(transition.to),
             "plant state changed"
         );
     }
