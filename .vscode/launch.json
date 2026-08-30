@@ -41,13 +41,13 @@
         "RHIZO_EDGE__CLOUD__ENABLED": "false",
         "RHIZO_EDGE__LOG__FORMAT": "compact",
         "RHIZO_EDGE__LOG__LEVEL": "debug",
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
         "RUST_BACKTRACE": "1"
       }
     },
     {
-      // Everything the edge does, narrated. Start here when a plant is not
-      // reaching the state you expected.
-      "name": "Edge controller (debug logging)",
+      // Adds Rhizo storage and SQLx internals for persistence investigations.
+      "name": "Edge controller (storage debug)",
       "type": "lldb",
       "request": "launch",
       "cargo": {
@@ -64,7 +64,7 @@
         "RHIZO_EDGE__CLOUD__ENABLED": "false",
         "RHIZO_EDGE__LOG__FORMAT": "compact",
         "RHIZO_EDGE__LOG__LEVEL": "debug",
-        "RUST_LOG": "edge_controller=debug,rhizo_storage=debug,info",
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=debug,sqlx=debug",
         "RUST_BACKTRACE": "1"
       }
     },
@@ -92,7 +92,10 @@
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
+        "RUST_BACKTRACE": "1"
+      }
     },
     {
       // A second node, for testing two plants, a shared sensor, or one device
@@ -116,7 +119,10 @@
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
+        "RUST_BACKTRACE": "1"
+      }
     },
     {
       // A monitoring-only device: no actuators at all. This is the common
@@ -143,7 +149,10 @@
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
+        "RUST_BACKTRACE": "1"
+      }
     },
     {
       // A battery node that actually sleeps (ADR-018). At `--time-scale 60` a
@@ -174,7 +183,10 @@
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
+        "RUST_BACKTRACE": "1"
+      }
     },
     {
       // Pick a fault and watch the device behave worse. Every fault in the
@@ -198,7 +210,10 @@
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
+        "RUST_BACKTRACE": "1"
+      }
     },
     {
       // Choose the device and how fast time runs. Everything else stays at the
@@ -221,7 +236,104 @@
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
       "envFile": "${workspaceFolder}/.env",
-      "env": { "RUST_BACKTRACE": "1" }
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info",
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
+      // Packet-level MQTT detail, without enabling unrelated dependency DEBUG.
+      "name": "Edge controller (MQTT debug)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
+        "filter": { "name": "edge-controller", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
+        "RHIZO_EDGE__STORAGE__PATH": "./data/edge.sqlite",
+        "RHIZO_EDGE__CLOUD__ENABLED": "false",
+        "RHIZO_EDGE__LOG__FORMAT": "compact",
+        "RHIZO_EDGE__LOG__LEVEL": "debug",
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rumqttc=debug",
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
+      "name": "Simulator: plant-node-01 (MQTT debug)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
+      "args": [
+        "--device-id", "plant-node-01",
+        "--broker", "mqtt://localhost:1883",
+        "--initial-moisture", "42",
+        "--time-scale", "600",
+        "--log-format", "compact",
+        "--log-level", "debug"
+      ],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "RUST_LOG": "warn,edge_controller=debug,device_simulator=debug,rumqttc=debug",
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
+      // Broad dependency DEBUG, intentionally reserved for rare investigations.
+      "name": "Edge controller (full debug)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
+        "filter": { "name": "edge-controller", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "RHIZO_EDGE__MQTT__BROKER_URL": "mqtt://localhost:1883",
+        "RHIZO_EDGE__STORAGE__PATH": "./data/edge.sqlite",
+        "RHIZO_EDGE__CLOUD__ENABLED": "false",
+        "RHIZO_EDGE__LOG__FORMAT": "compact",
+        "RHIZO_EDGE__LOG__LEVEL": "debug",
+        "RUST_LOG": "debug",
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
+      "name": "Simulator: plant-node-01 (full debug)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--package", "device-simulator", "--bin", "device-simulator"],
+        "filter": { "name": "device-simulator", "kind": "bin" }
+      },
+      "args": [
+        "--device-id", "plant-node-01",
+        "--broker", "mqtt://localhost:1883",
+        "--initial-moisture", "42",
+        "--time-scale", "600",
+        "--log-format", "compact",
+        "--log-level", "debug"
+      ],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "RUST_LOG": "debug",
+        "RUST_BACKTRACE": "1"
+      }
     }
   ],
   "compounds": [
@@ -253,6 +365,30 @@
       "configurations": [
         "Edge controller",
         "Simulator: battery node (sleeps between samples)"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "Edge + one plant node — MQTT debug",
+      "configurations": [
+        "Edge controller (MQTT debug)",
+        "Simulator: plant-node-01 (MQTT debug)"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "Edge + one plant node — Storage debug",
+      "configurations": [
+        "Edge controller (storage debug)",
+        "Simulator: plant-node-01 (fast virtual time)"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "Edge + one plant node — Full debug",
+      "configurations": [
+        "Edge controller (full debug)",
+        "Simulator: plant-node-01 (full debug)"
       ],
       "stopAll": true
     }

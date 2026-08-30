@@ -111,6 +111,10 @@ and the most useful correlation identifier before the message. Levels are
 coloured only when stdout is an interactive terminal, so CI logs and redirected
 files contain no escape sequences. Set the format to `pretty` when expanded span
 and source context is more useful than scanability; production remains `json`.
+The normal compounds apply the Dev filter, which keeps Rhizo application code
+at DEBUG while holding SQLx, rumqttc, and other dependencies at WARN. Focused
+MQTT, Storage, and Full debug compounds are available in **Run and Debug** and
+never prompt during a normal F5 launch.
 
 These tasks call `rhizo-devctl`, a development-only Rust binary. It reads
 `.env`, with the process environment taking precedence. Edge remains governed
@@ -342,15 +346,30 @@ stale. One file per checked query is the expected shape.
 
 ## 10. Logs
 
+The VS Code profiles correspond to these `RUST_LOG` filters:
+
+| Profile | Filter |
+|---|---|
+| Dev (normal F5) | `warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info` |
+| MQTT debug | `warn,edge_controller=debug,device_simulator=debug,rumqttc=debug` |
+| Storage debug | `warn,edge_controller=debug,device_simulator=debug,rhizo_storage=debug,sqlx=debug` |
+| Full debug | `debug` |
+
+The Dev profile is intentionally dependency-quiet: application lifecycle and
+per-message DEBUG events remain visible without every SQL statement or MQTT
+packet. Select a focused compound only when that subsystem is the investigation.
+
 ```bash
-RHIZO_EDGE__LOG__FORMAT=compact RUST_LOG=debug cargo run -p edge-controller
+RHIZO_EDGE__LOG__FORMAT=compact \
+RUST_LOG=warn,edge_controller=debug,device_simulator=debug,rhizo_storage=info \
+cargo run -p edge-controller
 
 # JSON output, filtered
 docker compose logs -f edge-controller | jq 'select(.fields.plant_id == "monstera-01")'
 docker compose logs -f edge-controller | jq 'select(.level == "ERROR")'
 
-# per-module verbosity
-RUST_LOG=info,edge_controller::pipeline=trace,rumqttc=warn cargo run -p edge-controller
+# per-module verbosity beyond a profile
+RUST_LOG=warn,edge_controller=debug,edge_controller::pipeline=trace cargo run -p edge-controller
 ```
 
 INFO should be quiet — a few lines per hour. If INFO is noisy, something is
