@@ -42,11 +42,11 @@ cleared. These are world-changing events.
 
 ## Acceptance criteria
 
-- [ ] Every listed metric is exported.
-- [ ] `plants_locked_out` reflects actual lockouts.
-- [ ] Every state transition is persisted as an event.
-- [ ] Dose, result, and lockout events log at INFO.
-- [ ] The cardinality guard still passes.
+- [x] Every listed metric is exported.
+- [x] `plants_locked_out` reflects actual lockouts.
+- [x] Every state transition is persisted as an event.
+- [x] Dose, result, and lockout events log at INFO.
+- [x] The cardinality guard still passes.
 
 ## Verification
 

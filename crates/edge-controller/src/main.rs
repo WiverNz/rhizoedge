@@ -76,6 +76,28 @@ async fn start() -> Result<(), String> {
         chrono::Utc::now()
     }
     let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(rhizo_domain::SystemClock::new(host_now));
+    // The M6 commander. Unlike M5's evaluation pass it holds a transport, so the
+    // control plane can move water — and every path from a decision to the wire
+    // goes through it, which persists before it publishes.
+    let commander = edge_controller::control::command::Commander::new(
+        db.clone(),
+        clock.clone(),
+        Arc::new(edge_controller::control::transport::MqttTransport::new(
+            client.clone(),
+        )),
+        metrics.clone(),
+    );
+    // SAFETY-010's recovery procedure, before anything can issue a new command:
+    // expire what has timed out, await what has not, and re-publish **nothing**.
+    let recovery = commander.reconcile().await.map_err(|e| e.to_string())?;
+    edge_controller::control::intents::reconcile(&commander, clock.now())
+        .await
+        .map_err(|e| e.to_string())?;
+    tracing::info!(
+        expired = recovery.expired,
+        awaiting = recovery.awaiting,
+        "reconciled the command ledger at startup"
+    );
     let mut supervisor = Supervisor::new(metrics.clone(), Duration::from_secs(10));
     supervisor.spawn(
         "mqtt_ingress",
@@ -94,6 +116,7 @@ async fn start() -> Result<(), String> {
             db.clone(),
             clock.clone(),
             client.clone(),
+            Some(commander.clone()),
             cache,
             supervisor.shutdown_receiver(),
             metrics.clone(),
@@ -118,13 +141,10 @@ async fn start() -> Result<(), String> {
             supervisor.shutdown_receiver(),
         ),
     );
-    // The plant evaluation loop (M5-012). It takes no MQTT client, which is the
-    // strongest available form of "M5 issues no commands": the loop could not
-    // publish one if it wanted to.
     supervisor.spawn(
         "plant_control",
-        edge_controller::control::tick::run(
-            db.clone(),
+        edge_controller::control::tick::run_control(
+            commander.clone(),
             clock.clone(),
             metrics.clone(),
             std::time::Duration::from_secs(c.control.tick_interval_seconds),
@@ -149,6 +169,7 @@ async fn start() -> Result<(), String> {
         db: db.clone(),
         metrics: metrics.clone(),
         clock: clock.clone(),
+        commander: commander.clone(),
     };
     let mut shutdown = supervisor.shutdown_receiver();
     supervisor.spawn("api", async move {

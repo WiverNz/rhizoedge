@@ -1,8 +1,8 @@
 //! Axum assembly with bounded requests and explicit-origin CORS.
 #![allow(missing_docs)]
 use super::{
-    ApiState, bindings, devices, health, measurement_policies, offline_policy, plants, presets,
-    profiles, recommendation,
+    ApiState, bindings, device_config, devices, health, intents, measurement_policies,
+    offline_policy, plants, presets, profiles, recommendation, watering,
 };
 use axum::{
     Router,
@@ -30,6 +30,15 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
             get(devices::get).patch(devices::patch),
         )
         .route("/api/v1/devices/{id}/events", get(devices::events))
+        .route("/api/v1/devices/{id}/config", put(device_config::put))
+        .route(
+            "/api/v1/devices/{id}/commands/tare",
+            post(watering::tare),
+        )
+        .route(
+            "/api/v1/devices/{id}/commands/calibrate",
+            post(watering::calibrate),
+        )
         .route(
             "/api/v1/devices/{id}/measurements/latest",
             get(devices::latest_measurements),
@@ -56,9 +65,24 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
             "/api/v1/plants/{id}/recommendation",
             get(recommendation::get),
         )
-        // Present so that SAFETY-018's refusal is *distinguishable*. M5 issues
-        // no commands; see `plants::water`.
-        .route("/api/v1/plants/{id}/water", post(plants::water))
+        // The safety-critical endpoints. Every one of them reaches the pump
+        // through `rhizo_domain::irrigation::evaluate`, and none of them accepts
+        // an override, force, bypass, expedite, or wake parameter.
+        .route("/api/v1/plants/{id}/water", post(watering::water))
+        .route(
+            "/api/v1/plants/{id}/auto-watering/enable",
+            post(watering::enable_auto),
+        )
+        .route(
+            "/api/v1/plants/{id}/auto-watering/disable",
+            post(watering::disable_auto),
+        )
+        .route(
+            "/api/v1/plants/{id}/lockout/clear",
+            post(watering::clear_lockout),
+        )
+        .route("/api/v1/commands/{id}", get(watering::get_command))
+        .route("/api/v1/intents/{id}", get(intents::get))
         .route(
             "/api/v1/plants/{id}/apply-preset",
             post(plants::apply_preset),
@@ -171,6 +195,12 @@ fn bounded_route(path: &str) -> &'static str {
         "/api/v1/devices/{id}/events"
     } else if path.ends_with("/measurements/latest") && path.starts_with("/api/v1/devices/") {
         "/api/v1/devices/{id}/measurements/latest"
+    } else if path.ends_with("/config") && path.starts_with("/api/v1/devices/") {
+        "/api/v1/devices/{id}/config"
+    } else if path.ends_with("/commands/tare") && path.starts_with("/api/v1/devices/") {
+        "/api/v1/devices/{id}/commands/tare"
+    } else if path.ends_with("/commands/calibrate") && path.starts_with("/api/v1/devices/") {
+        "/api/v1/devices/{id}/commands/calibrate"
     } else if path.starts_with("/api/v1/devices/") {
         "/api/v1/devices/{id}"
     } else if path == "/api/v1/plants" {
@@ -185,6 +215,10 @@ fn bounded_route(path: &str) -> &'static str {
             Some("recommendation") => "/api/v1/plants/{id}/recommendation",
             Some("water") => "/api/v1/plants/{id}/water",
             Some("apply-preset") => "/api/v1/plants/{id}/apply-preset",
+            Some("auto-watering/enable" | "auto-watering/disable") => {
+                "/api/v1/plants/{id}/auto-watering"
+            }
+            Some("lockout/clear") => "/api/v1/plants/{id}/lockout/clear",
             Some(rest) if rest.starts_with("bindings/actuator") => {
                 "/api/v1/plants/{id}/bindings/actuator"
             }
@@ -199,6 +233,10 @@ fn bounded_route(path: &str) -> &'static str {
             }
             Some(_) => "unknown",
         }
+    } else if path.starts_with("/api/v1/commands/") {
+        "/api/v1/commands/{id}"
+    } else if path.starts_with("/api/v1/intents/") {
+        "/api/v1/intents/{id}"
     } else if path == "/api/v1/profiles" {
         "/api/v1/profiles"
     } else if path.starts_with("/api/v1/profiles/") {
@@ -239,13 +277,21 @@ mod tests {
         rhizo_storage::repo::ingest::persist_status(&db, &e, 1_000)
             .await
             .unwrap();
+        let metrics = crate::metrics::Metrics::new().unwrap();
+        let clock = std::sync::Arc::new(rhizo_testkit::TestClock::new(
+            chrono::DateTime::from_timestamp_millis(1_000).unwrap(),
+        ));
         router(
             ApiState {
-                db,
-                metrics: crate::metrics::Metrics::new().unwrap(),
-                clock: std::sync::Arc::new(rhizo_testkit::TestClock::new(
-                    chrono::DateTime::from_timestamp_millis(1_000).unwrap(),
-                )),
+                db: db.clone(),
+                metrics: metrics.clone(),
+                clock: clock.clone(),
+                commander: crate::control::command::Commander::new(
+                    db,
+                    clock,
+                    std::sync::Arc::new(crate::control::transport::RecordingTransport::new()),
+                    metrics,
+                ),
             },
             origins,
         )

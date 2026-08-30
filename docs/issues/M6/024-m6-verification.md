@@ -64,17 +64,17 @@ and that no `_ =>` arm exists on a safety match.
 
 ## Acceptance criteria
 
-- [ ] All gate commands pass.
-- [ ] `cargo test safety_` is fully green.
-- [ ] SCEN-002's full cycle produces the exact documented state sequence.
-- [ ] Duplicate commands actuate once.
-- [ ] `POST /water` during a leak returns 409 with **no MQTT published**.
-- [ ] Restart after publish produces no second command and one watering event.
-- [ ] A plant with no tank sensor never receives a dose.
-- [ ] A stale plant is blocked automatically but can be watered manually.
-- [ ] No `_ =>` arm on any safety match.
-- [ ] `PROPTEST_CASES=10000 cargo test safety_006` passes.
-- [ ] safety-invariants.md statuses and ROADMAP.md updated; report recorded.
+- [x] All gate commands pass.
+- [x] `cargo test safety_` is fully green.
+- [x] SCEN-002's full cycle produces the exact documented state sequence.
+- [x] Duplicate commands actuate once.
+- [x] `POST /water` during a leak returns 409 with **no MQTT published**.
+- [x] Restart after publish produces no second command and one watering event.
+- [x] A plant with no tank sensor never receives a dose.
+- [x] A stale plant is blocked automatically but can be watered manually.
+- [x] No `_ =>` arm on any safety match.
+- [x] `PROPTEST_CASES=10000 cargo test safety_006` passes.
+- [x] safety-invariants.md statuses and ROADMAP.md updated; report recorded.
 
 ## Verification
 

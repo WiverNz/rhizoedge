@@ -6,7 +6,7 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 through M5 are implemented and green. M6 is READY and
+**Planning is complete. M0 through M6 are implemented and green. M7 is READY and
 has not started.**
 
 | | State |
@@ -21,7 +21,8 @@ has not started.**
 | M4 | 13 issues, **DONE** — report in [docs/reports/M4.md](docs/reports/M4.md) |
 | Battery pass | ✅ done (2026-08-28) — ADR-018 (see §12), then the post-M4 correction and its independent review; both dated in [docs/reports/M4.md](docs/reports/M4.md) |
 | M5 | 22 issues, **DONE** — report in [docs/reports/M5.md](docs/reports/M5.md) |
-| M6-001 | ⬜ **next** — add irrigation types and inputs |
+| M6 | 24 issues, **DONE** — report in [docs/reports/M6.md](docs/reports/M6.md) |
+| M7-001 | ⬜ **next** — create the cloud-api binary and PostgreSQL service |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -130,14 +131,18 @@ docs/
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
 
 Cargo.toml             root workspace (M0-002)
-crates/                nine implemented/building workspace crates:
-                       mqtt-contract, domain, storage, telemetry, cloud-client,
-                       testkit, edge-controller, device-simulator, cloud-api
+crates/                ten implemented/building workspace crates:
+                       mqtt-contract, policy, domain, storage, telemetry,
+                       cloud-client, testkit, edge-controller, device-simulator,
+                       cloud-api
+migrations/edge/       0001_initial.sql (the M5 pre-release baseline) and
+                       0002_irrigation_control.sql (M6: command intents, the
+                       pre-dose baselines, the lockout audit fields)
 crates/domain/data/    presets.v1.json — the embedded species catalogue,
                        compiled in with include_str! (M5-017). Twenty-two
                        curated entries; every value carries its provenance,
                        and nothing here names a device, sensor, or schedule.
-deploy/ migrations/ scripts/ test/            skeleton, .gitkeep only
+deploy/ scripts/ test/                        compose, helper scripts, fixtures
 ```
 
 `firmware/esp32-node` (M9) and `ui/rhizo-ui` (M12) will be **separate
@@ -393,12 +398,13 @@ announces nothing, so it opens no new window, and M4's timer counts at most one
 miss per window. `isolated` — the half that matters — is unaffected. See
 [docs/reports/M5.md](docs/reports/M5.md) §Deviations before "fixing" it.
 
-**`POST /plants/{id}/water` exists in M5 only so that it can refuse.** A plant
+**`POST /plants/{id}/water` answers 422, 409, or 202, and never 501.** A plant
 with no `ActuatorBinding` gets **422** `no_actuator_bound`, which SAFETY-018
-requires to be distinguishable from a 409 safety refusal and from a 404. A plant
-that *does* have one gets **501**: M5 issues no commands, and saying so is better
-than a route that 404s and tells an operator their pump is unknown. M6-016
-replaces the second arm.
+requires to be distinguishable from a 409 safety refusal and from a 404. M6-016
+replaced M5's 501 arm: a plant that does have one now runs the gate and answers
+**409** with `{ reason, since, clearable, message }` or **202** with a
+`command_id` — or, for a sleeping device, **202** with an `intent_id` and no
+`command_id` at all.
 
 **Battery measurement kinds are recognised, scalar, and deliberately not
 control-eligible.** `MeasurementKind::is_power_telemetry` is what excludes them,
@@ -411,12 +417,60 @@ nothing — the kinds come back in `skipped_unbound_kinds`. Applying the preset
 again after binding sensors is how they get configured, and needs `overwrite`
 only if policies already exist.
 
-**The simulator never waters by itself, and that is M2's boundary, not a bug.**
-An enabled, valid, activated offline policy on a bone-dry isolated plant is
-completely inert until M6-019 adds the one shared
-`rhizo_policy::evaluate_offline` and the simulator's single call site.
-`tests/single_actuation_path.rs` fails if an evaluator, a decision type, or a
-dose scheduler appears in `crates/device-simulator/src` before then.
+**The simulator now waters by itself while isolated, and there is exactly one
+call site.** M6-019 added `rhizo_policy::evaluate_offline` and the simulator's
+single call in `src/offline.rs`. `tests/single_actuation_path.rs` asserts *one*
+call site where it previously asserted zero, and still fails if a second
+implementation of the offline rules appears. An autonomous dose reaches the pump
+through the same `begin_dose` a command does; what it skips is
+`validate_water_command` steps 2 and 3 — `clock_unsynced` and `expired` — because
+those are properties of a command another machine issued at a wall-clock instant,
+and an isolated device has neither. The volume ceilings still apply, from the
+shared `bound_dose`.
+
+**`evaluate_offline`'s `elapsed` is a delta, not a since-boot instant.** It is
+what §5b's `credit_elapsed` produces, and it has to be: the cooldown is stored as
+a *remaining duration*, so there is no instant to subtract it from. A reboot
+credits zero, and zero advances nothing. offline-autonomy.md §4's old "since
+boot" comment was corrected in the same change.
+
+**Two functions, not one, on both evaluators.** `evaluate` answers *what to do*
+and `next_state` answers *where that leaves the plant*; `evaluate_offline` and
+`next_offline_state` are the same split. The caller persists the second in the
+same transaction as the first's side effect, which is what F-060-14 asks for.
+
+**The reconciliation hold is derived, not stored.** A plant is held while
+`replay_progress` shows no committed contiguous prefix for the device's *current*
+boot. It is not a column on `devices`, because `persist_status` rewrites
+`connectivity_mode` on every heartbeat and a device replays while it is
+heartbeating. An **empty** complete replay releases the plant — a device that was
+never isolated has nothing to reconcile — while a *suffix with no prefix* keeps
+the hold. Conflating the two froze every ordinary reconnection, and the real
+simulator found it.
+
+**`manual` water is outside the automatic rolling cap.** M6-007's query is
+`mode IN ('automatic','recommended')`, so a manual dose does not spend the
+budget — though it still resets the cooldown, and the device's own
+`FIRMWARE_MAX_DAILY_ML` still bounds it. M5's `delivered_since` counted every
+mode but `detected`; that is not the M6 rule.
+
+**`IrrigationInputs` has six fields PRD 060's illustrative struct does not**, and
+each is required by a normative requirement the struct predates: `dry_duration`,
+`pre_dose_weight`, `required_inputs`, `active_lockout`, `lockout_held_until`, and
+`reconciling`. The tuning constants arrive through `AutomationPolicy` rather than
+a `profile` field, because a machine that read a profile at evaluation time would
+make editing a template silently rewrite twelve plants' rules (ADR-016).
+
+**A held dose is an intent, and `commands` gained no column.** The reviewer's
+check that M6-022 was implemented correctly is that `command_intents.command_id`
+is nullable. `intent_expires_at` is the edge's clock and never reaches a device;
+the wire TTL is unchanged at 120 s.
+
+**The PUBACK now follows the commit.** `ingress::options` sets
+`set_manual_acks(true)` and the pipeline acknowledges on the success arm of
+`process`. Do not "simplify" that back to automatic acknowledgement: it is the
+M3 gap M6-010 was required to close, and a lost `command.result` under-counts the
+SAFETY-006 budget.
 
 **Two documented greps in the M2 issues count documentation, not code.**
 `grep -c validate_water_command` matches a `use` statement and five doc

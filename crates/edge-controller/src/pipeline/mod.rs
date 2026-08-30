@@ -15,18 +15,69 @@ use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
 /// Owns the single logical SQLite writer path.
+///
+/// # The acknowledgement follows the commit
+///
+/// `process` returns only after its transaction has committed, and **only then**
+/// is the PUBACK sent. That ordering is what makes a device's "stop retrying"
+/// condition depend on the edge's durable commit rather than on the broker's
+/// receipt (M6-010). A message whose processing failed transiently is not
+/// acknowledged, so the broker redelivers it; a message that was quarantined
+/// **is** acknowledged, because redelivering a permanently unparseable payload
+/// for ever would wedge every device behind it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pipeline owns the single writer path and needs every one of               them; a bundle would hide that the commander is optional"
+)]
 pub async fn run(
     mut rx: mpsc::Receiver<Inbound>,
     db: rhizo_storage::EdgeDb,
     clock: Arc<dyn Clock>,
     client: rumqttc::AsyncClient,
+    commander: Option<crate::control::command::Commander>,
     cache: LatestSampleCache,
     mut shutdown: watch::Receiver<bool>,
     metrics: Metrics,
 ) -> Result<(), String> {
     let mut limiter = quarantine::Limiter::default();
     loop {
-        tokio::select! {biased;changed=shutdown.changed()=>{if changed.is_err()||*shutdown.borrow(){return Ok(())}},item=rx.recv()=>{let Some(item)=item else{return Ok(())};if let Err(error)=process(&db,clock.as_ref(),&client,&cache,&metrics,&mut limiter,&item).await{let at=clock.now().timestamp_millis();apply_classification(&db,&mut limiter,&item,at,&error).await?}}}
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() { return Ok(()) }
+            },
+            item = rx.recv() => {
+                let Some(item) = item else { return Ok(()) };
+                let outcome = process(
+                    &db, clock.as_ref(), &client, commander.as_ref(), &cache,
+                    &metrics, &mut limiter, &item,
+                ).await;
+                match outcome {
+                    Ok(()) => acknowledge(&client, &item),
+                    Err(error) => {
+                        let at = clock.now().timestamp_millis();
+                        let classification = error.classify();
+                        apply_classification(&db, &mut limiter, &item, at, &error).await?;
+                        if classification == FailureKind::Permanent {
+                            acknowledge(&client, &item);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Sends the PUBACK for one processed message.
+///
+/// A failure here is not fatal: the broker will redeliver, and redelivery is
+/// deduplicated on `message_id`. Losing an acknowledgement costs a repeat;
+/// sending one early costs history.
+fn acknowledge(client: &rumqttc::AsyncClient, item: &Inbound) {
+    if let Some(publish) = item.publish.as_ref()
+        && let Err(error) = client.try_ack(publish)
+    {
+        tracing::warn!(topic = %item.topic, %error, "could not acknowledge a committed message");
     }
 }
 
@@ -80,10 +131,12 @@ async fn apply_classification(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process(
     db: &rhizo_storage::EdgeDb,
     clock: &dyn Clock,
     client: &rumqttc::AsyncClient,
+    commander: Option<&crate::control::command::Commander>,
     cache: &LatestSampleCache,
     m: &Metrics,
     limiter: &mut quarantine::Limiter,
@@ -177,7 +230,23 @@ async fn process(
             }
             result.dedup
         }
-        Msg::Result(e) => retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?,
+        Msg::Result(e) => {
+            // The settlement commits **first**, and is idempotent on the
+            // command's terminal status. A crash between the two commits is
+            // therefore harmless: the redelivered result re-applies a settlement
+            // that is already terminal, which writes nothing, and then records
+            // the transport row. The reverse order would let a crash lose the
+            // ledger entry while remembering that the message was seen.
+            if let Some(commander) = commander
+                && commander.apply_result(&e.data).await?
+                    == crate::control::command::Settled::UnknownCommand
+            {
+                m.watering_failures
+                    .with_label_values(&["unknown_command"])
+                    .inc();
+            }
+            retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?
+        }
         Msg::Events(e) => {
             for event in &e.data.events {
                 if let rhizo_mqtt_contract::payload::EventDetail::Gap { lost_tier, .. } =
@@ -193,6 +262,12 @@ async fn process(
             let boot = e.boot_id;
             let dev = e.device_id.clone();
             let replay = e.data.replay;
+            if replay {
+                // The hold goes on before the batch is committed, so a plant is
+                // never issued a dose in the window between the first replayed
+                // event arriving and the edge having read the rest (SAFETY-016).
+                crate::control::reconcile::begin(db, dev.as_ref(), clock.now()).await?;
+            }
             let commit = retry_transient(m, || ingest::persist_replay(db, &e, at)).await?;
             // No contiguous prefix means there is nothing truthful to say, so
             // the edge stays silent and the device replays again. `Some(0)` is
@@ -217,7 +292,7 @@ async fn process(
                 };
                 client
                     .publish(
-                        Topic::EventsAck(dev).as_string(),
+                        Topic::EventsAck(dev.clone()).as_string(),
                         rumqttc::QoS::AtLeastOnce,
                         false,
                         ack.to_json()
@@ -225,6 +300,18 @@ async fn process(
                     )
                     .await
                     .map_err(|x| EdgeError::Mqtt(x.to_string()))?;
+                // The release happens only on a *committed* contiguous prefix
+                // through the sender's final batch. `complete` alone is the
+                // sender's framing and never releases a plant on its own.
+                if commit.sender_reports_complete {
+                    crate::control::reconcile::complete(
+                        db,
+                        dev.as_ref(),
+                        &boot_id.to_string(),
+                        clock.now(),
+                    )
+                    .await?;
+                }
             } else if replay && commit.through_device_seq.is_none() {
                 tracing::debug!(device=%e.device_id,"replay committed with no contiguous prefix; publishing no acknowledgement");
             }
@@ -406,12 +493,14 @@ mod decode {
             &db,
             &clock,
             &client,
+            None,
             &LatestSampleCache::default(),
             &metrics,
             &mut limiter,
             &Inbound {
                 topic: "rhizo/v1/devices/plant-node-01/telemetry".into(),
                 payload: payload.to_vec(),
+                publish: None,
             },
         )
         .await
@@ -433,12 +522,14 @@ mod decode {
             &db,
             &clock,
             &client,
+            None,
             &LatestSampleCache::default(),
             &metrics,
             &mut limiter,
             &Inbound {
                 topic: topic.clone(),
                 payload: b"not-json".to_vec(),
+                publish: None,
             },
         )
         .await
@@ -447,6 +538,7 @@ mod decode {
             &db,
             &clock,
             &client,
+            None,
             &LatestSampleCache::default(),
             &metrics,
             &mut limiter,
@@ -456,6 +548,7 @@ mod decode {
                     "../../../../test/fixtures/protocol/valid/telemetry-batch.json"
                 )
                 .to_vec(),
+                publish: None,
             },
         )
         .await
@@ -552,6 +645,7 @@ mod classify {
         Inbound {
             topic: "rhizo/v1/devices/plant-node-01/telemetry".into(),
             payload: b"whatever".to_vec(),
+            publish: None,
         }
     }
     async fn quarantined(db: &rhizo_storage::EdgeDb) -> i64 {

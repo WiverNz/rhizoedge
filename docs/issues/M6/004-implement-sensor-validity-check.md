@@ -38,11 +38,11 @@ distinguishes them (M4-005) so the operator can tell.
 
 ## Acceptance criteria
 
-- [ ] An absent sample yields `SensorFault`.
-- [ ] An out-of-range or NaN sample yields `SensorFault`.
-- [ ] A stuck sensor yields `SensorFault`.
-- [ ] `SensorFault` and `StaleData` are distinct reasons.
-- [ ] A valid sample clears it automatically.
+- [x] An absent sample yields `SensorFault`.
+- [x] An out-of-range or NaN sample yields `SensorFault`.
+- [x] A stuck sensor yields `SensorFault`.
+- [x] `SensorFault` and `StaleData` are distinct reasons.
+- [x] A valid sample clears it automatically.
 
 ## Verification
 

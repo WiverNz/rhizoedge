@@ -50,6 +50,7 @@ pub mod fault;
 pub mod isolation;
 pub mod model;
 pub mod mqtt;
+pub mod offline;
 pub mod offline_state;
 pub mod policy;
 pub mod power;

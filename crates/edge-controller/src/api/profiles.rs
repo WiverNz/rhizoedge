@@ -37,6 +37,18 @@ pub struct ProfileBody {
     dry_confirm_minutes: u32,
     cooldown_hours: f64,
     absorption_minutes: u32,
+    /// The rise that counts as a response to water (M6-006, F-060-32).
+    ///
+    /// Optional in the request so a client written against M5 keeps working;
+    /// absent means the documented default rather than "no requirement".
+    #[serde(default = "rhizo_domain::profile::default_recovery_delta_vwc")]
+    recovery_delta_vwc: f64,
+    /// The reservoir floor the gate refuses at (SAFETY-004).
+    #[serde(default = "rhizo_domain::profile::default_tank_min_percent")]
+    tank_min_percent: f64,
+    /// The wire TTL stamped on every command this plant issues (F-060-22).
+    #[serde(default = "rhizo_domain::profile::default_command_ttl_seconds")]
+    command_ttl_seconds: u32,
 }
 
 impl ProfileBody {
@@ -54,6 +66,9 @@ impl ProfileBody {
             dry_confirm_minutes: self.dry_confirm_minutes,
             cooldown_hours: self.cooldown_hours,
             absorption_minutes: self.absorption_minutes,
+            recovery_delta_vwc: self.recovery_delta_vwc,
+            tank_min_percent: self.tank_min_percent,
+            command_ttl_seconds: self.command_ttl_seconds,
         }
     }
 }
@@ -73,6 +88,18 @@ fn profile_json(row: &profile_repo::ProfileRow) -> serde_json::Value {
         "dry_confirm_minutes": document.get("dry_confirm_minutes"),
         "cooldown_hours": document.get("cooldown_hours"),
         "absorption_minutes": document.get("absorption_minutes"),
+        // A document stored before M6 carries none of these; the response falls
+        // back to the same defaults deserialisation would apply, so a profile
+        // never reports a field the gate would read differently.
+        "recovery_delta_vwc": document.get("recovery_delta_vwc")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(rhizo_domain::profile::default_recovery_delta_vwc())),
+        "tank_min_percent": document.get("tank_min_percent")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(rhizo_domain::profile::default_tank_min_percent())),
+        "command_ttl_seconds": document.get("command_ttl_seconds")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(rhizo_domain::profile::default_command_ttl_seconds())),
     })
 }
 

@@ -41,12 +41,12 @@ A failed publish is a missed dose, which is recoverable. A double dose is not.
 
 ## Acceptance criteria
 
-- [ ] A transient publish failure is retried with the **same** `command_id`.
-- [ ] **No code path generates a new `command_id` on retry.**
-- [ ] After 3 failures the command is `failed` and the state returns to `Recheck`.
-- [ ] A failed publish creates no watering event.
-- [ ] Retry delays follow the backoff bounds.
-- [ ] Outcomes are counted.
+- [x] A transient publish failure is retried with the **same** `command_id`.
+- [x] **No code path generates a new `command_id` on retry.**
+- [x] After 3 failures the command is `failed` and the state returns to `Recheck`.
+- [x] A failed publish creates no watering event.
+- [x] Retry delays follow the backoff bounds.
+- [x] Outcomes are counted.
 
 ## Verification
 

@@ -40,12 +40,12 @@ Implement leak as a state with an `AwaitingReset` phase distinct from `Clear`.
 
 ## Acceptance criteria
 
-- [ ] A detected leak blocks automatic **and** manual watering.
-- [ ] An unknown leak state blocks.
-- [ ] A low tank blocks; a refill clears it automatically.
-- [ ] An unknown tank level blocks.
-- [ ] A cleared leak signal moves to `AwaitingReset`, not `Clear`.
-- [ ] Only an explicit reset with the signal absent returns to `Clear`.
+- [x] A detected leak blocks automatic **and** manual watering.
+- [x] An unknown leak state blocks.
+- [x] A low tank blocks; a refill clears it automatically.
+- [x] An unknown tank level blocks.
+- [x] A cleared leak signal moves to `AwaitingReset`, not `Clear`.
+- [x] Only an explicit reset with the signal absent returns to `Clear`.
 
 ## Verification
 

@@ -45,12 +45,12 @@ conservative — safe, and logged for diagnosis only.
 
 ## Acceptance criteria
 
-- [ ] A forward step beyond 10 minutes is detected.
-- [ ] It places all plants in `Lock(Uncertain)` for one cooldown.
-- [ ] A backward step is logged but causes no lockout.
-- [ ] A `clock_step` event is recorded with the direction and magnitude.
-- [ ] Normal clock drift does not trigger it.
-- [ ] The lockout clears after the cooldown.
+- [x] A forward step beyond 10 minutes is detected.
+- [x] It places all plants in `Lock(Uncertain)` for one cooldown.
+- [x] A backward step is logged but causes no lockout.
+- [x] A `clock_step` event is recorded with the direction and magnitude.
+- [x] Normal clock drift does not trigger it.
+- [x] The lockout clears after the cooldown.
 
 ## Verification
 

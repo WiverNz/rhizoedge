@@ -126,26 +126,84 @@ pub fn validate_water_command<'a>(
     {
         return CommandVerdict::Reject(RejectReason::PumpUnavailable);
     }
-    let mut effective = cmd.requested_ml.min(FIRMWARE_MAX_ML_PER_RUN);
-    let mut clamped = effective < cmd.requested_ml;
+    match bound_dose(
+        cmd.requested_ml,
+        state.pump_ml_per_second,
+        state.delivered_today_ml,
+    ) {
+        DoseBound::Accept {
+            effective_ml,
+            run_ms,
+            clamped,
+        } => CommandVerdict::Accept {
+            effective_ml,
+            run_ms,
+            clamped,
+        },
+        DoseBound::Reject(reason) => CommandVerdict::Reject(reason),
+    }
+}
+
+/// The outcome of the hard-limit steps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DoseBound {
+    /// A bounded dose the pump may deliver.
+    Accept {
+        /// Effective volume after clamping.
+        effective_ml: f32,
+        /// Bounded run duration.
+        run_ms: u32,
+        /// Whether a hard limit changed the request.
+        clamped: bool,
+    },
+    /// A refusal. Only the two reasons steps 11 and 12 can produce.
+    Reject(RejectReason),
+}
+
+/// Protocol §5.8 steps 10–12: the firmware hard limits, alone.
+///
+/// **The one implementation of the clamping rules**, extracted so the
+/// *autonomous* actuation path can apply them without also applying the steps
+/// that make no sense for it. An isolated device has no synchronised wall clock
+/// and no command TTL to evaluate — SAFETY-015 says so explicitly, and
+/// SAFETY-002 governs only edge commands — but the volume and duration ceilings
+/// apply to every drop of water this device moves, whoever decided to move it
+/// (SAFETY-007, SAFETY-014).
+///
+/// A second copy of these three steps for the offline path is exactly the
+/// divergence ADR-008 exists to prevent, which is why this function exists
+/// rather than a duplicated block.
+pub fn bound_dose(
+    requested_ml: f32,
+    pump_ml_per_second: f32,
+    delivered_today_ml: f32,
+) -> DoseBound {
+    if !requested_ml.is_finite() || requested_ml <= 0.0 {
+        return DoseBound::Reject(RejectReason::MalformedCommand);
+    }
+    // Step 12 divides by the calibration, so an unusable one is an unavailable
+    // pump and must be refused before the division is reached.
+    if !pump_ml_per_second.is_finite() || pump_ml_per_second <= 0.0 {
+        return DoseBound::Reject(RejectReason::PumpUnavailable);
+    }
+    let mut effective = requested_ml.min(FIRMWARE_MAX_ML_PER_RUN);
+    let mut clamped = effective < requested_ml;
     // §5.8 step 11: a device that cannot prove it is under budget assumes it is
     // not. `NaN + x > max` is false, so the guard must precede the comparison.
-    if !state.delivered_today_ml.is_finite()
-        || state.delivered_today_ml + effective > FIRMWARE_MAX_DAILY_ML
-    {
-        return CommandVerdict::Reject(RejectReason::OverDailyMax);
+    if !delivered_today_ml.is_finite() || delivered_today_ml + effective > FIRMWARE_MAX_DAILY_ML {
+        return DoseBound::Reject(RejectReason::OverDailyMax);
     }
     let max_run_ms = FIRMWARE_MAX_RUN_SECONDS * 1000;
-    let calculated = effective / state.pump_ml_per_second * 1000.0;
+    let calculated = effective / pump_ml_per_second * 1000.0;
     let run_ms = if calculated > max_run_ms as f32 {
-        effective = state.pump_ml_per_second * FIRMWARE_MAX_RUN_SECONDS as f32;
+        effective = pump_ml_per_second * FIRMWARE_MAX_RUN_SECONDS as f32;
         clamped = true;
         max_run_ms
     } else {
         let truncated = calculated as u32;
         truncated + u32::from((truncated as f32) < calculated)
     };
-    CommandVerdict::Accept {
+    DoseBound::Accept {
         effective_ml: effective,
         run_ms,
         clamped,

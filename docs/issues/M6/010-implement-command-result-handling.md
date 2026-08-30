@@ -64,13 +64,13 @@ not create a command row to match a result it did not issue.
 
 ## Acceptance criteria
 
-- [ ] `completed` creates exactly one `watering_event`.
-- [ ] `rejected` creates **none** and records the reason.
-- [ ] `interrupted` creates none but credits `requested_ml` to the budget.
-- [ ] An unknown `command_id` is ignored with a log.
-- [ ] A duplicate result creates no second event.
-- [ ] All updates are atomic.
-- [ ] A `command.result` is not treated as delivered until the edge has committed it, and the device's retry stops on that fact rather than on the broker PUBACK.
+- [x] `completed` creates exactly one `watering_event`.
+- [x] `rejected` creates **none** and records the reason.
+- [x] `interrupted` creates none but credits `requested_ml` to the budget.
+- [x] An unknown `command_id` is ignored with a log.
+- [x] A duplicate result creates no second event.
+- [x] All updates are atomic.
+- [x] A `command.result` is not treated as delivered until the edge has committed it, and the device's retry stops on that fact rather than on the broker PUBACK.
 
 ## Verification
 

@@ -364,6 +364,86 @@ pub const fn decision_name(decision: Decision) -> &'static str {
     decision.as_str()
 }
 
+/// One irrigation pass over every plant (M6).
+///
+/// Kept separate from [`tick`] on purpose. [`tick`] is the M5 evaluation pass and
+/// still takes no transport, so `no_commands_in_m5` continues to assert exactly
+/// what it always did: the recommendation loop could not publish a command if it
+/// wanted to. **This** function is the one that can, and it needs a
+/// [`Commander`] to do it.
+pub async fn irrigation_pass(
+    commander: &crate::control::command::Commander,
+    metrics: &Metrics,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), crate::error::EdgeError> {
+    let started = std::time::Instant::now();
+    let db = commander.db();
+    let plants = plant_repo::list(db, None, 500).await?;
+    let mut locked = 0i64;
+    for row in plants {
+        let Some(loaded) = plant::load(db, &row.plant_id).await? else {
+            continue;
+        };
+        let analysis = plant::analyse(db, &loaded, now).await?;
+        let pass = crate::control::irrigation::run_pass(
+            commander,
+            &loaded,
+            analysis.inputs.dry_duration,
+            rhizo_domain::irrigation::types::EvaluationMode::Automatic,
+            now,
+        )
+        .await?;
+        if pass.lockout.is_some() {
+            locked += 1;
+        }
+    }
+    metrics.plants_locked_out.set(locked);
+    metrics
+        .control_tick_duration
+        .observe(started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// The M6 control loop: recommendations, then irrigation, then intents.
+///
+/// Runs the clock-step detector on every pass, because an NTP correction between
+/// two ticks is exactly the moment the rolling window would otherwise hand a
+/// plant a second allowance (F-060-51).
+pub async fn run_control(
+    commander: crate::control::command::Commander,
+    clock: Arc<dyn Clock>,
+    metrics: Metrics,
+    interval: StdDuration,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<(), String> {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut detector =
+        crate::control::clock_step::Detector::new(clock.now(), std::time::Instant::now());
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => if changed.is_err() || *shutdown.borrow() { return Ok(()); },
+            _ = ticker.tick() => {
+                let now = clock.now();
+                if let Some(step) = detector.observe(now, std::time::Instant::now())
+                    && let Err(error) = crate::control::clock_step_response(&commander, step, now).await
+                {
+                    tracing::error!(%error, "could not record a clock step");
+                }
+                if let Err(error) = tick(commander.db(), clock.as_ref(), &metrics).await {
+                    tracing::warn!(%error, "a plant evaluation pass failed");
+                }
+                if let Err(error) = irrigation_pass(&commander, &metrics, now).await {
+                    tracing::warn!(%error, "an irrigation pass failed");
+                }
+                if let Err(error) = crate::control::intents::deliver_ready(&commander, now).await {
+                    tracing::warn!(%error, "delivering held doses failed");
+                }
+            }
+        }
+    }
+}
+
 /// The evaluation loop's own tests.
 ///
 /// The module is named `recommend` so `cargo test -p edge-controller recommend::`

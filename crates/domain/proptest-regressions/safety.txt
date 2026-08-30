@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c66a72cedb2dda241eb918c3b3c0c5437e522fe458d02d1038614572621e87d3 # shrinks to state = Normal, mode = Automatic, moisture = None, delivered = 0.0, doses = 0, auto = false, online = false
+cc 843d3918176b52d0608746f67389eb099d11fe68b148336d9c986c82bc07e544 # shrinks to history = [Dose, Settle { status: Completed, delivered_ml: 63.883232 }, Dose, Settle { status: Completed, delivered_ml: 31.125166 }, Dose, Settle { status: Completed, delivered_ml: 61.822323 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }, Dose, Settle { status: Completed, delivered_ml: 33.992867 }, Dose, Settle { status: Completed, delivered_ml: 71.864296 }, Dose, Settle { status: Completed, delivered_ml: 51.9599 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }]

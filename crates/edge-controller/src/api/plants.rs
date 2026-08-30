@@ -31,6 +31,8 @@ struct Derived {
     budget: serde_json::Value,
     last_watering: serde_json::Value,
     has_actuator: bool,
+    irrigation_state: Option<String>,
+    pending_intent: Option<serde_json::Value>,
 }
 
 fn plant_json(plant: &plant_repo::PlantRow, derived: &Derived) -> serde_json::Value {
@@ -42,6 +44,8 @@ fn plant_json(plant: &plant_repo::PlantRow, derived: &Derived) -> serde_json::Va
         budget,
         last_watering,
         has_actuator,
+        irrigation_state,
+        pending_intent,
     } = derived;
     serde_json::json!({
         "plant_id": plant.plant_id,
@@ -51,10 +55,14 @@ fn plant_json(plant: &plant_repo::PlantRow, derived: &Derived) -> serde_json::Va
         "pot_volume_ml": plant.pot_volume_ml,
         "soil_type": plant.soil_type,
         "state": state,
-        // The irrigation state machine is M6's and is a *separate* concept: a
-        // plant can sit in `water_recommended` indefinitely with automation off,
-        // and the machine would have nothing to say about it.
-        "irrigation_state": serde_json::Value::Null,
+        // The irrigation state machine is a *separate* concept from the
+        // operator-facing plant state: a plant can sit in `water_recommended`
+        // indefinitely with automation off, and the machine has nothing to say
+        // about it. Both are reported, and neither is derived from the other.
+        "irrigation_state": irrigation_state,
+        // A dose waiting for a sleeping device to wake, so a UI does not have to
+        // poll a separate endpoint to know one is pending (M6-023).
+        "pending_intent": pending_intent,
         "auto_watering_enabled": plant.auto_watering_enabled,
         "has_actuator": has_actuator,
         "lockout": plant.lockout_reason.as_ref().map(|reason| serde_json::json!({
@@ -156,6 +164,10 @@ async fn one(
             budget,
             last_watering,
             has_actuator: loaded.actuator.is_some(),
+            irrigation_state: rhizo_storage::repo::command::irrigation_state(&state.db, plant_id)
+                .await?
+                .map(|row| row.state),
+            pending_intent: super::intents::open_for_plant(&state.db, plant_id).await,
         },
     )))
 }
@@ -520,61 +532,6 @@ pub async fn events(
         .into_response(),
         Err(_) => storage_error(),
     }
-}
-
-/// The documented request body, accepted so a client written against M6 gets a
-/// meaningful refusal rather than a deserialisation failure. The fields are
-/// deliberately unread in M5: nothing here can act on them, and there is no
-/// override, force, or bypass field for them to hide behind.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(
-    dead_code,
-    reason = "the body is validated in M5 and acted on from M6-016"
-)]
-pub struct WaterRequest {
-    #[serde(default)]
-    ml: Option<f64>,
-    #[serde(default)]
-    mode: Option<String>,
-}
-
-/// The actuation endpoint, present in M5 **only so that it can refuse**.
-///
-/// SAFETY-018 needs the refusal to be *distinguishable*: a monitoring-only plant
-/// answers **422** `no_actuator_bound`, which is "there is nothing to water
-/// with", not 409, which means "refused by safety", and not 404, which would be
-/// indistinguishable from an unknown plant.
-///
-/// A plant that *does* have an actuator answers 501. M5 issues no commands, and
-/// saying so plainly is better than a route that does not exist — a 404 there
-/// would tell an operator their pump is unknown when it is merely not yet
-/// wired up. M6-016 replaces this arm with the gate and the command lifecycle.
-/// There is no override, force, or bypass parameter here, and there never will
-/// be.
-pub async fn water(
-    State(state): State<ApiState>,
-    Path(id): Path<String>,
-    Json(_body): Json<WaterRequest>,
-) -> Response {
-    let loaded = match plant::load(&state.db, &id).await {
-        Ok(Some(loaded)) => loaded,
-        Ok(None) => return error(StatusCode::NOT_FOUND, "plant_not_found", "unknown plant"),
-        Err(_) => return storage_error(),
-    };
-    if loaded.actuator.is_none() {
-        return error_with(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "no_actuator_bound",
-            "this plant has no actuator, so there is no watering path to refuse or allow",
-            serde_json::json!({ "lockout": plant::lockout_name(LockoutReason::NoActuator) }),
-        );
-    }
-    error(
-        StatusCode::NOT_IMPLEMENTED,
-        "watering_not_implemented",
-        "M5 recommends; M6 acts. This edge issues no watering commands.",
-    )
 }
 
 #[derive(Deserialize)]

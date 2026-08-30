@@ -52,16 +52,16 @@ configuration, never a device declaration.
 
 ## Acceptance criteria
 
-- [ ] Staleness uses `received_at` from the edge clock.
-- [ ] The threshold formula and its floor are correct.
-- [ ] Automatic watering is blocked when stale.
-- [ ] **Manual watering is permitted when stale or under sensor fault.**
-- [ ] **Manual watering is still blocked by leak, tank, and daily cap.**
-- [ ] A device with a wrong clock does not affect the computation.
-- [ ] No power field, and no `devices.wake_interval_seconds`, reaches the
+- [x] Staleness uses `received_at` from the edge clock.
+- [x] The threshold formula and its floor are correct.
+- [x] Automatic watering is blocked when stale.
+- [x] **Manual watering is permitted when stale or under sensor fault.**
+- [x] **Manual watering is still blocked by leak, tank, and daily cap.**
+- [x] A device with a wrong clock does not affect the computation.
+- [x] No power field, and no `devices.wake_interval_seconds`, reaches the
       threshold — a battery device declaring an 86 400-second wake interval
       blocks automatic watering on a stale sample exactly like any other device.
-- [ ] It auto-clears on fresh data.
+- [x] It auto-clears on fresh data.
 
 ## Verification
 

@@ -44,14 +44,19 @@ Order: leak → leak-unknown → tank-unknown → tank-low → tank-stale → sa
 
 ## Acceptance criteria
 
-- [ ] Each lockout reason is returned under its documented condition.
-- [ ] `leak = Unknown` returns a lockout, not `None`.
-- [ ] `tank = None` returns a lockout.
-- [ ] `latest_soil = None` returns a lockout.
-- [ ] **No `_ =>` arm exists on any safety match.**
-- [ ] Adding an enum variant fails to compile until classified.
-- [ ] The gate is the first statement in `evaluate`.
-- [ ] There is no other public decision function.
+- [x] Each lockout reason is returned under its documented condition.
+- [x] `leak = Unknown` returns a lockout, not `None`.
+- [x] `tank = None` returns a lockout.
+- [x] `latest_soil = None` returns a lockout.
+- [x] **No `_ =>` arm exists on any safety match.**
+- [x] Adding an enum variant fails to compile until classified — held by the
+      compiler, since every safety match is exhaustive. Asserted by
+      `safety_012_no_catch_all_arm_on_a_safety_match` reading the gate's own
+      source rather than by a `trybuild` case, because what a compile-fail test
+      would *not* catch is a `_ =>` arm added to make the build pass, which is
+      the real risk (see [docs/reports/M6.md](../../reports/M6.md) §Deviations).
+- [x] The gate is the first statement in `evaluate`.
+- [x] There is no other public decision function.
 
 ## Verification
 
@@ -65,7 +70,10 @@ grep -n '_ =>' crates/domain/src/irrigation/gate.rs   # expect no safety matches
 
 - One test per lockout reason in isolation.
 - **`safety_012_missing_input_never_waters`** as a property test over inputs with random fields None.
-- A compile-fail test (trybuild) for an unclassified new variant.
+- A compile-fail test (trybuild) for an unclassified new variant. **Delivered as
+  a source scan instead**: `safety_012_no_catch_all_arm_on_a_safety_match`. The
+  exhaustiveness itself is already a compiler property; the scan covers the way
+  it would actually be lost.
 
 ## Documentation impact
 

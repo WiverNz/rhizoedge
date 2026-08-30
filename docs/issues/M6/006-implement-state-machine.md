@@ -46,13 +46,13 @@ cases cost milliseconds.
 
 ## Acceptance criteria
 
-- [ ] Every row of the transition table has a passing test.
-- [ ] The gate is called before any irrigation logic.
-- [ ] `Locked` is reachable from every state.
-- [ ] The function is pure — no clock, no I/O.
-- [ ] `prop_state_machine_total` passes: every state x random inputs yields a defined decision.
-- [ ] A cycle stops at `max_doses_per_cycle` with `MaxDosesReached`.
-- [ ] Cooldown is enforced between cycles.
+- [x] Every row of the transition table has a passing test.
+- [x] The gate is called before any irrigation logic.
+- [x] `Locked` is reachable from every state.
+- [x] The function is pure — no clock, no I/O.
+- [x] `prop_state_machine_total` passes: every state x random inputs yields a defined decision.
+- [x] A cycle stops at `max_doses_per_cycle` with `MaxDosesReached`.
+- [x] Cooldown is enforced between cycles.
 
 ## Verification
 

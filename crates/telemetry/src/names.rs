@@ -75,3 +75,26 @@ pub const RECOMMENDATIONS_TOTAL: &str = "recommendations_total";
 pub const MANUAL_WATERING_DETECTED_TOTAL: &str = "manual_watering_detected_total";
 /// Threshold crossings, by measurement kind and severity.
 pub const THRESHOLD_CROSSINGS_TOTAL: &str = "threshold_crossings_total";
+
+/// Water commands issued, by mode and settled outcome (M6-014).
+pub const WATERING_COMMANDS_TOTAL: &str = "watering_commands_total";
+/// Volume actually delivered, by mode.
+pub const WATERING_DELIVERED_ML_TOTAL: &str = "watering_delivered_ml_total";
+/// Watering attempts that failed, by reason.
+pub const WATERING_FAILURES_TOTAL: &str = "watering_failures_total";
+/// Irrigation state machine transitions, by from/to.
+pub const IRRIGATION_STATE_TRANSITIONS_TOTAL: &str = "irrigation_state_transitions_total";
+/// Plants currently locked out. One of the three most operationally valuable
+/// series in the system: it answers "is anything stuck?" (ADR-010).
+pub const PLANTS_LOCKED_OUT: &str = "plants_locked_out";
+/// Lockouts raised, by reason.
+pub const LOCKOUTS_TOTAL: &str = "lockouts_total";
+/// How long one control pass takes. The signal that the single-loop design
+/// needs revisiting at scale (M13).
+pub const CONTROL_TICK_DURATION_SECONDS: &str = "control_tick_duration_seconds";
+/// Doses held for a sleeping device to wake (ADR-018 §3).
+pub const COMMAND_INTENTS_PENDING: &str = "command_intents_pending";
+/// Intents that reached `intent_expires_at` without a wake.
+pub const COMMAND_INTENTS_EXPIRED_TOTAL: &str = "command_intents_expired_total";
+/// Edge wall-clock steps detected against the monotonic reference.
+pub const CLOCK_STEPS_TOTAL: &str = "clock_steps_total";

@@ -45,13 +45,13 @@ SAFETY-003 requires, and it must verify the signal is gone.
 
 ## Acceptance criteria
 
-- [ ] `POST /water` during a leak returns **409** and publishes nothing.
-- [ ] The 409 body names the reason and whether it is clearable.
-- [ ] A permitted manual dose returns 202 with the `command_id`.
-- [ ] Manual watering succeeds under sensor fault but not under leak.
-- [ ] `lockout/clear` on an active condition returns 409.
-- [ ] **No endpoint accepts an override or force parameter.**
-- [ ] Every actuation path calls `evaluate`.
+- [x] `POST /water` during a leak returns **409** and publishes nothing.
+- [x] The 409 body names the reason and whether it is clearable.
+- [x] A permitted manual dose returns 202 with the `command_id`.
+- [x] Manual watering succeeds under sensor fault but not under leak.
+- [x] `lockout/clear` on an active condition returns 409.
+- [x] **No endpoint accepts an override or force parameter.**
+- [x] Every actuation path calls `evaluate`.
 
 ## Verification
 

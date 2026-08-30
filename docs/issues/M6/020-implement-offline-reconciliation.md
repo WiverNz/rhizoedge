@@ -48,13 +48,13 @@ back to the device, so the two stop diverging.
 
 ## Acceptance criteria
 
-- [ ] A reconnecting device's plants enter `reconciling` and are held in `Uncertain`.
-- [ ] **No command is published while a plant is reconciling**, asserted with an MQTT spy.
-- [ ] The plant is released only after `complete` is committed.
-- [ ] Autonomous doses appear in the rolling budget after reconciliation.
-- [ ] An edge restart mid-reconciliation replays safely with no duplicates.
-- [ ] A device reconnecting twice mid-replay creates no duplicate events.
-- [ ] `device.reconciled` summarises the isolation period.
+- [x] A reconnecting device's plants enter `reconciling` and are held in `Uncertain`.
+- [x] **No command is published while a plant is reconciling**, asserted with an MQTT spy.
+- [x] The plant is released only after `complete` is committed.
+- [x] Autonomous doses appear in the rolling budget after reconciliation.
+- [x] An edge restart mid-reconciliation replays safely with no duplicates.
+- [x] A device reconnecting twice mid-replay creates no duplicate events.
+- [x] `device.reconciled` summarises the isolation period.
 
 ## Verification
 

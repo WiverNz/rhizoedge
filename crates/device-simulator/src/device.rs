@@ -134,6 +134,9 @@ pub struct Device {
     /// the retained announcement survives; an unannounced one drops the socket
     /// so the will fires, which is the whole point of the fault.
     sleep_announced: bool,
+    /// The offline refusal most recently recorded, so a persistent condition
+    /// buffers one audit event rather than one per tick (M6-019).
+    last_offline_refusal: Option<rhizo_policy::RefuseReason>,
 }
 
 impl Device {
@@ -229,6 +232,7 @@ impl Device {
             recent_samples: RecentSamples::default(),
             last_policy_rejection: None,
             unpersisted_runtime_ms: 0,
+            last_offline_refusal: None,
             last_ack_outcome: None,
             power: if cli.power_mode.is_battery() {
                 crate::power::PowerState::battery(
@@ -593,6 +597,9 @@ impl Device {
         }
         self.advance_offline_runtime(elapsed_ms);
         let mut publications = self.step_pump(elapsed_ms);
+        // Offline autonomy (M6-019). Isolation-only, opt-in, and bounded by the
+        // shared evaluator; see `offline.rs` for why it is exactly one call.
+        publications.extend(self.evaluate_offline_autonomy(elapsed_ms));
 
         // Sampling, buffering, and physical evolution continue whether or not
         // the broker is reachable: an isolated device is still a fully
@@ -722,6 +729,27 @@ impl Device {
     /// bounds how much observed time a crash can discard — and discarding
     /// observed time is conservative, since it leaves the cooldown *longer* and
     /// the budget window *shorter* than reality.
+    /// A fresh identifier from the device's own generator.
+    ///
+    /// Uses the wall clock when it has one (UUIDv7, so ids sort by issue time)
+    /// and a v4 otherwise. An isolated device must be able to name what it did
+    /// without an Edge and without a calendar.
+    pub fn next_local_uuid(&mut self) -> uuid::Uuid {
+        let wall = self.wall_now();
+        self.identity.next_uuid(wall)
+    }
+
+    /// The offline refusal most recently recorded.
+    #[must_use]
+    pub const fn last_offline_refusal(&self) -> Option<rhizo_policy::RefuseReason> {
+        self.last_offline_refusal
+    }
+
+    /// Records the offline refusal now in force.
+    pub const fn set_last_offline_refusal(&mut self, reason: Option<rhizo_policy::RefuseReason>) {
+        self.last_offline_refusal = reason;
+    }
+
     fn advance_offline_runtime(&mut self, elapsed_ms: u64) {
         if elapsed_ms == 0 {
             return;

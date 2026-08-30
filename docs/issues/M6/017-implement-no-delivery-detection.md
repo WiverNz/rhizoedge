@@ -38,12 +38,12 @@ system is wrong, and resuming automatically would repeat the mistake.
 
 ## Acceptance criteria
 
-- [ ] Two doses with no moisture and no weight response lock the plant.
-- [ ] One unresponsive dose does not.
-- [ ] A weight rise without a moisture rise does **not** trigger it.
-- [ ] The lockout requires an explicit clear.
-- [ ] The failure counter and an alert-level log are produced.
-- [ ] Escalation stops — no third dose is issued.
+- [x] Two doses with no moisture and no weight response lock the plant.
+- [x] One unresponsive dose does not.
+- [x] A weight rise without a moisture rise does **not** trigger it.
+- [x] The lockout requires an explicit clear.
+- [x] The failure counter and an alert-level log are produced.
+- [x] Escalation stops — no third dose is issued.
 
 ## Verification
 

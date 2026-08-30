@@ -65,12 +65,22 @@ mod tests {
         assert_eq!(tables, 1);
     }
 
+    /// The canonical pre-release baseline, plus every forward-only migration
+    /// applied after it.
+    ///
+    /// `0001_initial.sql` was squashed while no release existed
+    /// (`versioning-policy.md` §4). M6 is additive and arrives as
+    /// `0002_irrigation_control.sql` rather than by editing the baseline, so an
+    /// existing development database upgrades in place — and the backup path in
+    /// [`run`] is exercised by a real version change rather than only by a fresh
+    /// create.
     #[tokio::test]
     async fn canonical_baseline_contains_the_final_schema() {
         use sqlx::Row as _;
 
-        assert_eq!(MIGRATOR.iter().count(), 1);
-        assert_eq!(MIGRATOR.iter().next().unwrap().version, 1);
+        assert_eq!(MIGRATOR.iter().count(), 2);
+        let versions: Vec<i64> = MIGRATOR.iter().map(|m| m.version).collect();
+        assert_eq!(versions, [1, 2]);
         let db = EdgeDb::in_memory().await.unwrap();
         db.migrate().await.unwrap();
 
@@ -85,6 +95,7 @@ mod tests {
             [
                 "actuator_bindings",
                 "actuator_states",
+                "command_intents",
                 "command_results",
                 "commands",
                 "device_capabilities",
@@ -128,6 +139,7 @@ mod tests {
                 "idx_devevents_replay",
                 "idx_device_isolation_periods",
                 "idx_devices_sleep_deadline",
+                "idx_intents_open",
                 "idx_meas_batch",
                 "idx_meas_lookup",
                 "idx_meas_time",
@@ -140,6 +152,7 @@ mod tests {
                 "uq_binding_control",
                 "uq_command_result_command",
                 "uq_measurement_batch_sample",
+                "uq_open_water_intent",
             ]
         );
 
@@ -201,7 +214,10 @@ mod tests {
                 "created_at",
                 "deleted_at",
                 "applied_preset_id",
-                "applied_catalogue_version"
+                "applied_catalogue_version",
+                "lockout_cleared_by",
+                "lockout_cleared_at",
+                "lockout_until"
             ]
         );
         assert_eq!(
@@ -238,6 +254,69 @@ mod tests {
         assert_eq!(replay.get::<Option<String>, _>("dflt_value"), None);
         assert_eq!(replay.get::<i64, _>("pk"), 0);
 
+        assert_eq!(
+            columns(&db, "command_intents").await,
+            [
+                "intent_id",
+                "plant_id",
+                "device_id",
+                "kind",
+                "requested_ml",
+                "mode",
+                "created_at",
+                "intent_expires_at",
+                "expected_delivery_after",
+                "state",
+                "command_id",
+                "refusal_reason",
+                "settled_at",
+                "updated_at"
+            ]
+        );
+        // An intent is not a command: `command_id` is nullable, and `commands`
+        // gained no column (M6-022).
+        let intent_command_id = sqlx::query(
+            "SELECT \"notnull\" AS is_not_null FROM pragma_table_info('command_intents') WHERE name='command_id'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(intent_command_id.get::<i64, _>("is_not_null"), 0);
+        assert_eq!(
+            columns(&db, "commands").await,
+            [
+                "command_id",
+                "device_id",
+                "plant_id",
+                "kind",
+                "requested_ml",
+                "mode",
+                "issued_at",
+                "expires_at",
+                "status",
+                "published_at",
+                "settled_at",
+                "reason"
+            ],
+            "M6 adds no column to `commands`"
+        );
+        assert_eq!(
+            columns(&db, "irrigation_state").await,
+            [
+                "plant_id",
+                "state",
+                "state_since",
+                "doses_this_cycle",
+                "cycle_started_at",
+                "last_cycle_completed_at",
+                "wait_until",
+                "active_command_id",
+                "updated_at",
+                "pre_dose_vwc",
+                "pre_dose_grams"
+            ]
+        );
+
         for (name, fragment) in [
             ("uq_binding_control", "WHERE role='control'"),
             (
@@ -247,6 +326,10 @@ mod tests {
             (
                 "idx_devices_sleep_deadline",
                 "WHERE connectivity_mode = 'sleeping'",
+            ),
+            (
+                "uq_open_water_intent",
+                "WHERE state = 'pending_for_device_wake' AND kind = 'water'",
             ),
         ] {
             let sql: String = sqlx::query_scalar("SELECT sql FROM sqlite_schema WHERE name=?")

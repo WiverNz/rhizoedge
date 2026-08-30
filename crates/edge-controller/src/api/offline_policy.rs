@@ -359,6 +359,9 @@ mod tests {
             dry_confirm_minutes: 30,
             cooldown_hours: 6.0,
             absorption_minutes: 30,
+            recovery_delta_vwc: 6.0,
+            tank_min_percent: 15.0,
+            command_ttl_seconds: 120,
         })
         .unwrap();
         rhizo_storage::repo::profile::upsert(&api.db, "wild", "Wild", &document, 1)

@@ -42,13 +42,13 @@ The recovery log is the operator's evidence; list counts, not a bare 'started'.
 
 ## Acceptance criteria
 
-- [ ] Expired in-flight commands become `expired` and move to `Recheck`.
-- [ ] Live in-flight commands are awaited until `expires_at`.
-- [ ] **No command is re-published after a restart.**
-- [ ] Irrigation state including `wait_until` and `doses_this_cycle` is restored exactly.
-- [ ] A restart during `WaitForAbsorption` resumes with the original `wait_until`.
-- [ ] The recovery summary is logged.
-- [ ] **`safety_010_restart_mid_command_no_replay` passes.**
+- [x] Expired in-flight commands become `expired` and move to `Recheck`.
+- [x] Live in-flight commands are awaited until `expires_at`.
+- [x] **No command is re-published after a restart.**
+- [x] Irrigation state including `wait_until` and `doses_this_cycle` is restored exactly.
+- [x] A restart during `WaitForAbsorption` resumes with the original `wait_until`.
+- [x] The recovery summary is logged.
+- [x] **`safety_010_restart_mid_command_no_replay` passes.**
 
 ## Verification
 

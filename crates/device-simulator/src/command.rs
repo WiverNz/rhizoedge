@@ -237,6 +237,68 @@ impl Device {
         }
     }
 
+    /// Begins a dose the device decided on for itself while isolated.
+    ///
+    /// The **same** actuation path as a command: the same in-flight NVS write
+    /// before the pump moves (SAFETY-011), the same `begin_dose`, the same
+    /// `start_pump`. What differs is where the volume came from and what bounds
+    /// it: `bound_dose` is protocol §5.8 steps 10-12 extracted verbatim, so the
+    /// firmware ceilings apply to autonomous water exactly as they do to
+    /// commanded water (SAFETY-007, SAFETY-014).
+    ///
+    /// Steps 2 and 3 — `clock_unsynced` and `expired` — are deliberately absent.
+    /// They are properties of a *command*: a decision another machine made at a
+    /// wall-clock instant. An isolated device has no issuer, no TTL, and by
+    /// construction no synchronised clock. SAFETY-015 governs this path and
+    /// SAFETY-002 governs the commanded one; applying the TTL here would mean an
+    /// isolated device could never water, which is the whole feature.
+    pub(crate) fn autonomous_dose(&mut self, ml: f32) -> Vec<Publication> {
+        if !self.actuation_permitted() {
+            return Vec::new();
+        }
+        if self.store().state().in_flight_dose.is_some() {
+            // One pump, one dose. The evaluator is re-run next tick.
+            return Vec::new();
+        }
+        let bound = rhizo_mqtt_contract::safety::bound_dose(
+            ml,
+            self.config().pump.ml_per_second,
+            self.store().state().delivered_today_ml,
+        );
+        let rhizo_mqtt_contract::safety::DoseBound::Accept {
+            effective_ml,
+            run_ms,
+            clamped,
+        } = bound
+        else {
+            tracing::warn!(
+                requested_ml = ml,
+                ?bound,
+                "an autonomous dose was refused by the firmware hard limits"
+            );
+            return Vec::new();
+        };
+        // The id is device-generated and stable, so the dose deduplicates and
+        // reconciles like any other and the edge can attribute the result.
+        let command = WaterCommand {
+            command_id: CommandId::from_uuid(self.next_local_uuid()),
+            requested_ml: ml,
+            // An isolated device has no wall clock to stamp. These are never
+            // re-validated: `begin_dose` does not gate, and the gate that would
+            // read them is the one this path deliberately does not run.
+            issued_at_ms: UtcMillis(0),
+            expires_at_ms: UtcMillis(1),
+        };
+        self.begin_dose(
+            command,
+            effective_ml,
+            run_ms,
+            clamped,
+            CommandOrigin::OfflineAutonomous,
+            Some(String::from("offline autonomous dose")),
+        )
+    }
+
     /// Asks the shared gate.
     ///
     /// **The only call site.** Every input it needs is assembled here and

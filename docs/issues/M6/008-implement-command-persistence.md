@@ -40,12 +40,12 @@ asserts the row exists with no result — that is the state M6-012 reconciles.
 
 ## Acceptance criteria
 
-- [ ] A command row is committed with status `issued` before any publish.
-- [ ] The insert, transition, and outbox row share one transaction.
-- [ ] A duplicate `command_id` insert fails at the storage layer.
-- [ ] `expires_at` is computed from the profile TTL.
-- [ ] A result for an already-terminal command changes nothing.
-- [ ] A crash between commit and publish leaves an `issued` row.
+- [x] A command row is committed with status `issued` before any publish.
+- [x] The insert, transition, and outbox row share one transaction.
+- [x] A duplicate `command_id` insert fails at the storage layer.
+- [x] `expires_at` is computed from the profile TTL.
+- [x] A result for an already-terminal command changes nothing.
+- [x] A crash between commit and publish leaves an `issued` row.
 
 ## Verification
 

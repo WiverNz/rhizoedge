@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0–M5 complete; M6 next.
+**Planning status:** complete. **Implementation status:** M0–M6 complete; M7 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -62,7 +62,7 @@ pin may move forward deliberately
 | M3 | Edge Ingestion and SQLite | Reliable MQTT consumption with durable deduplication and crash-safe persistence | M1, M2 | 18 | **DONE** |
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **DONE** |
 | M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 22 | **DONE** |
-| M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **READY** |
+| M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **DONE** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
 | M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **READY** |
 | M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | PLANNED |
@@ -323,7 +323,7 @@ sleep. Otherwise builds the gate's inputs without actuating.
 
 ---
 
-### M6 — Irrigation Control and Safety · READY
+### M6 — Irrigation Control and Safety · DONE
 
 **Objective.** The milestone where software can move water. The most
 safety-critical in the project.
@@ -882,15 +882,17 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0–M5 are `DONE`. M6 is `READY`.** The next unstarted issue is:
+**M0–M6 are `DONE`. M7 is `READY`.** The next unstarted issue is:
 
 ```text
-M6-001 — Add irrigation types and inputs
+M7-001 — Create the cloud-api binary and PostgreSQL service
 ```
 
-It depends on M5-022, which is complete, so it is executable now. See
-[docs/issues/M6/001-add-irrigation-types-and-inputs.md](docs/issues/M6/001-add-irrigation-types-and-inputs.md)
+It depends on M6-024, which is complete, so it is executable now. See
+[docs/issues/M7/001-add-cloud-api-and-postgres.md](docs/issues/M7/001-add-cloud-api-and-postgres.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
+
+M6's report is [docs/reports/M6.md](docs/reports/M6.md).
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails
 the build if it names an issue from a milestone already marked `DONE`.

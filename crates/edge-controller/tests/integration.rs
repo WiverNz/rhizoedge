@@ -11,6 +11,8 @@ use std::time::Duration;
 
 struct EdgeHarness {
     db: rhizo_storage::EdgeDb,
+    commander: edge_controller::control::command::Commander,
+    clock: Arc<TestClock>,
     _stop: tokio::sync::watch::Sender<bool>,
     ingress: tokio::task::JoinHandle<Result<(), String>>,
     pipeline: tokio::task::JoinHandle<Result<(), String>>,
@@ -33,16 +35,26 @@ impl EdgeHarness {
             shutdown.clone(),
             metrics.clone(),
         ));
-        let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(TestClock::new(
+        let test_clock = Arc::new(TestClock::new(
             Utc.timestamp_millis_opt(1_900_000_000_000)
                 .single()
                 .unwrap(),
         ));
+        let clock: Arc<dyn rhizo_domain::Clock> = test_clock.clone();
+        let commander = edge_controller::control::command::Commander::new(
+            db.clone(),
+            clock.clone(),
+            Arc::new(edge_controller::control::transport::MqttTransport::new(
+                client.clone(),
+            )),
+            metrics.clone(),
+        );
         let pipeline = tokio::spawn(pipeline::run(
             rx,
             db.clone(),
             clock,
             client,
+            Some(commander.clone()),
             edge_controller::state::cache::LatestSampleCache::default(),
             shutdown,
             metrics.clone(),
@@ -57,6 +69,8 @@ impl EdgeHarness {
         tokio::time::sleep(Duration::from_millis(300)).await;
         Self {
             db,
+            commander,
+            clock: test_clock,
             _stop: stop,
             ingress,
             pipeline,

@@ -92,21 +92,21 @@ Every other refusal reason is terminal for the intent.
 
 ## Acceptance criteria
 
-- [ ] A `POST /water` to a sleeping device publishes **nothing** and creates one
+- [x] A `POST /water` to a sleeping device publishes **nothing** and creates one
       `pending_for_device_wake` intent, verified by a spy subscriber.
-- [ ] A `POST /water` to a connected device is byte-identical to M6-016's
+- [x] A `POST /water` to a connected device is byte-identical to M6-016's
       behaviour, with no intent row created.
-- [ ] At wake exactly one `command.water` is published, with one `command_id`
+- [x] At wake exactly one `command.water` is published, with one `command_id`
       allocated at that moment.
-- [ ] The command's `issued_at` is the wake instant, not the request instant.
-- [ ] `edge.time` is published before the command on every wake delivery.
-- [ ] A leak raised while the device slept refuses the intent at delivery with
+- [x] The command's `issued_at` is the wake instant, not the request instant.
+- [x] `edge.time` is published before the command on every wake delivery.
+- [x] A leak raised while the device slept refuses the intent at delivery with
       nothing published; likewise tank, staleness, and rolling-cap exhaustion.
-- [ ] An edge restart between request and wake still delivers exactly once.
-- [ ] A second `POST /water` while one intent is pending returns 409.
-- [ ] An intent past `intent_expires_at` becomes `expired_before_wake` and is
+- [x] An edge restart between request and wake still delivers exactly once.
+- [x] A second `POST /water` while one intent is pending returns 409.
+- [x] An intent past `intent_expires_at` becomes `expired_before_wake` and is
       never delivered.
-- [ ] `commands` gained no new column.
+- [x] `commands` gained no new column.
 
 ## Verification
 

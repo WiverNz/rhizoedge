@@ -5,13 +5,14 @@
 //! the domain; this module is the adapter that assembles their inputs and
 //! persists their conclusions.
 //!
-//! # M5 issues no commands
+//! # This module still publishes nothing
 //!
-//! Nothing in this module or its children publishes to any MQTT topic. That is
-//! not an accident of the current implementation — it is the property that lets
-//! the recommendation logic be validated against a real plant for a week before
-//! M6 gives it a pump, and `tests/no_commands_in_m5.rs` fails if it stops being
-//! true.
+//! Nothing here or in its children holds a transport. M6 gave the *control loop*
+//! a pump, but the loading, analysis, and input assembly stayed on this side of
+//! the line: `control::irrigation` reads what this module produces and decides
+//! through `rhizo_domain`, and `control::command` is the only path to the wire.
+//! `no_commands_in_m5` still passes, because a plant with automation off still
+//! produces advice and no command.
 pub mod detect;
 pub mod preset;
 pub mod state;
@@ -522,6 +523,32 @@ pub fn lockout_name(reason: rhizo_domain::LockoutReason) -> String {
         .ok()
         .and_then(|v| v.as_str().map(ToOwned::to_owned))
         .unwrap_or_else(|| "unknown".to_owned())
+}
+
+/// Persists one irrigation-state transition as a plant event.
+///
+/// Every transition is recorded, and steady state is not. A low-frequency write
+/// that makes "what did the system think, and when" reconstructable months later
+/// — the question actually asked when a plant dies (ADR-010, M6-014).
+pub async fn record_irrigation_transition(
+    db: &EdgeDb,
+    plant_id: &str,
+    from: rhizo_domain::state::IrrigationState,
+    to: rhizo_domain::state::IrrigationState,
+    at: i64,
+) -> Result<(), rhizo_storage::StorageError> {
+    use rhizo_domain::irrigation::types::state_name;
+    plant_repo::record_plant_event(
+        db,
+        Some(plant_id),
+        &format!("irrigation:{plant_id}:{at}:{}", state_name(to)),
+        "irrigation_state_changed",
+        "info",
+        Some(&serde_json::json!({ "from": state_name(from), "to": state_name(to) })),
+        at,
+    )
+    .await?;
+    Ok(())
 }
 
 /// The kinds a plant's `required` bindings cover, for the offline policy.

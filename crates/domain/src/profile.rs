@@ -44,6 +44,38 @@ pub struct PlantProfile {
     pub cooldown_hours: f64,
     /** How long a dose is given to reach the probe. */
     pub absorption_minutes: u32,
+    /** Moisture rise that counts as "responded to water" (M6-006, F-060-32). */
+    #[serde(default = "default_recovery_delta_vwc")]
+    pub recovery_delta_vwc: f64,
+    /** Reservoir level at or below which watering is refused (SAFETY-004). */
+    #[serde(default = "default_tank_min_percent")]
+    pub tank_min_percent: f64,
+    /** Wire TTL stamped on every command this plant issues (F-060-22). */
+    #[serde(default = "default_command_ttl_seconds")]
+    pub command_ttl_seconds: u32,
+}
+
+/// The documented default rise that counts as a response to water
+/// ([configuration-model.md](../../../docs/architecture/configuration-model.md)
+/// §PlantProfile).
+#[must_use]
+pub const fn default_recovery_delta_vwc() -> f64 {
+    6.0
+}
+
+/// The documented default reservoir floor.
+#[must_use]
+pub const fn default_tank_min_percent() -> f64 {
+    15.0
+}
+
+/// The documented default command TTL, in seconds (PRD 060 F-060-22).
+///
+/// Long enough for a healthy LAN, short enough that a reconnecting device sees
+/// only stale commands. Tunable per profile; never per request.
+#[must_use]
+pub const fn default_command_ttl_seconds() -> u32 {
+    120
 }
 
 /// One violated profile rule. Each rule has its own variant on purpose: the API
@@ -90,6 +122,11 @@ pub enum ProfileError {
         /// `FIRMWARE_MAX_ML_PER_RUN`.
         limit: f32,
     },
+    /// `tank_min_percent` is not a percentage.
+    TankMinRange {
+        /// Configured reservoir floor.
+        tank_min_percent: f64,
+    },
     /// `max_daily_ml` exceeds the device rolling budget.
     DailyAboveFirmwareLimit {
         /// Configured ceiling.
@@ -110,6 +147,7 @@ impl ProfileError {
             Self::ZeroDoses => "zero_doses",
             Self::CycleVolumeAboveDailyMax { .. } => "cycle_volume_above_daily_max",
             Self::NonPositiveInterval { .. } => "non_positive_interval",
+            Self::TankMinRange { .. } => "tank_min_range",
             Self::DoseAboveFirmwareLimit { .. } => "dose_above_firmware_limit",
             Self::DailyAboveFirmwareLimit { .. } => "daily_above_firmware_limit",
         }
@@ -141,6 +179,10 @@ impl core::fmt::Display for ProfileError {
             Self::NonPositiveInterval { field } => {
                 write!(f, "{field} must be greater than zero")
             }
+            Self::TankMinRange { tank_min_percent } => write!(
+                f,
+                "tank_min_percent ({tank_min_percent}) must be a finite percentage within 0-100"
+            ),
             Self::DoseAboveFirmwareLimit { dose_ml, limit } => write!(
                 f,
                 "dose_ml ({dose_ml}) exceeds the device hard limit FIRMWARE_MAX_ML_PER_RUN ({limit})"
@@ -171,6 +213,8 @@ impl PlantProfile {
             ("target_min_vwc", self.target_min_vwc),
             ("target_max_vwc", self.target_max_vwc),
             ("cooldown_hours", self.cooldown_hours),
+            ("recovery_delta_vwc", self.recovery_delta_vwc),
+            ("tank_min_percent", self.tank_min_percent),
         ] {
             if !value.is_finite() {
                 return Err(ProfileError::NotFinite { field });
@@ -214,6 +258,21 @@ impl PlantProfile {
         if self.cooldown_hours <= 0.0 {
             return Err(ProfileError::NonPositiveInterval {
                 field: "cooldown_hours",
+            });
+        }
+        if !self.recovery_delta_vwc.is_finite() || self.recovery_delta_vwc <= 0.0 {
+            return Err(ProfileError::NonPositiveInterval {
+                field: "recovery_delta_vwc",
+            });
+        }
+        if !self.tank_min_percent.is_finite() || !(0.0..=100.0).contains(&self.tank_min_percent) {
+            return Err(ProfileError::TankMinRange {
+                tank_min_percent: self.tank_min_percent,
+            });
+        }
+        if self.command_ttl_seconds == 0 {
+            return Err(ProfileError::NonPositiveInterval {
+                field: "command_ttl_seconds",
             });
         }
         // The hard limits come before the internal-consistency volume rule so a
@@ -265,6 +324,9 @@ impl PlantProfile {
             dry_confirm_minutes: 30,
             cooldown_hours: 6.0,
             absorption_minutes: 30,
+            recovery_delta_vwc: default_recovery_delta_vwc(),
+            tank_min_percent: default_tank_min_percent(),
+            command_ttl_seconds: default_command_ttl_seconds(),
         }
     }
 }

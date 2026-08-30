@@ -279,7 +279,70 @@ rather than fabricated (M13-016).
   `completed` produces no second `watering_event`.
 - **Safety:** ✅ SAFETY-001.
 
-### 3.6 Control loop task panics
+### 3.6 Crash between receiving a `command.result` and committing it
+
+- **Detection:** implicit. The device believes it delivered the result, because
+  protocol §5.10 has it stop retrying once the broker acknowledges.
+- **Expected state:** the result is **not** lost. The edge sets `manual_acks` on
+  the ingress and the pipeline sends the PUBACK only after `process` returns —
+  that is, after the transaction commits. A crash before the commit leaves the
+  message unacknowledged, and the broker redelivers it.
+- **Why this needed closing before M6 enabled watering:** a `command.result` is
+  ledger data. Telemetry survives an equivalent loss because a lost sample is
+  fail-safe, and offline events survive it because `event.ack` is an
+  application-level acknowledgement published after commit. A silently missed
+  delivered dose under-counts the SAFETY-006 budget, which is the direction that
+  over-waters.
+- **Safety:** ✅ SAFETY-006, SAFETY-001. Closed in M6-010 (2026-08-31); carried
+  forward from the M3 audit.
+- **Observability:** the duplicate counter rises rather than the ledger going
+  quiet, which is the visible form of the safe outcome.
+
+### 3.7 A dose held for a device that never wakes
+
+- **Detection:** the expiry sweep on the liveness timer.
+- **Expected state:** the intent reaches `expired_before_wake` and is never
+  delivered. `intent_expires_at` defaults to `2 x wake_interval_seconds` with a
+  thirty-minute floor — two wakes rather than one, because a single missed wake
+  is ordinary and an intent that expired on it would be indistinguishable from a
+  broken feature.
+- **Safety:** fail-closed, and bounded. There is no mechanism to wake a device
+  and no parameter that asks for one, so an unbounded hold would be a dose that
+  might arrive at any point in the future.
+- **Observability:** `command_intents_pending` gauge,
+  `command_intents_expired_total`, WARN log.
+
+### 3.8 A device reconnects with buffered autonomous history
+
+- **Detection:** a `device.events` batch with `replay: true`.
+- **Expected state:** the plant is held in `Uncertain` until the edge has
+  committed a contiguous prefix through the device's final batch, and **no
+  command is published** in the meantime. A device that autonomously watered
+  ninety seconds before reconnecting has that dose in its buffer and not yet in
+  the budget; issuing on top of it is the failure this rule prevents.
+- **Recovery:** automatic. The hold is derived from `replay_progress` rather than
+  stored in a flag, so it survives a restart and cannot be cleared by an
+  unrelated `device.status`.
+- **Safety:** ✅ SAFETY-016, SAFETY-014.
+- **Observability:** a `reconciling` device event on entry and a
+  `device.reconciled` summary on release.
+
+### 3.9 The edge wall clock steps
+
+- **Detection:** each control tick samples `Instant` beside the wall clock;
+  comparing the wall clock against itself cannot reveal a step.
+- **Expected state:** a **forward** step beyond ten minutes locks every plant
+  `Uncertain` for one cooldown, because older `watering_events` drop out of the
+  rolling window early and a plant that had spent its allowance would be handed a
+  fresh one. A **backward** step is recorded and nothing else: it makes the
+  window include more history, so the cap becomes more conservative on its own.
+- **Safety:** ✅ SAFETY-006, SAFETY-012. Heavy-handed and correct: the
+  alternative is accepting that the daily cap can be bypassed by an NTP
+  correction.
+- **Observability:** `clock_steps_total{direction}` and a `clock_step` plant
+  event carrying the direction and magnitude.
+
+### 3.10 Control loop task panics
 
 - **Detection:** the supervising task observes the `JoinHandle` error.
 - **Expected state:** the panic is logged with full context and **the process

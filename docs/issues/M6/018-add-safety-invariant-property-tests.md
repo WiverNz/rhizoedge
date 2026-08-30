@@ -42,12 +42,12 @@ passing forever.
 
 ## Acceptance criteria
 
-- [ ] All ten property tests exist and pass.
-- [ ] `cargo test safety_` runs the complete suite.
-- [ ] Each test names its invariant.
-- [ ] `PROPTEST_CASES=10000 cargo test safety_` passes.
-- [ ] `proptest-regressions/` is committed.
-- [ ] SAFETY-001 through 007, 010, and 012 each have at least one passing property or integration test.
+- [x] All ten property tests exist and pass.
+- [x] `cargo test safety_` runs the complete suite.
+- [x] Each test names its invariant.
+- [x] `PROPTEST_CASES=10000 cargo test safety_` passes.
+- [x] `proptest-regressions/` is committed.
+- [x] SAFETY-001 through 007, 010, and 012 each have at least one passing property or integration test.
 
 ## Verification
 

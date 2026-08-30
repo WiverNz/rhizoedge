@@ -130,18 +130,41 @@ pub fn evaluate_offline(
     policy:  &OfflinePolicy,
     state:   &OfflineState,     // persisted: cycle, doses, budget, deadlines
     inputs:  &OfflineInputs,    // latest samples + ages, leak, tank, pump health
-    elapsed: MonotonicMillis,   // since boot; never a wall clock
+    elapsed: MonotonicMillis,   // credited since the previous evaluation
 ) -> OfflineDecision;
 
 pub enum OfflineDecision {
     Idle,
-    Confirming { remaining: Duration },
+    Confirming,
     Dose { ml: f32 },
-    WaitAbsorption { remaining: Duration },
-    Cooldown { remaining: Duration },
+    WaitAbsorption,
+    Cooldown,
     Refuse(RefuseReason),
 }
+
+pub fn next_offline_state(
+    policy:   &OfflinePolicy,
+    state:    &OfflineState,
+    decision: &OfflineDecision,
+    elapsed:  MonotonicMillis,
+) -> OfflineState;
 ```
+
+**`elapsed` is a delta, not a since-boot instant** (corrected 2026-08-31, when
+M6-019 implemented this). It is exactly what §5b's
+`credit_elapsed(wake_reason, rtc_state) -> Duration` produces. It has to be a
+delta because §5 stores the cooldown as a **remaining duration** and never as an
+absolute deadline — a device that may have no absolute time cannot interpret one
+after a boot — so with remaining durations on one side and an instant on the
+other there is nothing to subtract. Crediting zero is what a reboot does, and it
+never advances anything. The essential property is unchanged: never a wall clock,
+always a parameter.
+
+The decision variants carry no remaining durations: the caller already holds the
+state, and `next_offline_state` returns the updated one. Splitting *what to do*
+from *where that leaves the device* is the same split `rhizo-domain`'s `evaluate`
+and `next_state` use, and it lets the caller persist the second atomically with
+the first.
 
 Purity buys the same thing it buys in `rhizo-domain`: the whole offline safety
 surface is property-testable in microseconds, with no board, no broker, and no
@@ -154,22 +177,39 @@ the Edge cannot evaluate is a policy it must not send.
 ### The gate runs first, always
 
 ```text
-1. enabled == false                       → Refuse(AutomationDisabled)
-2. policy invalid / version unknown       → Refuse(NoValidPolicy)
-3. leak detected or unknown               → Refuse(Leak | LeakUnknown)
+0. cooldown active                        → Cooldown          (before the gate)
+1. enabled == false                       → Refuse(PolicyDisabled)
+2. policy invalid / no actuator            → Refuse(PolicyInvalid | NoActuator)
+3. leak detected or unknown               → Refuse(LeakDetected | LeakUnknown)
 4. tank below minimum or unknown          → Refuse(TankLow | TankUnknown)
-5. pump faulted                           → Refuse(PumpFaulted)
-6. a required measurement missing/stale   → Refuse(RequiredMeasurementUnavailable)
-7. control measurement invalid            → Refuse(SensorFault)
-8. rolling budget exhausted               → Refuse(BudgetExhausted)
-9. cooldown active                        → Cooldown
-10. clock unusable for durations          → Refuse(TimebaseUnusable)
+5. pump faulted or unknown                → Refuse(PumpUnhealthy | PumpUnknown)
+6. a required measurement missing/stale   → Refuse(RequiredMissing | RequiredStale
+                                                  | RequiredQuality)
+7. control measurement invalid            → Refuse(ControlMissing | ControlStale
+                                                  | ControlQuality
+                                                  | ControlKindUnknown)
+8. rolling budget exhausted, or the cycle  → Refuse(BudgetExhausted)
+   has spent its doses                     | Cooldown
       ── only then is irrigation logic evaluated ──
 ```
 
 Exhaustive matches, no catch-all arm, `Option`/tri-state for every absent-able
 input — the same discipline as the Edge's gate
 ([ADR-006](../adr/006-irrigation-state-machine-ownership.md)).
+
+Two notes on the implemented order (M6-019, 2026-08-31). The **cooldown is
+counted down before the gate**, because being in a cooldown is the cycle working
+rather than a refusal. And there is **no timebase step**: the earlier draft's
+`Refuse(TimebaseUnusable)` had nothing to check, because `elapsed` arrives as a
+parameter the caller has already credited — a device that cannot measure the
+interval credits zero, and zero advances nothing. Making the impossibility
+structural was the point of taking elapsed time as an argument, so a runtime
+check for it would be a check that can never fire.
+
+Reaching `max_doses_per_cycle` inside a cycle ends it into a cooldown rather than
+refusing for ever: it is a cycle outcome, not a fault. The Edge's machine draws
+the same distinction and locks `MaxDosesReached` instead, because the Edge has
+the history to know the model of the plant is wrong and a person to tell.
 
 ## 5. Persisted offline state
 
@@ -371,6 +411,14 @@ was away — is worse. But this is a considered trade, not a free feature.
   autonomous dose.
 - **M6-019:** implements the single `rhizo-policy::evaluate_offline` function and
   extends the M2 simulator with exactly one call site and autonomous scheduling.
+  **Delivered 2026-08-31.** The simulator's `Device::autonomous_dose` reaches the
+  pump through the same `begin_dose` a command does, bounding the volume with
+  `rhizo_mqtt_contract::safety::bound_dose` — protocol §5.8 steps 10-12 extracted
+  so both actuation paths share one implementation of the firmware ceilings.
+  Steps 2 and 3, `clock_unsynced` and `expired`, are deliberately not applied to
+  the autonomous path: they are properties of a *command* another machine issued
+  at a wall-clock instant, and SAFETY-015 governs this path while SAFETY-002
+  governs the commanded one.
 - **M9:** integrates that same function into firmware from exactly one call site.
   **M9-019 adds deep sleep around it, changing none of it**: §5b's
   `credit_elapsed` supplies the elapsed time the evaluator already took as a

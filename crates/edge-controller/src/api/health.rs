@@ -54,12 +54,19 @@ mod tests {
         db.migrate().await.unwrap();
         let metrics = crate::metrics::Metrics::new().unwrap();
         metrics.connection.set(connection);
+        let clock = std::sync::Arc::new(rhizo_testkit::TestClock::new(
+            chrono::DateTime::from_timestamp_millis(1_000).unwrap(),
+        ));
         ApiState {
-            db,
-            metrics,
-            clock: std::sync::Arc::new(rhizo_testkit::TestClock::new(
-                chrono::DateTime::from_timestamp_millis(1_000).unwrap(),
-            )),
+            db: db.clone(),
+            metrics: metrics.clone(),
+            clock: clock.clone(),
+            commander: crate::control::command::Commander::new(
+                db,
+                clock,
+                std::sync::Arc::new(crate::control::transport::RecordingTransport::new()),
+                metrics,
+            ),
         }
     }
     #[tokio::test]

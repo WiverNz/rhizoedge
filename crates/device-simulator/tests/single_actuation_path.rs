@@ -183,44 +183,60 @@ fn nothing_outside_the_clock_module_reads_a_clock() {
     );
 }
 
-/// M2-017: the simulator contains no offline evaluator, and schedules no
-/// autonomous dose.
+/// M6-019: the simulator calls the **one** shared offline evaluator, from
+/// exactly one place, and implements none of its rules itself.
 ///
-/// The boundary PRD 020 and ADR-008 both state. M6-019 implements the single
-/// shared `rhizo_policy::evaluate_offline` and adds the simulator's sole call
-/// site; until then there must be **no** implementation and **no** call site
-/// here — not even a temporary one, because a simulator-specific evaluator
-/// makes every offline safety test in M6 and every isolation scenario in M8
-/// exercise rules the hardware does not follow.
+/// Through M5 this test asserted the opposite — that `evaluate_offline` appeared
+/// nowhere at all — because M2 deliberately built the seam and stopped. The
+/// boundary has moved, and what replaces it is the stronger claim: there is one
+/// call, and there is no second implementation for it to disagree with.
+///
+/// A simulator-specific evaluator, even a small one, even a temporary one, would
+/// make every offline safety test in M6 and every isolation scenario in M8
+/// exercise rules the hardware does not follow (ADR-008).
 #[test]
-fn no_offline_evaluator_and_no_autonomous_dose_scheduler_exists() {
-    let hits = code_lines_containing("evaluate_offline");
-    assert!(
-        hits.is_empty(),
-        "M2 must contain no `evaluate_offline` implementation or call site; M6-019          adds the one shared function and the one call:
+fn exactly_one_call_site_of_the_shared_offline_evaluator() {
+    let calls: Vec<_> = code_lines_containing("evaluate_offline(")
+        .into_iter()
+        .filter(|(_, _, line)| !line.starts_with("use "))
+        .collect();
+    assert_eq!(
+        calls.len(),
+        1,
+        "expected exactly one call site of the shared offline evaluator, found {}:
 {}",
-        hits.iter()
+        calls.len(),
+        calls
+            .iter()
             .map(|(path, line, text)| format!("  {}:{line}  {text}", path.display()))
             .collect::<Vec<_>>()
-            .join("
-")
+            .join(
+                "
+"
+            )
+    );
+    let (path, _, _) = &calls[0];
+    assert!(
+        path.ends_with("offline.rs"),
+        "the offline evaluator is called from {}, not from the offline module",
+        path.display()
     );
 
-    // An autonomous dose would have to reach the pump, and the pump is started
-    // from one place: the accept arm of the shared gate, reached only from an
-    // inbound `command.water` or `command.calibrate`. The single-call-site test
-    // above pins that. What remains is that nothing *else* names a decision.
+    // ...and the decision vocabulary is *consumed*, never redefined. A local
+    // `enum OfflineDecision` or a second `RefuseReason` would be the divergence.
     for forbidden in [
-        "OfflineDecision",
-        "RefuseReason",
-        "autonomous_dose",
-        "schedule_dose",
-        "decide_offline",
+        "enum OfflineDecision",
+        "enum RefuseReason",
+        "fn decide_offline",
+        // `fn evaluate_offline` with the shared crate's exact signature. The
+        // simulator's own `evaluate_offline_autonomy` is the *call site* and is
+        // not an implementation, which the trailing `(` distinguishes.
+        "fn evaluate_offline(",
     ] {
         let hits = code_lines_containing(forbidden);
         assert!(
             hits.is_empty(),
-            "`{forbidden}` is a policy *decision*; M2 gathers inputs and stops:
+            "`{forbidden}` must be defined in `rhizo-policy`, not here:
 {}",
             hits.iter()
                 .map(|(path, line, text)| format!("  {}:{line}  {text}", path.display()))
@@ -232,11 +248,51 @@ fn no_offline_evaluator_and_no_autonomous_dose_scheduler_exists() {
         );
     }
 
-    // ...and the seam that M6-019 will connect does exist, so this test is
-    // about a deliberate boundary rather than about an absent feature.
+    // The seam M2 prepared is still the only way the arguments are assembled.
     assert!(
         !code_lines_containing("fn offline_seam").is_empty(),
-        "the integration seam M6-019 connects must exist"
+        "the integration seam must still exist"
+    );
+}
+
+/// An autonomous dose reaches the pump through the *same* path a command does.
+///
+/// `autonomous_dose` is a second **entry**, deliberately, because an isolated
+/// device has no command to validate — but it must not be a second *path*: it
+/// bounds the volume with the shared `bound_dose` (protocol §5.8 steps 10-12,
+/// the one implementation of the firmware ceilings) and then reaches
+/// `begin_dose`, which is where `start_pump` lives.
+#[test]
+fn the_autonomous_path_reuses_the_shared_hard_limits_and_the_shared_dose_start() {
+    let entries: Vec<_> = code_lines_containing("fn autonomous_dose")
+        .into_iter()
+        .collect();
+    assert_eq!(entries.len(), 1, "one autonomous entry point");
+    assert!(entries[0].0.ends_with("command.rs"));
+
+    let bounds: Vec<_> = code_lines_containing("bound_dose(")
+        .into_iter()
+        .filter(|(_, _, line)| !line.starts_with("use "))
+        .collect();
+    assert_eq!(
+        bounds.len(),
+        1,
+        "the firmware ceilings are applied from one place: {bounds:?}"
+    );
+    assert!(bounds[0].0.ends_with("command.rs"));
+
+    let begins: Vec<_> = code_lines_containing("self.begin_dose(")
+        .into_iter()
+        .collect();
+    assert_eq!(
+        begins.len(),
+        2,
+        "a commanded dose and an autonomous one, both through `begin_dose`: {begins:?}"
+    );
+    assert!(
+        begins
+            .iter()
+            .all(|(path, _, _)| path.ends_with("command.rs"))
     );
 }
 

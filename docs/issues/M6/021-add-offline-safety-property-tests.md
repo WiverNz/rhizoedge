@@ -51,12 +51,12 @@ that comes back.
 
 ## Acceptance criteria
 
-- [ ] All listed tests exist and pass.
-- [ ] `cargo test safety_` runs the full suite including SAFETY-013…020.
-- [ ] `PROPTEST_CASES=10000 cargo test safety_014` passes.
-- [ ] The advisory-does-not-block converse is tested.
-- [ ] `proptest-regressions/` is committed.
-- [ ] Each test names the invariant it proves.
+- [x] All listed tests exist and pass.
+- [x] `cargo test safety_` runs the full suite including SAFETY-013…020.
+- [x] `PROPTEST_CASES=10000 cargo test safety_014` passes.
+- [x] The advisory-does-not-block converse is tested.
+- [x] `proptest-regressions/` is committed.
+- [x] Each test names the invariant it proves.
 
 ## Verification
 

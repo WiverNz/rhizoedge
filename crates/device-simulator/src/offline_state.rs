@@ -259,7 +259,7 @@ impl crate::device::Device {
     /// plant — which is itself the fail-closed answer: absence of a policy is
     /// not permission (SAFETY-013).
     #[must_use]
-    pub fn offline_seam(&self, plant_id: &str) -> Option<OfflineSeam<'_>> {
+    pub fn offline_seam(&self, plant_id: &str, observed_ms: u64) -> Option<OfflineSeam<'_>> {
         let policy = self
             .active_policy()?
             .policies
@@ -277,8 +277,52 @@ impl crate::device::Device {
                 self.tank_reading(),
                 self.pump_health(),
             ),
-            elapsed: MonotonicMillis(now),
+            // The monotonic time the device **observed** since the previous
+            // evaluation, which is what §5b's `credit_elapsed` produces: a
+            // reboot credits zero, and zero never advances anything.
+            elapsed: MonotonicMillis(observed_ms),
         })
+    }
+
+    /// The control reading the last evaluation saw, for the audit record.
+    #[must_use]
+    pub fn offline_control_value(&self, plant_id: &str) -> Option<f64> {
+        let policy = self
+            .active_policy()?
+            .policies
+            .iter()
+            .find(|p| p.plant_id.as_str() == plant_id)?;
+        match self
+            .recent_samples()
+            .get(&policy.control_measurement.kind)?
+            .value?
+        {
+            rhizo_mqtt_contract::payload::MeasurementValue::Scalar(value) => Some(value),
+            rhizo_mqtt_contract::payload::MeasurementValue::Boolean(_) => None,
+        }
+    }
+
+    /// Persists the evaluator's updated state.
+    ///
+    /// The window's own elapsed time is device bookkeeping and is not taken
+    /// from the evaluator, which has no opinion about it.
+    pub fn apply_offline_decision(&mut self, next: &OfflineState) {
+        if let Err(error) = self.store_mut().mutate(|state| {
+            state.offline_runtime.apply_offline_state(next);
+        }) {
+            tracing::error!(error = %error, "could not persist the offline evaluator state");
+        }
+    }
+
+    /// Records the current refusal, answering whether it is a *new* one.
+    ///
+    /// One buffered event per change of reason. A leak that lasts a week would
+    /// otherwise fill the audit ring with the same sentence and evict the record
+    /// of the dose that matters (SAFETY-020).
+    pub fn note_offline_refusal(&mut self, reason: Option<rhizo_policy::RefuseReason>) -> bool {
+        let changed = self.last_offline_refusal() != reason;
+        self.set_last_offline_refusal(reason);
+        changed && reason.is_some()
     }
 
     /// The plants this device holds an activated policy for.

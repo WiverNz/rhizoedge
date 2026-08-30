@@ -58,17 +58,17 @@ there is never an interim simulator-specific implementation.
 
 ## Acceptance criteria
 
-- [ ] Every gate step returns its documented `RefuseReason`.
-- [ ] `None` or `Unknown` on any safety input refuses; never permits.
-- [ ] No `_ =>` arm exists on any safety match.
-- [ ] A full cycle runs: confirm, dose, absorb, recheck, second dose, cooldown.
-- [ ] Hysteresis prevents dosing while between `trigger_below` and `resume_above`.
-- [ ] The budget is respected and replenishes only as the window advances.
-- [ ] The function is pure — no clock access anywhere in the crate.
-- [ ] `cargo build -p rhizo-policy --no-default-features` still succeeds.
-- [ ] The simulator calls `rhizo_policy::evaluate_offline` from exactly one place.
-- [ ] An isolated simulator with a valid enabled policy can now schedule bounded autonomous doses.
-- [ ] No simulator-local evaluator exists.
+- [x] Every gate step returns its documented `RefuseReason`.
+- [x] `None` or `Unknown` on any safety input refuses; never permits.
+- [x] No `_ =>` arm exists on any safety match.
+- [x] A full cycle runs: confirm, dose, absorb, recheck, second dose, cooldown.
+- [x] Hysteresis prevents dosing while between `trigger_below` and `resume_above`.
+- [x] The budget is respected and replenishes only as the window advances.
+- [x] The function is pure — no clock access anywhere in the crate.
+- [x] `cargo build -p rhizo-policy --no-default-features` still succeeds.
+- [x] The simulator calls `rhizo_policy::evaluate_offline` from exactly one place.
+- [x] An isolated simulator with a valid enabled policy can now schedule bounded autonomous doses.
+- [x] No simulator-local evaluator exists.
 
 ## Verification
 

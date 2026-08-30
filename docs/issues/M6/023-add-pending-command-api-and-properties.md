@@ -89,17 +89,17 @@ one; the interleaving generator is the only new part.
 
 ## Acceptance criteria
 
-- [ ] A sleeping device's 202 carries `pending_for_device_wake` and **no**
+- [x] A sleeping device's 202 carries `pending_for_device_wake` and **no**
       `command_id`.
-- [ ] A connected device's 202 is unchanged from M6-016.
-- [ ] `GET /intents/{id}` reports every lifecycle state, and carries the
+- [x] A connected device's 202 is unchanged from M6-016.
+- [x] `GET /intents/{id}` reports every lifecycle state, and carries the
       `command_id` once delivery has happened.
-- [ ] The 409 body names the pending intent.
-- [ ] No endpoint accepts an override, force, expedite, or wake parameter.
-- [ ] All six properties pass at `PROPTEST_CASES=10000`.
-- [ ] A mutation that publishes immediately to a sleeping device turns the suite
+- [x] The 409 body names the pending intent.
+- [x] No endpoint accepts an override, force, expedite, or wake parameter.
+- [x] All six properties pass at `PROPTEST_CASES=10000`.
+- [x] A mutation that publishes immediately to a sleeping device turns the suite
       red.
-- [ ] `cargo test safety_` is fully green.
+- [x] `cargo test safety_` is fully green.
 
 ## Verification
 

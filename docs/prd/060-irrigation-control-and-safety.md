@@ -1,6 +1,6 @@
 # PRD 060 — Irrigation Control and Safety
 
-**Milestone:** M6 · **Status:** PLANNED · **Depends on:** M5
+**Milestone:** M6 · **Status:** DELIVERED · **Depends on:** M5
 
 > **Revised 2026-08-26.** M6 now also delivers the **offline evaluator**
 > (`rhizo_policy::evaluate_offline`) and **reconciliation** of events buffered
@@ -248,7 +248,43 @@ POST /api/v1/devices/{id}/commands/calibrate
 ## Data model
 
 Uses `commands`, `watering_events`, and `irrigation_state` from
-[ADR-004](../adr/004-sqlite-edge-persistence-model.md). No new migrations.
+[ADR-004](../adr/004-sqlite-edge-persistence-model.md).
+
+**One migration, `0002_irrigation_control.sql`, and it adds no column to
+`commands`.** What is new is the durable intent a sleeping device's dose waits
+in, the pre-dose baselines recovery and no-delivery detection compare against,
+and the lockout audit fields SAFETY-003 needs:
+
+```text
+command_intents   intent_id, plant_id, device_id, kind, requested_ml, mode,
+                  created_at, intent_expires_at, expected_delivery_after,
+                  state, command_id (NULL until delivery), refusal_reason,
+                  settled_at, updated_at
+                  UNIQUE(plant_id) WHERE state='pending_for_device_wake'
+                                     AND kind='water'
+
+plants            + lockout_cleared_by, lockout_cleared_at, lockout_until
+irrigation_state  + pre_dose_vwc, pre_dose_grams
+```
+
+`command_intents.command_id` being **nullable** is the reviewer's check that an
+intent is not a command: no `command_id` exists until the wake mints one, so
+there is still exactly one persist-before-publish moment per command and a
+delivery retry still reuses the id allocated at that moment.
+
+### Intent lifecycle
+
+```text
+pending_for_device_wake ──delivery──▶ sent            (command_id assigned)
+                        ──gate──────▶ refused         (refusal_reason recorded)
+                        ──sweep─────▶ expired_before_wake
+```
+
+Terminal states are terminal. The full safety gate re-runs **at delivery**
+against current inputs, which makes this path stricter than the immediate one;
+`edge.time` is published before the command on every wake delivery, and a
+`clock_unsynced` refusal inside one awake window is retryable rather than
+terminal.
 
 The rolling-window query, which is the SAFETY-006 mechanism:
 
@@ -368,29 +404,33 @@ The heaviest test investment in the project.
 
 ## Acceptance criteria
 
-- [ ] `cargo test safety_` passes with every SAFETY-001…007, 010, 012 test green.
-- [ ] The full cycle scenario (SCEN-002) produces the exact documented state
+- [x] `cargo test safety_` passes with every SAFETY-001…007, 010, 012 test green.
+- [x] The full cycle scenario (SCEN-002) produces the exact documented state
       sequence and never exceeds `max_daily_ml`.
-- [ ] Publishing the same command three times causes one actuation and one
+- [x] Publishing the same command three times causes one actuation and one
       `watering_event`.
-- [ ] `POST /water` during a leak returns **409**, and no MQTT message is
+- [x] `POST /water` during a leak returns **409**, and no MQTT message is
       published.
-- [ ] Clearing a leak lockout while the leak is active returns 409.
-- [ ] Killing the edge after publish and restarting produces no second command
+- [x] Clearing a leak lockout while the leak is active returns 409.
+- [x] Killing the edge after publish and restarting produces no second command
       and exactly one `watering_event`.
-- [ ] A plant with no tank sensor never receives an automatic dose.
-- [ ] A plant with a stale sample never receives an automatic dose, but **can**
+- [x] A plant with no tank sensor never receives an automatic dose.
+- [x] A plant with a stale sample never receives an automatic dose, but **can**
       be watered manually.
-- [ ] `evaluate` has no `_ =>` arm on any safety match (reviewed and asserted by
-      a compile-fail test).
-- [ ] `PROPTEST_CASES=10000 cargo test safety_006` passes.
-- [ ] The shared offline evaluator, its sole simulator call site, reconciliation,
+- [x] `evaluate` has no `_ =>` arm on any safety match (reviewed and asserted by
+      `safety_012_no_catch_all_arm_on_a_safety_match`, which reads the gate's own
+      source; a `trybuild` compile-fail case was not added — see
+      [docs/reports/M6.md](../reports/M6.md) §Deviations).
+- [x] `PROPTEST_CASES=10000 cargo test safety_006` passes.
+- [x] The shared offline evaluator, its sole simulator call site, reconciliation,
       and SAFETY-013…020 property coverage required by M6-019…M6-021 are green.
-- [ ] No MQTT water command is published while reconciliation is incomplete.
-- [ ] A `command.result` acknowledged to a device survives an edge crash between
+- [x] No MQTT water command is published while reconciliation is incomplete.
+- [x] A `command.result` acknowledged to a device survives an edge crash between
       receipt and commit — the device's retry stops on the edge's durable
       commit, not on the broker PUBACK. Carried forward from the M3 audit; a
-      lost delivered dose under-counts the SAFETY-006 budget.
+      lost delivered dose under-counts the SAFETY-006 budget. Closed by manual
+      acknowledgement on the ingress: the PUBACK is sent by the pipeline after
+      its transaction commits.
 
 ## Dependencies
 

@@ -45,12 +45,12 @@ that would cross the cap is not issued at all.
 
 ## Acceptance criteria
 
-- [ ] The sum comes from `watering_events`, with no counter anywhere.
-- [ ] Only automatic and recommended modes count.
-- [ ] A restart does not reset the total.
-- [ ] A dose that would cross the cap is not issued.
-- [ ] `interrupted` credits the full `requested_ml`.
-- [ ] **`safety_006_rolling_24h_cap_never_exceeded` passes at 10 000 cases.**
+- [x] The sum comes from `watering_events`, with no counter anywhere.
+- [x] Only automatic and recommended modes count.
+- [x] A restart does not reset the total.
+- [x] A dose that would cross the cap is not issued.
+- [x] `interrupted` credits the full `requested_ml`.
+- [x] **`safety_006_rolling_24h_cap_never_exceeded` passes at 10 000 cases.**
 
 ## Verification
 

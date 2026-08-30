@@ -44,12 +44,12 @@ The struct must have no field derived from cloud state, ever.
 
 ## Acceptance criteria
 
-- [ ] `IrrigationInputs` matches PRD 060's definition field for field.
-- [ ] Every absent-able input is `Option` or an explicit tri-state.
-- [ ] `LeakState` has an `Unknown` variant distinct from `Clear`.
-- [ ] **No field is derived from cloud state.**
-- [ ] `rhizo-domain` has no dependency on `rhizo-cloud-client`.
-- [ ] The types are pure data with no methods that perform I/O.
+- [x] `IrrigationInputs` matches PRD 060's definition field for field.
+- [x] Every absent-able input is `Option` or an explicit tri-state.
+- [x] `LeakState` has an `Unknown` variant distinct from `Clear`.
+- [x] **No field is derived from cloud state.**
+- [x] `rhizo-domain` has no dependency on `rhizo-cloud-client`.
+- [x] The types are pure data with no methods that perform I/O.
 
 ## Verification
 

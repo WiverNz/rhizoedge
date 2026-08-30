@@ -298,12 +298,16 @@ fn the_seam_offers_exactly_the_shared_evaluators_arguments() {
     device.tick(10_000);
 
     let seam = device
-        .offline_seam("monstera-01")
+        .offline_seam("monstera-01", 10_000)
         .expect("an activated policy is reachable through the seam");
 
     assert_eq!(seam.policy.plant_id.as_str(), "monstera-01");
     assert_eq!(seam.policy.policy_version, 7);
-    assert_eq!(seam.elapsed, MonotonicMillis(device.uptime_ms()));
+    assert_eq!(
+        seam.elapsed,
+        MonotonicMillis(10_000),
+        "the seam carries the monotonic time the device *observed*, which is what \n         `credit_elapsed` produces and what a reboot credits as zero"
+    );
     assert_eq!(seam.state.cooldown_remaining, MonotonicMillis(0));
 
     // The inputs are gathered, with real ages, and nothing is defaulted.
@@ -347,54 +351,147 @@ fn the_seam_is_absent_for_a_plant_with_no_activated_policy() {
     let mut device = Device::new(&settings_at(&state_file, &[]));
     device.on_connected().unwrap();
     assert!(
-        device.offline_seam("monstera-01").is_none(),
+        device.offline_seam("monstera-01", 0).is_none(),
         "absence of a policy is not permission (SAFETY-013)"
     );
     assert!(device.policy_plants().is_empty());
 
     device.on_message(&policy_topic(), &policy_envelope(7));
     assert_eq!(device.policy_plants(), vec!["monstera-01".to_owned()]);
-    assert!(device.offline_seam("fern-02").is_none());
+    assert!(device.offline_seam("fern-02", 0).is_none());
 }
 
-// ------------------------------------------------ M2 decides nothing at all
+// ------------------------------------- M6-019: the evaluator is now installed
 
-/// The boundary. An enabled, valid, activated policy on a bone-dry plant, for a
-/// simulated week, alone the whole time — and not one millilitre.
+/// The boundary M2 recorded, moved.
+///
+/// Through M5 this test asserted the *opposite*: an enabled, valid, activated
+/// policy on a bone-dry isolated plant was completely inert, because no
+/// evaluator existed. M6-019 supplies the one shared
+/// `rhizo_policy::evaluate_offline` and the simulator's single call site, so the
+/// same setup now waters — bounded by the policy, by the per-cycle dose limit,
+/// by the rolling window, and by the firmware ceilings.
+///
+/// Both halves are asserted here: that it *does* water, and that what it does is
+/// bounded. "It waters" alone would be a weaker claim than the milestone makes.
 #[test]
-fn an_isolated_device_with_an_enabled_policy_never_waters_in_m2() {
+fn an_isolated_device_with_an_enabled_policy_waters_within_its_bounds() {
     let (mut device, _) = provisioned(&[]);
     device.on_disconnected();
     device.environment_mut().soil.set_vwc(5.0);
     device.environment_mut().tank.set_leak(LeakState::Clear);
 
     let tank_before = device.environment().tank.remaining_ml();
-    // Two simulated days in ten-minute steps: long enough to pass the policy's
-    // six-hour cooldown and its confirmation window many times over, which is
-    // what makes "no dose" a meaningful result rather than "not yet".
-    for _ in 0..(2 * 24 * 6) {
+    // Twenty-three simulated hours in ten-minute steps, kept continuously dry so
+    // the trigger condition never lapses. Deliberately short of a full window:
+    // the budget replenishes only when the device has *observed* a whole window
+    // pass, and this test is about what one window permits.
+    for _ in 0..(23 * 6) {
         let published = device.tick(600_000);
         assert!(published.is_empty(), "isolated, so nothing is published");
-        assert!(!device.pump_running(), "M2 schedules no autonomous dose");
-        // Keep it dry, so the trigger condition is continuously satisfied.
         device.environment_mut().soil.set_vwc(5.0);
     }
 
-    assert_eq!(
-        device.environment().tank.remaining_ml(),
-        tank_before,
-        "not one millilitre moved in two days of ideal dosing conditions"
+    assert!(
+        device.environment().tank.remaining_ml() < tank_before,
+        "an isolated device with a validated, enabled policy waters the plant"
     );
-    assert_eq!(device.delivered_today_ml(), 0.0);
-    assert_eq!(
-        device.store().state().offline_runtime.dose_count,
-        0,
-        "no dose was even counted"
+    assert!(
+        device.delivered_today_ml() > 0.0,
+        "and the water is counted against the device's own rolling total"
+    );
+
+    // ...and it is bounded. The policy allows 35 ml twice per cycle with a
+    // six-hour cooldown — 70 ml per cycle, four cycles a day — under a 300 ml
+    // rolling window cap that the device may not cross inside one window.
+    let delivered = tank_before - device.environment().tank.remaining_ml();
+    assert!(
+        delivered <= 300.0,
+        "the rolling window cap bounds a day of ideal dosing conditions, got {delivered} ml"
+    );
+    assert!(
+        device
+            .store()
+            .state()
+            .offline_runtime
+            .budget_window
+            .delivered_ml
+            <= 300.0,
+        "and the device's own accumulator agrees"
+    );
+    assert!(
+        device.store().state().offline_runtime.dose_count <= 2,
+        "the per-cycle dose limit is never exceeded"
     );
     assert!(
         device.store().state().in_flight_dose.is_none(),
-        "and none was ever begun"
+        "no dose is left in flight"
     );
+
+    // The record of what the machine did to a living plant is buffered, because
+    // there is nobody to publish it to — which is what being isolated means.
+    let buffered = device.buffered_events();
+    assert!(buffered > 0, "the autonomous doses are in the audit buffer");
+}
+
+/// SAFETY-013: absence of a policy is not permission.
+#[test]
+fn an_isolated_device_with_no_policy_never_waters() {
+    let state_file = scratch_state_file().display().to_string();
+    let mut device = Device::new(&settings_at(&state_file, &[]));
+    device.on_disconnected();
+    device.environment_mut().soil.set_vwc(5.0);
+    let tank_before = device.environment().tank.remaining_ml();
+    for _ in 0..(24 * 6) {
+        device.tick(600_000);
+        device.environment_mut().soil.set_vwc(5.0);
+    }
+    assert!(device.policy_plants().is_empty());
+    assert_eq!(device.environment().tank.remaining_ml(), tank_before);
+    assert_eq!(device.delivered_today_ml(), 0.0);
+}
+
+/// A **connected** device takes its instructions from the Edge. Evaluating
+/// while connected would create the second control path ADR-015 is careful not
+/// to create.
+#[test]
+fn a_connected_device_never_waters_autonomously() {
+    let (mut device, _) = provisioned(&[]);
+    device.on_connected().unwrap();
+    device.environment_mut().soil.set_vwc(5.0);
+    let tank_before = device.environment().tank.remaining_ml();
+    for _ in 0..(24 * 6) {
+        device.tick(600_000);
+        device.environment_mut().soil.set_vwc(5.0);
+    }
+    assert_eq!(
+        device.environment().tank.remaining_ml(),
+        tank_before,
+        "a connected device waters only when the edge tells it to"
+    );
+}
+
+/// SAFETY-003 and SAFETY-004 on the offline path: a leak or an empty reservoir
+/// refuses an autonomous dose exactly as it refuses a commanded one.
+#[test]
+fn a_leak_or_an_empty_tank_refuses_an_autonomous_dose() {
+    for fault in ["leak", "tank-empty"] {
+        let (mut device, _) = provisioned(&[]);
+        device.on_disconnected();
+        device.enable_fault(fault.parse::<Fault>().unwrap());
+        device.environment_mut().soil.set_vwc(5.0);
+        let tank_before = device.environment().tank.remaining_ml();
+        for _ in 0..(24 * 6) {
+            device.tick(600_000);
+            device.environment_mut().soil.set_vwc(5.0);
+        }
+        assert_eq!(
+            device.environment().tank.remaining_ml(),
+            tank_before,
+            "`{fault}` must refuse every autonomous dose"
+        );
+        assert_eq!(device.delivered_today_ml(), 0.0, "{fault}");
+    }
 }
 
 #[test]

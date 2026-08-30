@@ -26,27 +26,44 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 
 | ID | Invariant | Primary enforcer | Enforced at | Status |
 |---|---|---|---|---|
-| SAFETY-001 | A duplicate watering command never causes duplicate physical watering | Device + Edge | M6 (edge), M9 (device) | PLANNED |
-| SAFETY-002 | An expired watering command never executes | Device | M6 (sim), M9 (fw) | PLANNED |
-| SAFETY-003 | Leak detected disables all watering | Edge + Device | M6 | PLANNED |
-| SAFETY-004 | Tank below minimum disables watering | Edge + Device | M6 | PLANNED |
-| SAFETY-005 | Stale or invalid moisture disables automatic watering | Edge | M6 | PLANNED |
-| SAFETY-006 | Daily automatic water never exceeds the configured maximum | Edge | M6 | PLANNED |
-| SAFETY-007 | The device hard maximum cannot be bypassed by edge or cloud | Device firmware | M6 (sim), M11 (hw) | PLANNED |
+| SAFETY-001 | A duplicate watering command never causes duplicate physical watering | Device + Edge | M6 (edge), M9 (device) | ENFORCED (edge, simulator) |
+| SAFETY-002 | An expired watering command never executes | Device | M6 (sim), M9 (fw) | ENFORCED (simulator) |
+| SAFETY-003 | Leak detected disables all watering | Edge + Device | M6 | ENFORCED |
+| SAFETY-004 | Tank below minimum disables watering | Edge + Device | M6 | ENFORCED |
+| SAFETY-005 | Stale or invalid moisture disables automatic watering | Edge | M6 | ENFORCED |
+| SAFETY-006 | Daily automatic water never exceeds the configured maximum | Edge | M6 | ENFORCED |
+| SAFETY-007 | The device hard maximum cannot be bypassed by edge or cloud | Device firmware | M6 (sim), M11 (hw) | ENFORCED (validator, simulator) |
 | SAFETY-008 | Cloud unavailability never disables local monitoring | Edge | M7 | PLANNED |
 | SAFETY-009 | Cloud unavailability never bypasses local watering safety | Edge | M7 | PLANNED |
-| SAFETY-010 | Edge restart never re-executes a completed command | Edge | M6 | PLANNED |
+| SAFETY-010 | Edge restart never re-executes a completed command | Edge | M6 | ENFORCED |
 | SAFETY-011 | Device restart during watering converges to pump-off | Device | M9 (fw), M11 (hw) | PLANNED |
-| SAFETY-012 | Uncertainty defaults to not watering | Edge domain + device | M6 | PLANNED |
-| SAFETY-013 | Autonomous action requires a validated persisted policy | Device | M6 (sim), M9 (fw) | PLANNED |
-| SAFETY-014 | Offline doses obey the same caps and hard limits as commanded doses | Device + Edge | M6 | PLANNED |
-| SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | PLANNED |
-| SAFETY-016 | Offline actions reconcile exactly once; no dose spans the seam twice | Edge + Device | M6 (edge), M9 (device) | PLANNED |
-| SAFETY-017 | A required measurement that is missing or stale blocks autonomous action | Device | M6 | PLANNED |
+| SAFETY-012 | Uncertainty defaults to not watering | Edge domain + device | M6 | ENFORCED |
+| SAFETY-013 | Autonomous action requires a validated persisted policy | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator) |
+| SAFETY-014 | Offline doses obey the same caps and hard limits as commanded doses | Device + Edge | M6 | ENFORCED |
+| SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator) |
+| SAFETY-016 | Offline actions reconcile exactly once; no dose spans the seam twice | Edge + Device | M6 (edge), M9 (device) | ENFORCED (edge) |
+| SAFETY-017 | A required measurement that is missing or stale blocks autonomous action | Device | M6 | ENFORCED |
 | SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | ENFORCED |
 | SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | ENFORCED |
+
+**Fourteen invariants moved to `ENFORCED` on 2026-08-31**, when M6 landed the
+safety gate, the irrigation machine, the command lifecycle, the shared offline
+evaluator, and reconciliation. Four of them are enforced for the halves M6 owns
+and name the milestone that completes them:
+
+- **SAFETY-001** holds on the edge (`commands.command_id` as the primary key, a
+  terminal-status check on every result) and in the simulator's dedup ring. The
+  firmware half is M9.
+- **SAFETY-002** and **SAFETY-007** are enforced by the shared validator and by
+  the simulator that calls it. M9 puts the same function in firmware; M11 adds
+  the hardware backstop.
+- **SAFETY-013** and **SAFETY-015** are enforced by `rhizo_policy` and by the
+  simulator's single call site. M9 adds the firmware NVS path.
+- **SAFETY-016** is enforced on the edge — replay is idempotent on `event_id`
+  and no dose is issued to a reconciling plant. The device half shipped in M2.
+
 
 Milestone M8 re-verifies SAFETY-001 … SAFETY-010 and SAFETY-012 end-to-end in
 the full Docker environment, and SAFETY-013 … SAFETY-020 in its network-isolation
@@ -111,8 +128,11 @@ between publish and result; device reboot between receipt and result publish.
 - Property test: N random duplications of a command sequence produce actuation
   count == distinct `command_id` count.
 
-**Becomes enforced.** M6 for edge and simulator; M9 for firmware; re-verified in
-M8 scenario `duplicate-command`.
+**Enforced since M6 (2026-08-31)** for the edge and the simulator; M9 for
+firmware; re-verified in M8 scenario `duplicate-command`. The edge half is
+`safety_001_duplicate_command_single_actuation` (`edge-controller`, real
+broker): one command, three identical results with distinct `message_id`s, one
+`watering_event`.
 
 ---
 
@@ -192,7 +212,11 @@ restarting; leak sensor asserting between the safety check and actuation
   endpoint returns 409 rather than issuing.
 - `safety_003_leak_requires_explicit_reset` (unit).
 
-**Becomes enforced.** M6. Real sensor in M11.
+**Enforced since M6 (2026-08-31).** Real sensor in M11.
+`safety_003_leak_blocks_all_modes` is the property over random states and modes;
+`safety_003_leak_blocks_manual_api` is the API half, and the broker-backed
+`safety_003_leak_blocks_manual_api_with_nothing_published` adds the assertion a
+status code cannot make — that no message appears on any command topic.
 
 ---
 
@@ -219,7 +243,10 @@ telemetry stale.
 - `safety_004_unknown_tank_blocks_dose` (unit) — absence is not permission.
 - M8 scenario `tank-empty`.
 
-**Becomes enforced.** M6. Real sensor in M11.
+**Enforced since M6 (2026-08-31).** Real sensor in M11.
+`safety_004_tank_unknown_or_low_blocks` is the property; the gate answers
+`Uncertain` for a level it cannot read and `TankLow` for one it measured, which
+is the same distinction protocol §5.8 step 7 draws.
 
 ---
 
@@ -265,7 +292,9 @@ a constant; NaN readings; a battery device declaring a very long wake interval.
 - `safety_005_invalid_sample_blocks_auto` (unit: NaN, out-of-range, absent).
 - M8 scenarios `stale-sensor`, `invalid-sensor-value`.
 
-**Becomes enforced.** M6.
+**Enforced since M6 (2026-08-31).** `safety_005_stale_or_invalid_blocks_auto`
+is the property, and it asserts both halves: automatic watering is blocked, and
+manual watering is not.
 
 ---
 
@@ -297,7 +326,9 @@ issuing a dose; clock adjustment; partial delivery accounting.
   sum never exceeds the cap.
 - `safety_006_cap_survives_restart` (integration, M6).
 
-**Becomes enforced.** M6.
+**Enforced since M6 (2026-08-31).** `safety_006_rolling_24h_cap_never_exceeded`
+passes at `PROPTEST_CASES=10000` against histories containing restarts, forward
+and backward clock steps, interrupted doses, and duplicate results.
 
 ---
 
@@ -338,8 +369,10 @@ compromised cloud; an operator typo; edge software regression.
   must be no more permissive than firmware.
 - M11: hardware-in-the-loop test with a measuring cup.
 
-**Becomes enforced.** M6 for the shared validator and simulator; M9 for
-firmware; M11 for real hardware including the watchdog.
+**Enforced since M6 (2026-08-31)** for the shared validator and the simulator;
+M9 for firmware; M11 for real hardware including the watchdog. M6 extracted
+steps 10-12 into `rhizo_mqtt_contract::safety::bound_dose` so the *autonomous*
+actuation path applies the same ceilings from the same function.
 
 ---
 
@@ -421,7 +454,9 @@ terminal command states.
   after publish, restart, assert no second command and no second event.
 - `safety_010_terminal_commands_never_reissued` (property).
 
-**Becomes enforced.** M6.
+**Enforced since M6 (2026-08-31).** `safety_010_restart_mid_command_no_replay`
+and the broker-backed `restart_mid_command` both assert the two halves: no
+second command, and exactly one `watering_event`.
 
 ---
 
@@ -490,7 +525,9 @@ types, partially migrated databases, profile fields added later, corrupt rows.
   never `IssueDose` when any safety-relevant input is `None`.
 - A compile-time guard: the gate `match` is exhaustive with no catch-all arm.
 
-**Becomes enforced.** M6.
+**Enforced since M6 (2026-08-31).** `safety_012_missing_input_never_waters` is
+the property, and `safety_012_no_catch_all_arm_on_a_safety_match` is its
+compile-time half, asserted against the gate's own source.
 
 ---
 
@@ -525,7 +562,8 @@ removed; operator disabled autonomy but the device has not yet been told.
 - `safety_013_disabled_policy_never_actuates` (unit).
 - SCEN-093, SCEN-094.
 
-**Becomes enforced.** M6 (evaluator + simulator); M9 (firmware NVS path).
+**Enforced since M6 (2026-08-31)** by the evaluator and the simulator; M9 adds
+the firmware NVS path.
 
 ---
 
@@ -563,7 +601,8 @@ elapsed time; repeated reboots during isolation.
   by `FIRMWARE_MAX_ML_PER_RUN`.
 - SCEN-096, SCEN-101.
 
-**Becomes enforced.** M6, re-verified M8, hardware M11.
+**Enforced since M6 (2026-08-31)**, re-verified M8, hardware M11.
+`safety_014_combined_budget_never_exceeded` passes at `PROPTEST_CASES=10000`.
 
 ---
 
@@ -609,7 +648,9 @@ monotonic counter.
 - `safety_015_monotonic_overflow_is_safe` (unit).
 - SCEN-097, SCEN-098.
 
-**Becomes enforced.** M6 (evaluator); M9 (firmware persistence).
+**Enforced since M6 (2026-08-31)** by the evaluator; M9 adds firmware
+persistence. `evaluate_offline` takes credited elapsed time as a parameter and
+the crate cannot read a clock, so this is structural rather than disciplined.
 
 ---
 
@@ -653,7 +694,9 @@ after replay but before acknowledgement; two reconnections racing.
 - `safety_016_edge_crash_midreplay_loses_nothing` (integration).
 - SCEN-100, SCEN-101, SCEN-102.
 
-**Becomes enforced.** M6 (edge side); M9 (device side); re-verified M8.
+**Enforced since M6 (2026-08-31)** on the edge; the device side shipped in M2;
+re-verified M8. The hold is derived from `replay_progress` rather than stored in
+a flag, so a routine `device.status` cannot clear it.
 
 ---
 
@@ -688,7 +731,10 @@ bound is missing (must **not** block); uncalibrated sensor reporting a value.
 - `safety_017_unbound_kind_is_irrelevant` (unit).
 - SCEN-099, SCEN-105.
 
-**Becomes enforced.** M6.
+**Enforced since M6 (2026-08-31)**, on both the offline path
+(`safety_017_missing_required_blocks`) and the edge's own gate, which reads the
+`required` role from the plant's bindings. The converse,
+`safety_017_missing_advisory_does_not_block`, is asserted alongside it.
 
 ---
 

@@ -38,12 +38,12 @@ so what is published is exactly what was recorded.
 
 ## Acceptance criteria
 
-- [ ] A command is published with a valid envelope and QoS 1.
-- [ ] `retain` is false.
-- [ ] `published_at` is recorded.
-- [ ] The published `command_id` matches the persisted row.
-- [ ] Tare and calibrate use the same path.
-- [ ] No retained message appears on any command topic after a cycle.
+- [x] A command is published with a valid envelope and QoS 1.
+- [x] `retain` is false.
+- [x] `published_at` is recorded.
+- [x] The published `command_id` matches the persisted row.
+- [x] Tare and calibrate use the same path.
+- [x] No retained message appears on any command topic after a cycle.
 
 ## Verification
 

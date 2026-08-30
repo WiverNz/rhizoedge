@@ -267,8 +267,50 @@ CREATE TABLE irrigation_state (
     last_cycle_completed_at INTEGER,
     wait_until             INTEGER,
     active_command_id      TEXT REFERENCES commands(command_id),
-    updated_at             INTEGER NOT NULL
+    updated_at             INTEGER NOT NULL,
+    -- Added by 0002 (M6): the readings recovery and no-delivery detection
+    -- compare against, taken at the *start* of a cycle rather than before each
+    -- dose, so two unresponsive doses look like two.
+    pre_dose_vwc           REAL,
+    pre_dose_grams         REAL
 );
+
+-- Command intents (added by 0002, M6 / ADR-018 §3) ---------------------------
+--
+-- A dose an operator asked for while a battery device was asleep. **An intent is
+-- not a command**, and the nullable `command_id` is where that is visible: no
+-- command exists until the wake mints one, so there is still exactly one
+-- persist-before-publish moment per command and a delivery retry still reuses
+-- the id allocated at that moment. `commands` gained no column.
+--
+-- Two expiries, deliberately separate. `intent_expires_at` is the edge's clock
+-- and never reaches a device; the wire TTL is unchanged at 120 s and is what the
+-- device validates (SAFETY-002).
+CREATE TABLE command_intents (
+    intent_id               TEXT PRIMARY KEY,      -- UUIDv7
+    plant_id                TEXT NOT NULL REFERENCES plants(plant_id),
+    device_id               TEXT NOT NULL,
+    kind                    TEXT NOT NULL,         -- 'water' only, in v1
+    requested_ml            REAL NOT NULL,
+    mode                    TEXT NOT NULL,
+    created_at              INTEGER NOT NULL,
+    intent_expires_at       INTEGER NOT NULL,
+    expected_delivery_after INTEGER,
+    state                   TEXT NOT NULL,         -- pending_for_device_wake |
+                                                   -- sent | refused |
+                                                   -- expired_before_wake
+    command_id              TEXT REFERENCES commands(command_id),  -- NULL until
+                                                                  -- delivery
+    refusal_reason          TEXT,
+    settled_at              INTEGER,
+    updated_at              INTEGER NOT NULL
+);
+-- At most one open water intent per plant. The rolling cap would bound the total
+-- anyway, but arriving at the cap by accident is not a design.
+CREATE UNIQUE INDEX uq_open_water_intent
+    ON command_intents(plant_id)
+    WHERE state = 'pending_for_device_wake' AND kind = 'water';
+CREATE INDEX idx_intents_open ON command_intents(state, intent_expires_at);
 
 -- Cloud outbox ---------------------------------------------------------------
 CREATE TABLE pending_cloud_events (
@@ -371,6 +413,16 @@ not merely normal QoS session timing.
 never edited after being applied anywhere. Migrations run automatically at
 startup before any other subsystem — a controller that cannot migrate must not
 serve traffic or make decisions.
+
+Two files exist at the time of writing. `0001_initial.sql` is the canonical
+pre-release baseline that M5 squashed into
+(`versioning-policy.md` §4 permits that while no release exists), and
+`0002_irrigation_control.sql` is M6's additive change: `command_intents`, the
+pre-dose baselines above, and the lockout audit fields
+(`plants.lockout_cleared_by`, `lockout_cleared_at`, `lockout_until`). M6 chose a
+new migration rather than another squash so an existing development database
+upgrades in place — which also means the automatic pre-migration backup is
+exercised by a real version change rather than only by a fresh create.
 
 ## Alternatives considered
 

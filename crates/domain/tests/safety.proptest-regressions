@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 36f462ed77754c1559118b8249151a6e4bd3a617be9ff4da9bf58da2fa37a87d # shrinks to history = [Dose, Settle { status: Completed, delivered_ml: 60.16524 }, Dose, Settle { status: Completed, delivered_ml: 79.374825 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }, Dose, Settle { status: Completed, delivered_ml: 25.143877 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }, ClockStep { minutes: -1 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }, Dose, Settle { status: Completed, delivered_ml: 35.819748 }, Advance { minutes: 1 }]
+cc bbd2520b4509cafb9ba4567dd15877cfc4d68abbd40242baadd8364610640d49 # shrinks to history = [Dose, Settle { status: Completed, delivered_ml: 30.036446 }, Dose, Settle { status: Completed, delivered_ml: 58.004654 }, Dose, Settle { status: Completed, delivered_ml: 49.41537 }, Dose, Settle { status: Completed, delivered_ml: 42.506153 }, Dose, Settle { status: Completed, delivered_ml: 65.98455 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }, Advance { minutes: 522 }, Advance { minutes: 472 }, Dose, Advance { minutes: 446 }, Settle { status: Interrupted, delivered_ml: 0.0 }, Dose, Settle { status: Interrupted, delivered_ml: 0.0 }]

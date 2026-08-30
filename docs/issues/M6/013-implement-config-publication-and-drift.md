@@ -42,12 +42,12 @@ The config payload must contain no safety limit field (M1-007).
 
 ## Acceptance criteria
 
-- [ ] `PUT` validates, bumps the version, and publishes retained.
-- [ ] A late-connecting device receives the current config.
-- [ ] `config_version` increases monotonically.
-- [ ] A config violating a firmware limit is rejected with 422.
-- [ ] Lost retained state triggers republication.
-- [ ] The published payload contains no safety limit field.
+- [x] `PUT` validates, bumps the version, and publishes retained.
+- [x] A late-connecting device receives the current config.
+- [x] `config_version` increases monotonically.
+- [x] A config violating a firmware limit is rejected with 422.
+- [x] Lost retained state triggers republication.
+- [x] The published payload contains no safety limit field.
 
 ## Verification
 
