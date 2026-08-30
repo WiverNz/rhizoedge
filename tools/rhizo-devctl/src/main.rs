@@ -160,6 +160,8 @@ enum EdgeCommand {
     DeviceState(DeviceArgs),
     /// Show the latest recommendation for one plant.
     PlantRecommendation(PlantArgs),
+    /// Show the latest persisted value for every measurement stream of a device.
+    LatestMeasurements(DeviceArgs),
 }
 
 #[derive(Debug, Args)]
@@ -455,9 +457,11 @@ fn state_u64(state: &Value, field: &str) -> Result<u64> {
         .with_context(|| format!("simulator state field `{field}` was not an unsigned integer"))
 }
 
+#[derive(Debug)]
 enum Output {
     Json(Value),
     Confirmation(String),
+    Text(String),
 }
 
 async fn simulator_command(addresses: &Addresses, command: SimulatorCommand) -> Result<Output> {
@@ -569,6 +573,98 @@ async fn edge_command(addresses: &Addresses, command: EdgeCommand) -> Result<Out
             .await
             .map(Output::Json)
         }
+        EdgeCommand::LatestMeasurements(args) => {
+            validate_path_id("device", &args.device_id)?;
+            let response = get(
+                addresses.edge,
+                &format!("/api/v1/devices/{}/measurements/latest", args.device_id),
+            )
+            .await?;
+            format_latest_measurements(&response).map(Output::Text)
+        }
+    }
+}
+
+fn format_latest_measurements(response: &Value) -> Result<String> {
+    let device_id = response
+        .get("device_id")
+        .and_then(Value::as_str)
+        .context("Edge response field `device_id` was not a string")?;
+    let mut measurements = response
+        .get("measurements")
+        .and_then(Value::as_array)
+        .context("Edge response field `measurements` was not an array")?
+        .iter()
+        .collect::<Vec<_>>();
+    measurements.sort_by_key(|measurement| {
+        (
+            measurement
+                .get("sensor_id")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            measurement
+                .get("point")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            measurement
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        )
+    });
+    let mut output = format!("Latest measurements for {device_id}\n");
+    if measurements.is_empty() {
+        output.push_str("\nNo persisted measurements found.");
+        return Ok(output);
+    }
+    for measurement in measurements {
+        let sensor = match measurement.get("sensor_id") {
+            Some(Value::String(sensor)) => sensor.as_str(),
+            Some(Value::Null) => "<none>",
+            _ => bail!("measurement field `sensor_id` was not a string or null"),
+        };
+        let point = required_string(measurement, "point")?;
+        let kind = required_string(measurement, "kind")?;
+        let quality = required_string(measurement, "quality")?;
+        let unit = required_string(measurement, "unit")?;
+        let value = measurement
+            .get("value")
+            .context("measurement field `value` was missing")?;
+        let value = match value {
+            Value::Bool(value) => value.to_string(),
+            Value::Number(value) => value.to_string(),
+            Value::Null => "unavailable".to_owned(),
+            _ => bail!("measurement field `value` was not numeric, boolean, or null"),
+        };
+        let age = measurement
+            .get("age_seconds")
+            .and_then(Value::as_f64)
+            .context("measurement field `age_seconds` was not a number")?;
+        let unit = display_unit(unit);
+        let value_with_unit = if unit.is_empty() {
+            value
+        } else {
+            format!("{value} {unit}")
+        };
+        output.push_str(&format!(
+            "\n{sensor}/{point}/{kind}  {value_with_unit}  quality={quality}  age={age:.1}s"
+        ));
+    }
+    Ok(output)
+}
+
+fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .with_context(|| format!("measurement field `{field}` was not a string"))
+}
+
+fn display_unit(unit: &str) -> &str {
+    match unit {
+        "vwc_percent" => "%VWC",
+        "percent" => "%",
+        other => other,
     }
 }
 
@@ -838,6 +934,7 @@ async fn main() -> Result<()> {
     match output {
         Output::Json(value) => println!("{}", pretty(&value)?),
         Output::Confirmation(message) => println!("{message}"),
+        Output::Text(message) => println!("{message}"),
     }
     Ok(())
 }
@@ -934,6 +1031,65 @@ mod tests {
     fn parses_a_successful_json_response() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
         assert_eq!(parse_response(response).unwrap()["status"], "ok");
+    }
+
+    #[test]
+    fn latest_measurements_format_numeric_boolean_and_sort_by_full_identity() {
+        let response = json!({
+            "device_id":"plant-node-01",
+            "measurements":[
+                {"sensor_id":"z-leak","point":"reservoir","kind":"leak_state","value":true,"unit":"","quality":"good","age_seconds":1.24},
+                {"sensor_id":"a-soil","point":"pot","kind":"soil_moisture","value":20.0,"unit":"vwc_percent","quality":"good","age_seconds":1.16}
+            ]
+        });
+        let text = format_latest_measurements(&response).unwrap();
+        assert!(text.contains("a-soil/pot/soil_moisture  20.0 %VWC  quality=good  age=1.2s"));
+        assert!(text.contains("z-leak/reservoir/leak_state  true  quality=good  age=1.2s"));
+        assert!(text.find("a-soil").unwrap() < text.find("z-leak").unwrap());
+    }
+
+    #[test]
+    fn latest_measurements_empty_result_is_successful_and_clear() {
+        let text = format_latest_measurements(&json!({
+            "device_id":"plant-node-01",
+            "measurements":[]
+        }))
+        .unwrap();
+        assert!(text.contains("No persisted measurements found."));
+    }
+
+    #[test]
+    fn latest_measurements_reject_malformed_edge_responses() {
+        let error = format_latest_measurements(&json!({
+            "device_id":"plant-node-01",
+            "measurements":[{"sensor_id":"sensor-1"}]
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("point"));
+    }
+
+    #[tokio::test]
+    async fn latest_measurements_http_failure_is_nonzero_error() {
+        let (address, server) = mock_http_server(vec![(
+            500,
+            r#"{"error":{"code":"storage_error","message":"measurement query failed"}}"#,
+        )])
+        .await;
+        let addresses = Addresses {
+            edge: address,
+            simulator: address,
+        };
+        let error = edge_command(
+            &addresses,
+            EdgeCommand::LatestMeasurements(DeviceArgs {
+                device_id: "plant-node-01".to_owned(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("HTTP 500"));
+        let requests = server.await.unwrap();
+        assert!(requests[0].starts_with("GET /api/v1/devices/plant-node-01/measurements/latest "));
     }
 
     #[tokio::test]

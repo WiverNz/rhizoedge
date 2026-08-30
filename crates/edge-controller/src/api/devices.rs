@@ -122,6 +122,62 @@ pub async fn get(State(state): State<ApiState>, Path(id): Path<String>) -> Respo
         ),
     }
 }
+
+pub async fn latest_measurements(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Response {
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM devices WHERE device_id=?)")
+            .bind(&id)
+            .fetch_one(state.db.pool())
+            .await;
+    match exists {
+        Ok(false) => return error(StatusCode::NOT_FOUND, "device_not_found", "unknown device"),
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "measurement query failed",
+            );
+        }
+        Ok(true) => {}
+    }
+    let rows =
+        match rhizo_storage::repo::query::latest_measurements_for_device(&state.db, &id).await {
+            Ok(rows) => rows,
+            Err(_) => {
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "measurement query failed",
+                );
+            }
+        };
+    let now = state.clock.now().timestamp_millis();
+    let measurements = rows
+        .into_iter()
+        .map(|row| {
+            let value = match (row.value_num, row.value_bool) {
+                (Some(value), None) => serde_json::json!(value),
+                (None, Some(value)) => serde_json::json!(value != 0),
+                _ => serde_json::Value::Null,
+            };
+            serde_json::json!({
+                "device_id": row.device_id,
+                "sensor_id": row.sensor_id,
+                "point": row.point,
+                "kind": row.kind,
+                "value": value,
+                "unit": row.unit,
+                "quality": row.quality,
+                "received_at": timestamp(Some(row.received_at)),
+                "age_seconds": now.saturating_sub(row.received_at).max(0) as f64 / 1000.0,
+            })
+        })
+        .collect::<Vec<_>>();
+    Json(serde_json::json!({"device_id":id,"measurements":measurements})).into_response()
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PatchDevice {
@@ -189,6 +245,62 @@ mod tests {
     #[test]
     fn rfc3339_is_utc() {
         assert!(super::timestamp(Some(0)).unwrap().ends_with('Z'));
+    }
+
+    #[tokio::test]
+    async fn latest_measurements_preserve_typed_stream_identity_and_order() {
+        let api = crate::api::testsupport::TestApi::start().await;
+        api.with_device().await;
+        for (sensor, point, kind, number, boolean, unit) in [
+            ("z-leak", "reservoir", "leak_state", None, Some(1_i64), ""),
+            (
+                "a-soil",
+                "pot",
+                "soil_moisture",
+                Some(20.0),
+                None,
+                "vwc_percent",
+            ),
+            (
+                "a-soil",
+                "pot",
+                "soil_moisture",
+                Some(21.0),
+                None,
+                "vwc_percent",
+            ),
+        ] {
+            sqlx::query("INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at,batch_id,origin) VALUES('plant-node-01',?,?,?,?,?,?,'good',?,?, 'live')")
+                .bind(sensor).bind(point).bind(kind).bind(number).bind(boolean).bind(unit)
+                .bind(crate::api::testsupport::base().timestamp_millis()).bind(uuid::Uuid::new_v4().to_string())
+                .execute(api.db.pool()).await.unwrap();
+        }
+        let (status, body) = api
+            .get("/api/v1/devices/plant-node-01/measurements/latest")
+            .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let rows = body["measurements"].as_array().unwrap();
+        assert_eq!(rows.len(), 2, "only the latest row of each exact stream");
+        assert_eq!(rows[0]["sensor_id"], "a-soil");
+        assert_eq!(rows[0]["point"], "pot");
+        assert_eq!(rows[0]["kind"], "soil_moisture");
+        assert_eq!(rows[0]["value"], 21.0);
+        assert_eq!(rows[1]["sensor_id"], "z-leak");
+        assert_eq!(rows[1]["value"], true);
+    }
+
+    #[tokio::test]
+    async fn latest_measurements_distinguish_empty_from_unknown_device() {
+        let api = crate::api::testsupport::TestApi::start().await;
+        api.with_device().await;
+        let (status, body) = api
+            .get("/api/v1/devices/plant-node-01/measurements/latest")
+            .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert!(body["measurements"].as_array().unwrap().is_empty());
+        let (status, body) = api.get("/api/v1/devices/unknown/measurements/latest").await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "device_not_found");
     }
     /// Builds a device whose sleep announcement was received `age_ms` ago on the
     /// edge clock, so the derived window is open or closed on purpose.

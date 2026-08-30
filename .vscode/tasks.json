@@ -131,6 +131,15 @@
       "detail": "Reads the latest persisted or on-demand Edge recommendation for a plant."
     },
     {
+      "label": "Rhizo: show latest measurements...",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "edge", "latest-measurements", "${input:rhizoDeviceId}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "detail": "Shows Edge's latest persisted value for every sensor/point/kind stream of the selected device."
+    },
+    {
       "label": "Rhizo: simulator state",
       "type": "process",
       "command": "cargo",

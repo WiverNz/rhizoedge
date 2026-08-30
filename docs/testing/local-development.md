@@ -93,6 +93,8 @@ useful tasks are:
 - `Rhizo: show Edge device state...`
 - `Rhizo: show plant recommendation...` — after the next simulator sample and
   Edge control tick, inspect the latest decision for a configured plant
+- `Rhizo: show latest measurements...` — inspect the latest value Edge actually
+  persisted for every sensor/point/kind stream of the selected device
 - `Rhizo: simulator state`
 - `Rhizo: set soil moisture...`
 - `Rhizo: simulate event...` (leak, tank, restart, missed wake, disconnect, and
@@ -135,6 +137,12 @@ panel, so the visible Edge Controller or simulator debug terminal stays in
 place. Inspection tasks reveal their terminal because their read-back output is
 the purpose of running them.
 
+To verify a fault without enabling per-message DEBUG logs, run `Rhizo scenario:
+leak while dry`, then `Rhizo: show latest measurements...`. Select the same
+device and confirm its separate persisted streams show dry `soil_moisture` and
+boolean `leak_state=true`. This is raw M5 inspection only; it does not add an M6
+leak lockout or irrigation interpretation.
+
 The simulator bind must stay loopback because its control API is a local test
 affordance, not a device or production API. A second simulator can still use
 the existing `--control-port` launch override; the standard presets intentionally
@@ -152,6 +160,7 @@ cargo run -p rhizo-devctl -- simulator disconnect 900
 cargo run -p rhizo-devctl -- simulator reconnect
 cargo run -p rhizo-devctl -- edge readiness
 cargo run -p rhizo-devctl -- edge device-state plant-node-01
+cargo run -p rhizo-devctl -- edge latest-measurements plant-node-01
 cargo run -p rhizo-devctl -- edge plant-recommendation monstera-01
 cargo run -p rhizo-devctl -- reset-local-state --confirmation RESET
 ```

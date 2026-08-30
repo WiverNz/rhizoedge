@@ -30,6 +30,10 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
             get(devices::get).patch(devices::patch),
         )
         .route("/api/v1/devices/{id}/events", get(devices::events))
+        .route(
+            "/api/v1/devices/{id}/measurements/latest",
+            get(devices::latest_measurements),
+        )
         .route("/api/v1/quarantined-messages", get(devices::quarantined))
         // ------------------------------------------------------------ plants
         .route("/api/v1/plants", get(plants::list).post(plants::create))
@@ -165,6 +169,8 @@ fn bounded_route(path: &str) -> &'static str {
         "/api/v1/devices"
     } else if path.ends_with("/events") && path.starts_with("/api/v1/devices/") {
         "/api/v1/devices/{id}/events"
+    } else if path.ends_with("/measurements/latest") && path.starts_with("/api/v1/devices/") {
+        "/api/v1/devices/{id}/measurements/latest"
     } else if path.starts_with("/api/v1/devices/") {
         "/api/v1/devices/{id}"
     } else if path == "/api/v1/plants" {

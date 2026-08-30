@@ -27,6 +27,31 @@ pub async fn latest_samples(db: &EdgeDb) -> Result<Vec<LatestSample>, StorageErr
     .await
     .map_err(StorageError::from_sqlx)
 }
+
+/// Latest persisted row for every physical measurement stream of one device.
+///
+/// Unlike the in-memory cache projection, this preserves `sensor_id` because
+/// two sensors at the same point may report the same kind independently.
+pub async fn latest_measurements_for_device(
+    db: &EdgeDb,
+    device_id: &str,
+) -> Result<Vec<MeasurementRow>, StorageError> {
+    let rows = sqlx::query(
+        "SELECT device_id,sensor_id,point,kind,value_num,value_bool,unit,quality,received_at \
+         FROM measurements m WHERE device_id=? AND id=( \
+           SELECT id FROM measurements latest \
+           WHERE latest.device_id=m.device_id \
+             AND latest.sensor_id IS m.sensor_id \
+             AND latest.point=m.point AND latest.kind=m.kind \
+           ORDER BY latest.received_at DESC,latest.id DESC LIMIT 1) \
+         ORDER BY COALESCE(sensor_id,''),point,kind",
+    )
+    .bind(device_id)
+    .fetch_all(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(rows.iter().map(to_measurement).collect())
+}
 /// The database's actual footprint on disk, in bytes.
 ///
 /// This is the `storage_bytes` gauge [ADR-004](../../../../docs/adr/004-sqlite-edge-persistence-model.md)
