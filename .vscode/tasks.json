@@ -122,6 +122,15 @@
       "presentation": { "reveal": "always", "panel": "shared", "clear": true }
     },
     {
+      "label": "Rhizo: show plant recommendation...",
+      "type": "process",
+      "command": "cargo",
+      "args": ["run", "--quiet", "-p", "rhizo-devctl", "--", "edge", "plant-recommendation", "${input:rhizoPlantId}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "detail": "Reads the latest persisted or on-demand Edge recommendation for a plant."
+    },
+    {
       "label": "Rhizo: simulator state",
       "type": "process",
       "command": "cargo",
@@ -194,6 +203,12 @@
       "description": "Edge device to inspect",
       "default": "plant-node-01",
       "options": ["plant-node-01", "plant-node-02"]
+    },
+    {
+      "id": "rhizoPlantId",
+      "type": "promptString",
+      "description": "Edge plant ID to inspect",
+      "default": "monstera-01"
     },
     {
       "id": "rhizoSoilMoisture",

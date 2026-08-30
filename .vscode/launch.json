@@ -16,6 +16,9 @@
   // Debugger: all configurations require the vadimcn.vscode-lldb extension
   // (CodeLLDB). CodeLLDB builds and locates each binary through Cargo, making
   // this launch file usable on Windows, Linux, and WSL2.
+  //
+  // Active-development launches intentionally use compact DEBUG logs. This is
+  // a VS Code override only; application defaults remain production-oriented.
   "version": "0.2.0",
   "configurations": [
     {
@@ -37,7 +40,7 @@
         "RHIZO_EDGE__STORAGE__PATH": "./data/edge.sqlite",
         "RHIZO_EDGE__CLOUD__ENABLED": "false",
         "RHIZO_EDGE__LOG__FORMAT": "compact",
-        "RHIZO_EDGE__LOG__LEVEL": "info",
+        "RHIZO_EDGE__LOG__LEVEL": "debug",
         "RUST_BACKTRACE": "1"
       }
     },
@@ -83,7 +86,8 @@
         "--broker", "mqtt://localhost:1883",
         "--initial-moisture", "42",
         "--time-scale", "600",
-        "--log-format", "compact"
+        "--log-format", "compact",
+        "--log-level", "debug"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -106,7 +110,8 @@
         "--initial-moisture", "38",
         "--time-scale", "600",
         "--control-port", "9091",
-        "--log-format", "compact"
+        "--log-format", "compact",
+        "--log-level", "debug"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -132,7 +137,8 @@
         "--initial-moisture", "30",
         "--time-scale", "600",
         "--control-port", "9091",
-        "--log-format", "compact"
+        "--log-format", "compact",
+        "--log-level", "debug"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -162,7 +168,8 @@
         "--sensor-warmup-ms", "500",
         "--telemetry-interval", "10",
         "--time-scale", "60",
-        "--log-format", "compact"
+        "--log-format", "compact",
+        "--log-level", "debug"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -185,6 +192,7 @@
         "--initial-moisture", "42",
         "--time-scale", "600",
         "--log-format", "compact",
+        "--log-level", "debug",
         "--fault", "${input:fault}"
       ],
       "cwd": "${workspaceFolder}",
@@ -207,7 +215,8 @@
         "--broker", "mqtt://localhost:1883",
         "--initial-moisture", "42",
         "--time-scale", "${input:timeScale}",
-        "--log-format", "compact"
+        "--log-format", "compact",
+        "--log-level", "debug"
       ],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",

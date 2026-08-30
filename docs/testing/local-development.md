@@ -91,6 +91,8 @@ useful tasks are:
 
 - `Rhizo: Edge readiness`
 - `Rhizo: show Edge device state...`
+- `Rhizo: show plant recommendation...` — after the next simulator sample and
+  Edge control tick, inspect the latest decision for a configured plant
 - `Rhizo: simulator state`
 - `Rhizo: set soil moisture...`
 - `Rhizo: simulate event...` (leak, tank, restart, missed wake, disconnect, and
@@ -117,6 +119,12 @@ by `RHIZO_EDGE__API__BIND`; the simulator and the tool share
 unspecified Edge bind such as `0.0.0.0:8080` is converted to the corresponding
 loopback address only for the client's connection.
 
+Mutation and scenario tasks confirm success from a fresh `/sim/state` read-back,
+for example `✓ dry-plant applied: moisture_vwc=20.0`. A successful POST alone is
+not reported as success. Multi-step failures name the step that failed and exit
+non-zero, so a green task terminal means the displayed state was actually read
+from the running simulator.
+
 The simulator bind must stay loopback because its control API is a local test
 affordance, not a device or production API. A second simulator can still use
 the existing `--control-port` launch override; the standard presets intentionally
@@ -134,6 +142,7 @@ cargo run -p rhizo-devctl -- simulator disconnect 900
 cargo run -p rhizo-devctl -- simulator reconnect
 cargo run -p rhizo-devctl -- edge readiness
 cargo run -p rhizo-devctl -- edge device-state plant-node-01
+cargo run -p rhizo-devctl -- edge plant-recommendation monstera-01
 cargo run -p rhizo-devctl -- reset-local-state --confirm
 ```
 

@@ -158,12 +158,20 @@ enum EdgeCommand {
     Readiness,
     /// Show one device from the Edge registry.
     DeviceState(DeviceArgs),
+    /// Show the latest recommendation for one plant.
+    PlantRecommendation(PlantArgs),
 }
 
 #[derive(Debug, Args)]
 struct DeviceArgs {
     #[arg(default_value = "plant-node-01")]
     device_id: String,
+}
+
+#[derive(Debug, Args)]
+struct PlantArgs {
+    #[arg(default_value = "monstera-01")]
+    plant_id: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -350,75 +358,276 @@ async fn set_fault(
     .await
 }
 
-async fn simulator_command(addresses: &Addresses, command: SimulatorCommand) -> Result<Value> {
+async fn simulator_state(addresses: &Addresses) -> Result<Value> {
+    get(addresses.simulator, "/sim/state").await
+}
+
+async fn mutation_confirmation(addresses: &Addresses, label: &str) -> Result<String> {
+    let state = simulator_state(addresses)
+        .await
+        .with_context(|| format!("{label} mutation succeeded, but state read-back failed"))?;
+    format_confirmation(label, &state)
+        .with_context(|| format!("{label} mutation succeeded, but state read-back was incomplete"))
+}
+
+fn format_confirmation(label: &str, state: &Value) -> Result<String> {
+    let moisture = state_number(state, "moisture_vwc")?;
+    let tank_percent = state_number(state, "tank_percent")?;
+    let leak = match state_string(state, "leak")? {
+        "detected" => "true",
+        "clear" => "false",
+        _ => "unknown",
+    };
+    let faults = state
+        .get("faults")
+        .and_then(Value::as_array)
+        .context("simulator state field `faults` was not an array")?;
+    let has_fault = |name: &str| {
+        faults.iter().any(|fault| {
+            fault
+                .as_str()
+                .is_some_and(|fault| fault == name || fault.starts_with(&format!("{name}:")))
+        })
+    };
+    let tank_empty = has_fault("tank-empty") || tank_percent <= 0.0;
+
+    let details = match label {
+        "set-soil" | "dry-plant" => format!("moisture_vwc={moisture:.1}"),
+        "leak-on" | "leak-off" => format!("leak={leak}"),
+        "tank-empty" | "tank-restore" => {
+            format!("tank_percent={tank_percent:.1} tank_empty={tank_empty}")
+        }
+        "restart" => format!(
+            "boot_count={} connected={}",
+            state_u64(state, "boot_count")?,
+            state_bool(state, "connected")?
+        ),
+        "missed-wake" | "battery-missed-wake" => {
+            format!(
+                "missed_wake={} power_mode={}",
+                has_fault("miss-wake"),
+                state_string(state, "power_mode")?
+            )
+        }
+        "disconnect" | "reconnect" => format!(
+            "disconnect={} connected={}",
+            has_fault("disconnect"),
+            state_bool(state, "connected")?
+        ),
+        "leak-while-dry" => format!("moisture_vwc={moisture:.1} leak={leak}"),
+        "recover-normal" => format!(
+            "moisture_vwc={moisture:.1} leak={leak} tank_empty={tank_empty} tank_percent={tank_percent:.1} missed_wake={} disconnect={} connected={} faults={}",
+            has_fault("miss-wake"),
+            has_fault("disconnect"),
+            state_bool(state, "connected")?,
+            faults.len()
+        ),
+        other => bail!("no confirmation formatter for mutation {other:?}"),
+    };
+    Ok(format!("✓ {label} applied: {details}"))
+}
+
+fn state_number(state: &Value, field: &str) -> Result<f64> {
+    state
+        .get(field)
+        .and_then(Value::as_f64)
+        .with_context(|| format!("simulator state field `{field}` was not a number"))
+}
+
+fn state_string<'a>(state: &'a Value, field: &str) -> Result<&'a str> {
+    state
+        .get(field)
+        .and_then(Value::as_str)
+        .with_context(|| format!("simulator state field `{field}` was not a string"))
+}
+
+fn state_bool(state: &Value, field: &str) -> Result<bool> {
+    state
+        .get(field)
+        .and_then(Value::as_bool)
+        .with_context(|| format!("simulator state field `{field}` was not a boolean"))
+}
+
+fn state_u64(state: &Value, field: &str) -> Result<u64> {
+    state
+        .get(field)
+        .and_then(Value::as_u64)
+        .with_context(|| format!("simulator state field `{field}` was not an unsigned integer"))
+}
+
+enum Output {
+    Json(Value),
+    Confirmation(String),
+}
+
+async fn simulator_command(addresses: &Addresses, command: SimulatorCommand) -> Result<Output> {
     match command {
-        SimulatorCommand::State => get(addresses.simulator, "/sim/state").await,
+        SimulatorCommand::State => simulator_state(addresses).await.map(Output::Json),
         SimulatorCommand::SetSoil(args) => {
-            set_state(addresses, json!({ "moisture_vwc": args.moisture })).await
+            set_state(addresses, json!({ "moisture_vwc": args.moisture }))
+                .await
+                .context("set-soil failed at mutation step")?;
+            mutation_confirmation(addresses, "set-soil")
+                .await
+                .map(Output::Confirmation)
         }
         SimulatorCommand::Leak(args) => match args.state {
-            Toggle::On => set_fault(addresses, "leak", true).await,
+            Toggle::On => {
+                set_fault(addresses, "leak", true)
+                    .await
+                    .context("leak-on failed at fault step")?;
+                mutation_confirmation(addresses, "leak-on")
+                    .await
+                    .map(Output::Confirmation)
+            }
             Toggle::Off => {
-                set_fault(addresses, "leak", false).await?;
-                set_state(addresses, json!({ "leak": "clear" })).await
+                set_fault(addresses, "leak", false)
+                    .await
+                    .context("leak-off failed at step 1/2: clear fault")?;
+                set_state(addresses, json!({ "leak": "clear" }))
+                    .await
+                    .context("leak-off failed at step 2/2: clear physical sensor")?;
+                mutation_confirmation(addresses, "leak-off")
+                    .await
+                    .map(Output::Confirmation)
             }
         },
         SimulatorCommand::Tank(args) => match args.state {
-            TankState::Empty => set_fault(addresses, "tank-empty", true).await,
+            TankState::Empty => {
+                set_fault(addresses, "tank-empty", true)
+                    .await
+                    .context("tank-empty failed at fault step")?;
+                mutation_confirmation(addresses, "tank-empty")
+                    .await
+                    .map(Output::Confirmation)
+            }
             TankState::Restore => {
-                set_fault(addresses, "tank-empty", false).await?;
-                set_state(addresses, json!({ "tank_percent": args.percent })).await
+                set_fault(addresses, "tank-empty", false)
+                    .await
+                    .context("tank-restore failed at step 1/2: clear fault")?;
+                set_state(addresses, json!({ "tank_percent": args.percent }))
+                    .await
+                    .context("tank-restore failed at step 2/2: refill tank")?;
+                mutation_confirmation(addresses, "tank-restore")
+                    .await
+                    .map(Output::Confirmation)
             }
         },
-        SimulatorCommand::Restart => post(addresses.simulator, "/sim/restart", None).await,
+        SimulatorCommand::Restart => {
+            post(addresses.simulator, "/sim/restart", None)
+                .await
+                .context("restart failed at mutation step")?;
+            mutation_confirmation(addresses, "restart")
+                .await
+                .map(Output::Confirmation)
+        }
         SimulatorCommand::MissedWake(args) => {
-            set_fault(addresses, format!("miss-wake:{}", args.count), true).await
+            set_fault(addresses, format!("miss-wake:{}", args.count), true)
+                .await
+                .context("missed-wake failed at fault step")?;
+            mutation_confirmation(addresses, "missed-wake")
+                .await
+                .map(Output::Confirmation)
         }
         SimulatorCommand::Disconnect(args) => {
-            set_fault(addresses, format!("disconnect:{}", args.seconds), true).await
+            set_fault(addresses, format!("disconnect:{}", args.seconds), true)
+                .await
+                .context("disconnect failed at fault step")?;
+            mutation_confirmation(addresses, "disconnect")
+                .await
+                .map(Output::Confirmation)
         }
-        SimulatorCommand::Reconnect => set_fault(addresses, "disconnect:1", false).await,
+        SimulatorCommand::Reconnect => {
+            set_fault(addresses, "disconnect:1", false)
+                .await
+                .context("reconnect failed at fault step")?;
+            mutation_confirmation(addresses, "reconnect")
+                .await
+                .map(Output::Confirmation)
+        }
     }
 }
 
-async fn edge_command(addresses: &Addresses, command: EdgeCommand) -> Result<Value> {
+async fn edge_command(addresses: &Addresses, command: EdgeCommand) -> Result<Output> {
     match command {
-        EdgeCommand::Readiness => get(addresses.edge, "/health/ready").await,
+        EdgeCommand::Readiness => get(addresses.edge, "/health/ready").await.map(Output::Json),
         EdgeCommand::DeviceState(args) => {
-            if args.device_id.contains('/') {
-                bail!("device id must not contain '/'");
-            }
+            validate_path_id("device", &args.device_id)?;
             get(
                 addresses.edge,
                 &format!("/api/v1/devices/{}", args.device_id),
             )
             .await
+            .map(Output::Json)
+        }
+        EdgeCommand::PlantRecommendation(args) => {
+            validate_path_id("plant", &args.plant_id)?;
+            get(
+                addresses.edge,
+                &format!("/api/v1/plants/{}/recommendation", args.plant_id),
+            )
+            .await
+            .map(Output::Json)
         }
     }
 }
 
-async fn scenario_command(addresses: &Addresses, command: ScenarioCommand) -> Result<Value> {
+fn validate_path_id(kind: &str, value: &str) -> Result<()> {
+    if value.contains('/') {
+        bail!("{kind} id must not contain '/'");
+    }
+    Ok(())
+}
+
+async fn scenario_command(addresses: &Addresses, command: ScenarioCommand) -> Result<Output> {
     match command {
-        ScenarioCommand::DryPlant => set_state(addresses, json!({ "moisture_vwc": 20.0 })).await,
-        ScenarioCommand::LeakWhileDry => {
-            set_state(addresses, json!({ "moisture_vwc": 20.0 })).await?;
-            set_fault(addresses, "leak", true).await
+        ScenarioCommand::DryPlant => {
+            set_state(addresses, json!({ "moisture_vwc": 20.0 }))
+                .await
+                .context("dry-plant failed at step 1/1: set moisture")?;
+            mutation_confirmation(addresses, "dry-plant")
+                .await
+                .map(Output::Confirmation)
         }
-        ScenarioCommand::BatteryMissedWake => set_fault(addresses, "miss-wake:1", true).await,
+        ScenarioCommand::LeakWhileDry => {
+            set_state(addresses, json!({ "moisture_vwc": 20.0 }))
+                .await
+                .context("leak-while-dry failed at step 1/2: set moisture")?;
+            set_fault(addresses, "leak", true)
+                .await
+                .context("leak-while-dry failed at step 2/2: enable leak")?;
+            mutation_confirmation(addresses, "leak-while-dry")
+                .await
+                .map(Output::Confirmation)
+        }
+        ScenarioCommand::BatteryMissedWake => {
+            set_fault(addresses, "miss-wake:1", true)
+                .await
+                .context("battery-missed-wake failed at step 1/1: enable missed wake")?;
+            mutation_confirmation(addresses, "battery-missed-wake")
+                .await
+                .map(Output::Confirmation)
+        }
         ScenarioCommand::RecoverNormal => {
             for fault in ["leak", "tank-empty", "miss-wake:1", "disconnect:1"] {
-                set_fault(addresses, fault, false).await?;
+                set_fault(addresses, fault, false)
+                    .await
+                    .with_context(|| format!("recover-normal failed while clearing {fault}"))?;
             }
             set_state(
                 addresses,
                 json!({ "moisture_vwc": 42.0, "tank_percent": 100.0, "leak": "clear" }),
             )
             .await
+            .context("recover-normal failed while restoring physical state")?;
+            mutation_confirmation(addresses, "recover-normal")
+                .await
+                .map(Output::Confirmation)
         }
     }
 }
 
-async fn event_command(addresses: &Addresses, event: Event) -> Result<Value> {
+async fn event_command(addresses: &Addresses, event: Event) -> Result<Output> {
     match event {
         Event::State => simulator_command(addresses, SimulatorCommand::State).await,
         Event::DryPlant => scenario_command(addresses, ScenarioCommand::DryPlant).await,
@@ -612,20 +821,89 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = LocalConfig::load(&cli.env_file)?;
     let addresses = config.addresses()?;
-    let value = match cli.command {
+    let output = match cli.command {
         Command::Simulator { command } => simulator_command(&addresses, command).await?,
         Command::Edge { command } => edge_command(&addresses, command).await?,
         Command::Scenario { command } => scenario_command(&addresses, command).await?,
         Command::Event(args) => event_command(&addresses, args.event).await?,
-        Command::ResetLocalState(args) => reset_local_state(&config, args.confirm).await?,
+        Command::ResetLocalState(args) => {
+            Output::Json(reset_local_state(&config, args.confirm).await?)
+        }
     };
-    println!("{}", pretty(&value)?);
+    match output {
+        Output::Json(value) => println!("{}", pretty(&value)?),
+        Output::Confirmation(message) => println!("{message}"),
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const READ_BACK_STATE: &str = r#"{
+        "device_id":"plant-node-01",
+        "moisture_vwc":19.5,
+        "tank_percent":100.0,
+        "leak":"clear",
+        "faults":[],
+        "boot_count":2,
+        "connected":true,
+        "power_mode":"always_on"
+    }"#;
+
+    async fn mock_http_server(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (SocketAddr, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                loop {
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if complete_http_request(&request) {
+                        break;
+                    }
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                let reason = if status == 200 {
+                    "OK"
+                } else {
+                    "Internal Server Error"
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        (address, task)
+    }
+
+    fn complete_http_request(request: &[u8]) -> bool {
+        let Some(split) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let headers = String::from_utf8_lossy(&request[..split]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("Content-Length: ")
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .unwrap_or(0);
+        request.len() >= split + 4 + content_length
+    }
 
     #[test]
     fn unspecified_bind_addresses_become_connectable_loopback_addresses() {
@@ -651,6 +929,86 @@ mod tests {
     fn parses_a_successful_json_response() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
         assert_eq!(parse_response(response).unwrap()["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn dry_plant_confirmation_uses_a_fresh_state_read_back() {
+        let (address, server) = mock_http_server(vec![(200, "{}"), (200, READ_BACK_STATE)]).await;
+        let addresses = Addresses {
+            edge: address,
+            simulator: address,
+        };
+
+        let output = scenario_command(&addresses, ScenarioCommand::DryPlant)
+            .await
+            .unwrap();
+        let Output::Confirmation(message) = output else {
+            panic!("a mutation must produce a concise confirmation");
+        };
+        assert_eq!(message, "✓ dry-plant applied: moisture_vwc=19.5");
+
+        let requests = server.await.unwrap();
+        assert!(requests[0].starts_with("POST /sim/state "));
+        assert!(requests[1].starts_with("GET /sim/state "));
+    }
+
+    #[tokio::test]
+    async fn a_partial_scenario_failure_names_the_failed_step_and_skips_read_back() {
+        let (address, server) = mock_http_server(vec![
+            (200, "{}"),
+            (500, r#"{"error":"fault injection failed"}"#),
+        ])
+        .await;
+        let addresses = Addresses {
+            edge: address,
+            simulator: address,
+        };
+
+        let error = scenario_command(&addresses, ScenarioCommand::LeakWhileDry)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("leak-while-dry failed at step 2/2: enable leak"),
+            "{error:#}"
+        );
+
+        let requests = server.await.unwrap();
+        assert_eq!(
+            requests.len(),
+            2,
+            "failed scenarios must not claim read-back"
+        );
+        assert!(requests[0].starts_with("POST /sim/state "));
+        assert!(requests[1].starts_with("POST /sim/fault "));
+    }
+
+    #[tokio::test]
+    async fn plant_recommendation_uses_the_existing_edge_endpoint() {
+        let (address, server) =
+            mock_http_server(vec![(200, r#"{"recommendation":"water"}"#)]).await;
+        let addresses = Addresses {
+            edge: address,
+            simulator: address,
+        };
+
+        let output = edge_command(
+            &addresses,
+            EdgeCommand::PlantRecommendation(PlantArgs {
+                plant_id: "monstera-01".to_owned(),
+            }),
+        )
+        .await
+        .unwrap();
+        let Output::Json(value) = output else {
+            panic!("an Edge query must retain its structured JSON response");
+        };
+        assert_eq!(value["recommendation"], "water");
+
+        let requests = server.await.unwrap();
+        assert!(requests[0].starts_with("GET /api/v1/plants/monstera-01/recommendation "));
     }
 
     #[tokio::test]
