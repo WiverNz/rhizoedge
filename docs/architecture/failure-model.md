@@ -223,6 +223,38 @@ rather than fabricated (M13-016).
   wake cycle regardless.
 - **Observability:** `command_no_delivery_total`, interrupted-dose events.
 
+### 2.9 The device's pending-result ledger saturates
+
+**Planned for M9; no firmware exists yet.** Stated here so the case is designed
+rather than discovered.
+
+- **Detection:** a durable device-side fault, published when the ledger fills.
+  The failure mode this replaces is the one with *no* detection: a device that
+  quietly drops unacknowledged results looks exactly like a device that is not
+  watering.
+- **Cause:** a result is retired only by `command.result.ack`
+  ([mqtt-v1.md](../protocol/mqtt-v1.md) §5.14), so an edge outage long enough to
+  span several doses accumulates entries in a bounded NVS ledger.
+- **Expected state:** **fail closed.** An unacknowledged watering result is never
+  silently discarded in a way that can under-count delivered water
+  ([ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+  ledger, F-090-17…19). Whether new actuation is refused while saturated is an
+  M9 decision, made and recorded rather than defaulted into; refusing is the
+  obvious fail-closed reading.
+- **Why the event buffer's answer does not apply:** evicting an audit event from
+  the bounded history ring emits a `history.gap`, which tells the edge it is
+  missing a *record* (SAFETY-020, M9-017). Dropping an unacknowledged result
+  removes a *quantity the edge's rolling budget is derived from*, and the edge
+  sees nothing — the cap is under-fed with nothing to notice.
+- **Recovery:** acknowledgements free space and normal operation resumes, with no
+  entry lost or double-counted; the state survives a reboot at the boundary.
+- **Safety:** SAFETY-006 is the invariant at risk, from the device side, because
+  the edge's cap is only as good as the results it is told about. Under-counting
+  is the direction that over-waters.
+- **Observability:** the saturation fault itself, plus the retry traffic that
+  precedes it — a device republishing the same results is the visible form of an
+  edge that is not acknowledging.
+
 ---
 
 ## 3. Edge Controller failures

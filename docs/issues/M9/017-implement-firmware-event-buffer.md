@@ -41,6 +41,19 @@ telemetry durability is not.
 `event_id` stability across replay is the property SAFETY-016 depends on.
 Generate at buffering time and store it — never derive it at publish time.
 
+**This buffer's overflow policy is not reusable for the pending-result ledger.**
+Evicting the oldest audit event and recording a `history.gap` is correct here:
+the gap tells the edge it is missing a **record**, and the edge can see and
+reason about that (SAFETY-020). The `command.result` ledger of M9-011 looks
+structurally similar and is not: evicting an unacknowledged result silently
+removes a **quantity the edge's rolling 24-hour budget is derived from**, and the
+edge learns nothing — it simply never hears about water that reached the plant.
+Under-counting is the direction that waters again too soon. Do not factor the two
+rings into one policy without reading
+[ADR-014](../../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+ledger first; sharing the *storage* mechanism is fine, sharing the *overflow
+decision* is not.
+
 ## Acceptance criteria
 
 - [ ] Events buffer while isolated and replay on reconnection.
@@ -50,6 +63,9 @@ Generate at buffering time and store it — never derive it at publish time.
 - [ ] The buffer survives a reboot.
 - [ ] Unacknowledged events are replayed again.
 - [ ] Audit events are durable across power loss; telemetry may be lost.
+- [ ] This buffer's eviction policy is **not** applied to the pending-result
+      ledger (M9-011); if the two share a storage mechanism, they do not share an
+      overflow decision.
 
 ## Verification
 

@@ -159,7 +159,10 @@ edge publishes command.water
 | F-090-13 | Wall clock synchronised from the Edge via `edge.time` over MQTT (no SNTP client); an `edge.time` **less than or equal to** the last applied one is ignored and does not refresh `synced_at_monotonic`; `clock_synced` reflects synchronisation **age** and is reported truthfully |
 | F-090-14 | Subscribes to the eight exact topics of protocol §3 and to no wildcard; never to a topic it publishes |
 | F-090-15 | Telemetry buffered across a disconnect to at most 16 samples, then dropped |
-| F-090-16 | Command results retried up to 60 s, then persisted to NVS and republished after reboot |
+| F-090-16 | Command results retried until the **edge** acknowledges them with `command.result.ack` (protocol §5.14) — never retired on the broker's publish ack — and persisted to NVS so an unacknowledged result is republished after reboot |
+| F-090-17 | The pending-result ledger is **bounded and durable**, and its saturation behaviour is explicitly designed, documented, and tested rather than defaulted into. **If it is full the firmware fails closed and does not silently discard an unacknowledged watering result in a way that can under-count delivered water** ([ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result ledger). M9 states whether new actuation is refused while saturated, and with which refusal reason |
+| F-090-18 | Saturation is **observable and accounted**: it emits a durable fault or event the edge and an operator can see — never an invisible steady state — and already-delivered water remains attributable and accounted for while it persists, including across reboot and NVS reload at the saturation boundary |
+| F-090-19 | Space freed by a `command.result.ack` returns the device to normal operation without losing or double-counting an entry. **No "evict oldest unacknowledged result" policy is adopted unless it is proven safety-equivalent to retaining the entry** — the event buffer's gap-marker precedent does not transfer, because a gap reports a lost *record* while an evicted result silently removes a *quantity the edge's budget is derived from* |
 
 ### Identity and configuration
 
@@ -267,7 +270,11 @@ namespace "rhizo"
   delivered_day_epoch  u32
   cmd_ring             blob (16 × { command_id, outcome })
   in_flight_dose       blob (command_id, started_at, requested_ml) | absent
-  pending_result       blob | absent
+  pending_results      bounded durable ledger of results the edge has not
+                       acknowledged (protocol §5.14); capacity and saturation
+                       behaviour are M9 decisions — see F-090-17 and Open
+                       question 6. NOT a single slot: a device that waters while
+                       the edge is down accumulates entries
   boot_generation      u64 (monotonic across reboot for status ordering)
   policy_active        blob (versioned, validated, checksummed) | absent
   policy_staging       blob + checksum | absent
@@ -280,6 +287,14 @@ namespace "rhizo"
 Deliberately identical in content to the simulator's state file
 ([PRD 020](020-device-simulator.md)), so restart behaviour is comparable
 between them.
+
+**One deliberate exception: `pending_results` capacity and overflow.** The
+simulator bounds it at 32 entries and evicts the oldest. That is acceptable on a
+host — no flash-endurance limit, autonomous doses carry the same volumes through
+a second path as `watering.offline_autonomous` audit events, and its job is to
+exercise the protocol rather than keep a plant alive. **None of those hold on an
+ESP32.** The simulator's constant is not a specification and must not be copied
+across; firmware owns this decision and must satisfy F-090-17 on its own terms.
 
 ## State model
 
@@ -318,6 +333,7 @@ degraded sensor.
 | MQTT broker down | reconnect; telemetry ring caps at 16 samples |
 | Safety-critical NVS corrupt | fail closed and report the fault; do not activate defaults, clear dedup uncertainty, replenish budget, shorten cooldown, erase in-flight ambiguity, or grant actuation permission |
 | NVS write fails before actuation | **abort the dose**; report `failed`. Never actuate without a durable record. |
+| Pending-result ledger saturated | **fail closed** (F-090-17). An unacknowledged result is never silently discarded in a way that can under-count delivered water; saturation is emitted as a durable, visible fault and clears as acknowledgements free space. The exact behaviour — including whether actuation is refused while saturated — is an M9 decision, recorded in the M9 report ([ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result ledger, Open question 6) |
 | Power loss mid-dose | boot → pump off → report `interrupted` |
 | Watchdog reset | same |
 | Pump run exceeds the limit | independent timer de-energises; `pump_fault`; further commands refused |
@@ -326,6 +342,15 @@ degraded sensor.
 
 The NVS-write-failure case is worth stating plainly: if the device cannot record
 that it is about to pump, it must not pump.
+
+The saturated-ledger case is the same sentence one step later: **if the device
+cannot record what it has already pumped, it must not keep pumping on the
+assumption that someone else is counting.** The edge's rolling 24-hour cap is
+derived from the rows results produce, so a quietly dropped result under-counts
+delivered water — and under-counting is the direction that waters again too
+soon. This is why the event buffer's "evict oldest and record a gap" is not
+transferable here: a gap tells the edge it is missing a *record*, while a
+dropped result leaves the edge's *arithmetic* wrong with nothing to notice.
 
 ## Safety implications
 
@@ -364,7 +389,12 @@ Four layers, only one needing a board:
 1. **Host unit tests** of `src/app/` with fake adapters: boot sequence ordering,
    interrupted-dose detection, dedup ring eviction and persistence, command
    validation dispatch, config version handling, NVS round trip, daily-total
-   rollover. This covers SAFETY-002, -007, -011 with no hardware.
+   rollover, and **pending-result ledger saturation** — filling it, asserting
+   the fail-closed behaviour F-090-17 requires, power-cycling at the boundary,
+   and draining it with acknowledgements. Saturation is reachable on a host with
+   fake adapters and needs no board, so there is no excuse for leaving it
+   untested until it happens in a plant. This covers SAFETY-002, -007, -011 with
+   no hardware.
 2. **Compile verification** for the ESP target on every relevant change, for
    every board profile that exists — one in M9, two once the XIAO profile is
    added.
@@ -402,6 +432,22 @@ With a board attached: HIL-1 and HIL-2 from
       section has been **executed** and corrected, including on Windows.
 - [ ] Host tests cover boot safety, interrupted dose, dedup ring, and command
       validation.
+- [ ] The pending-result ledger's capacity and saturation behaviour are
+      **decided and written down** — in the M9 report and in this PRD's Open
+      question 5 — rather than left implicit in the ring implementation.
+- [ ] A saturated ledger **fails closed**: no unacknowledged watering result is
+      silently discarded in a way that can under-count delivered water, and the
+      decision on whether new actuation is refused while saturated is stated
+      with its refusal reason.
+- [ ] Saturation emits a durable fault or event visible to the edge and to an
+      operator, and already-delivered water stays attributable while it lasts.
+- [ ] The ledger's state at saturation survives a reboot, and a power cycle at
+      the boundary neither drops nor duplicates a result.
+- [ ] Acknowledgement frees space and restores normal operation with no entry
+      lost or double-counted.
+- [ ] If any eviction of an unacknowledged result is adopted, the M9 report
+      **argues its safety equivalence explicitly**; absent that argument, the
+      answer is that the firmware does not evict.
 - [ ] The conformance test shows identical behaviour to the simulator.
 - [ ] **With a board:** it connects, appears online in the edge API, publishes
       telemetry from fake sensors, applies retained config, and echoes
@@ -447,7 +493,25 @@ completed and reviewed before hardware arrives.
    the host.
 4. **Telemetry ring size (16)** — a balance between RAM and gap tolerance. Easily
    tuned; nothing depends on it.
-5. **Which board actually gets deployed on battery.** The XIAO ESP32-C3 is the
+5. **The pending-result ledger's capacity and saturation behaviour.** Retaining
+   results until `command.result.ack` (protocol §5.14) makes this a bounded
+   durable ledger rather than a single NVS slot, and a bounded ledger has an
+   overflow policy whether or not one is chosen deliberately. F-090-17…19 fix
+   the *invariant* — fail closed, never silently under-count delivered water —
+   and deliberately leave the *mechanism* open, because capacity depends on NVS
+   partition size, flash endurance, and the realistic depth of an edge outage,
+   none of which are known before M9 measures them.
+
+   M9-011 resolves it and M9-022 verifies it, against the six points in
+   [ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+   ledger: refusal of new actuation while saturated, accounting for
+   already-delivered water, the durable fault emitted, recovery as space frees,
+   reboot/NVS persistence at the boundary, and whether any eviction policy is
+   safety-equivalent. **The simulator's `PENDING_RESULT_LIMIT = 32` with
+   oldest-evicted is not the answer** — see §Data model for why that analysis
+   does not transfer to an ESP32.
+
+6. **Which board actually gets deployed on battery.** The XIAO ESP32-C3 is the
    candidate; a custom ESP32-C3 PCB is the plausible end state. Deliberately
    unresolved here — M10-012 measures, and the board layer means the answer
    costs a file rather than a refactor.

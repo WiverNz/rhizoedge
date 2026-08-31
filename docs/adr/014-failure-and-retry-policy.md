@@ -8,6 +8,13 @@ Accepted — 2026-08-25. Applied from M3; cloud parameters in M7.
 overflow policy ([ADR-015](015-device-offline-autonomy.md) §6) — the same
 value-tier reasoning as the edge outbox, applied under far tighter storage.
 
+**Extended 2026-08-31** with the device-side pending-result ledger and its
+saturation requirement, alongside the `command.result.ack` correction
+([mqtt-v1.md](../protocol/mqtt-v1.md) §5.14). Retaining results until the *edge*
+acknowledges them turns a single NVS slot into a bounded ledger, and a bounded
+ledger has an overflow policy whether or not anyone chooses one. **Firmware
+(M9) work only**; the edge and the simulator are unchanged.
+
 ## Context
 
 The system retries in five different places: MQTT connection, MQTT publish,
@@ -186,12 +193,77 @@ Different constraints: no disk, limited RAM, and the pump must fail closed.
 - Telemetry is **not** buffered across a disconnect beyond a small ring (16
   samples). Telemetry is a sample stream; stale samples on reconnect are of
   little value and unbounded buffering would exhaust RAM.
-- **Command results are retried until acknowledged**, up to 60 s, because a
-  result is ledger data — the edge needs to know what the pump did. If it
-  ultimately fails to publish, the outcome is recorded in NVS and re-published
-  after the next boot.
+- **Command results are retried until the edge acknowledges them** with a
+  `command.result.ack` ([mqtt-v1.md](../protocol/mqtt-v1.md) §5.14) — not until
+  the broker acks the publish, which is a different fact, for the same reason
+  spelled out for `event.ack` above. A result is ledger data: the edge needs to
+  know what the pump did. An unacknowledged result is recorded in NVS and
+  re-published after the next boot.
 - The pump is never retried. A failed dose is reported, not repeated; the edge
   decides what happens next with fresh data.
+
+### Device-side pending-result ledger, and what happens when it fills
+
+*Added 2026-08-31, alongside the `command.result.ack` correction. This section
+is **normative for firmware (M9)** and states a requirement, not an
+implementation.*
+
+Retaining a result until the edge acknowledges it means the device now holds a
+**durable, bounded ledger of unacknowledged results**, not a single slot. A
+device that is watering while the edge is down accumulates entries, and any
+bounded structure eventually saturates. The event buffer above already answers
+this question for history; the result ledger is a *different* question and the
+event buffer's answer must not be copied into it.
+
+**The invariant:**
+
+> If the pending command-result ledger is full, the firmware MUST fail closed,
+> and MUST NOT silently discard an unacknowledged watering result in a way that
+> can under-count delivered water.
+
+**Why this differs from the event buffer.** Evicting an audit event loses a
+*record*, and the loss is itself reported as a `history.gap` — the edge learns
+that it does not know something (SAFETY-020). Evicting an unacknowledged
+`command.result` loses a *quantity the edge's budget is derived from*, and the
+edge learns nothing at all: it simply never hears about water that was
+delivered, and the rolling 24-hour cap is under-fed. Under-counting is the
+direction that waters again too soon. "Evict oldest and record a gap" is
+therefore sound for history and unsound here unless the gap is shown to preserve
+the accounting, not merely the narrative.
+
+**The device simulator's bound is not the firmware's answer.**
+`PENDING_RESULT_LIMIT = 32` with oldest-evicted is acceptable in the simulator:
+it runs on a host with no flash-endurance constraint, its `watering.offline_autonomous`
+audit events carry the same volumes through a second path, and its purpose is to
+exercise the protocol rather than to keep a plant alive. **None of those hold on
+an ESP32**, and the constant must not be copied into firmware as though the
+analysis transferred with it.
+
+**What M9 must decide and verify** — enumerated so the decision is made
+deliberately rather than defaulted into by whoever writes the ring:
+
+1. Whether new actuation is **refused** while the ledger is saturated, and with
+   which refusal reason. Refusing is the obvious fail-closed reading: a device
+   that cannot record what it delivered should not deliver more.
+2. How **already-delivered** water stays attributable and accounted for once the
+   ledger is full — including whether a compacted or aggregated form (for
+   example a volume total the edge can reconcile) preserves the accounting when
+   individual entries cannot be kept.
+3. What **durable fault, gap, or event** is emitted so saturation is visible to
+   the edge and to an operator, rather than being an invisible steady state.
+4. **Recovery**: what happens as acknowledgements free space, and that recovery
+   does not itself lose or double-count an entry.
+5. **Reboot and NVS persistence at saturation** — that the full state survives
+   power loss, and that a reboot at the boundary neither drops nor duplicates a
+   result.
+6. That any **"evict oldest unacknowledged result"** policy, if adopted at all,
+   is *proven safety-equivalent* to keeping the entry — not assumed to be
+   because the event buffer does something that looks similar.
+
+Capacity is deliberately not fixed here. Flash endurance, NVS partition size,
+and the realistic depth of an edge outage are M9 measurements, and a number
+chosen in an ADR before any of them are known would be a guess with an
+authoritative typeface.
 
 ## Alternatives considered
 
@@ -254,3 +326,7 @@ Negative, accepted:
 - M3-013 implements `classify` and the exhaustive-match guard.
 - M6-011 implements command publish retry with the fixed `command_id` rule.
 - M7-006 implements outbox drain backoff; M7-008 the value-tiered cap.
+- **M9-011 must decide and implement the pending-result ledger's saturation
+  behaviour**, against the six points in §Device-side pending-result ledger;
+  M9-022 verifies it. Until then the requirement is stated and unimplemented,
+  which is the honest position: no firmware exists yet.

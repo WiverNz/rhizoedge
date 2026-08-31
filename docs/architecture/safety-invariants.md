@@ -352,6 +352,19 @@ such paths were found and closed:
 Both are covered by named tests; neither changed the invariant's statement, its
 enforcing component, or its rolling-window derivation.
 
+**The same argument has a device-side half, and it is M9 work.** Retaining a
+result until the edge acknowledges it turns the device's single `pending_result`
+slot into a **bounded durable ledger**, and a bounded ledger saturates. Firmware
+must therefore fail closed when it is full and must not silently discard an
+unacknowledged watering result in a way that can under-count delivered water —
+which would starve this cap from the far end, invisibly. The requirement is
+[ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+ledger and PRD 090 F-090-17…19; M9-011 decides the mechanism and M9-022 verifies
+it. **Not enforced today**, because no firmware exists: the device simulator
+bounds its ledger at 32 entries and evicts the oldest, which is acceptable for a
+host that is exercising the protocol and is explicitly *not* a specification for
+firmware.
+
 ---
 
 ## SAFETY-007 — Device hard maximum cannot be bypassed

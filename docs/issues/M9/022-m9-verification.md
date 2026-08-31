@@ -54,6 +54,15 @@ exists outside `src/board/`, and the `app/` host tests never mention a board.
 If those hold, adding the XIAO is a file. If they do not, M9 shipped a
 convention rather than a boundary, and the cost lands in M10–M14.
 
+**The pending-result ledger is the one host-testable thing most likely to be
+skipped.** It needs no board — fill it with fake adapters and the behaviour is
+reachable in seconds — but it is invisible in normal operation, so it only ever
+shows up in the field, during an edge outage, as a plant that was watered twice.
+Do not accept "bounded, evicts oldest" as an answer inherited from the simulator
+or from M9-017's event buffer; the reasoning for both is written out in M9-011
+and neither transfers. If the M9 report cannot state what happens when the
+ledger is full, M9 is not done.
+
 **HIL-1 is the gate that matters.** Put a multimeter on the pump driver input
 and confirm it never asserts across twenty resets, a watchdog reset, and ten
 mid-boot power cuts. If the pump so much as twitches, the hardware pull-down is
@@ -75,6 +84,16 @@ Everything else in M9 can be verified on the host.
       profile selected, and their results do not vary by profile.
 - [ ] CI builds every declared board profile from the same application code.
 - [ ] Host tests cover boot safety, interrupted dose, dedup ring, and command validation.
+- [ ] **The pending-result ledger's saturation behaviour is decided, documented,
+      and tested** (M9-011): the ledger fails closed when full, no unacknowledged
+      watering result is silently discarded in a way that can under-count
+      delivered water, saturation is visible as a durable fault, the state
+      survives a reboot at the boundary, and acknowledgement restores normal
+      operation without loss or double-counting. If any eviction of an
+      unacknowledged result was adopted, the report argues its safety
+      equivalence explicitly.
+- [ ] PRD 090 Open question 5 is **resolved**, with the chosen capacity and
+      behaviour recorded there and in ADR-014.
 - [ ] The conformance test shows identical behaviour to the simulator.
 - [ ] **With a board:** it connects, appears online, publishes telemetry, applies config.
 - [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
@@ -99,6 +118,10 @@ espflash flash target/riscv32imc-esp-espidf/release/esp32-node --monitor
 ## Documentation impact
 
 - ADR-007.
+- [ADR-014](../../adr/014-failure-and-retry-policy.md) §Device-side
+  pending-result ledger — record the saturation decision.
+- [PRD 090](../../prd/090-esp32-rust-firmware.md) Open question 5 — mark it
+  resolved.
 - safety-invariants.md.
 - ROADMAP.md.
 - hil-runs record.

@@ -353,6 +353,19 @@ results carry no `device_seq`-style total order. Do not "fix" a related problem
 with `clean_session=false`: that moves durability into the broker, which holds
 no application state and is explicitly replaceable.
 
+**`PENDING_RESULT_LIMIT = 32` is a simulator constant, not a specification.**
+The simulator bounds its unacknowledged-result ledger and evicts the oldest,
+which is fine on a host: no flash-endurance limit, autonomous doses carry the
+same volumes through a second path as `watering.offline_autonomous` audit
+events, and its job is to exercise the protocol rather than keep a plant alive.
+**None of that holds on an ESP32**, so M9 must decide the firmware's saturation
+behaviour on its own terms — fail closed, never silently under-count delivered
+water. The requirement is [ADR-014](docs/adr/014-failure-and-retry-policy.md)
+§Device-side pending-result ledger and PRD 090 F-090-17…19; M9-011 decides,
+M9-022 verifies. M9-017's event ring is *not* the precedent: a `history.gap`
+reports a lost **record**, which the edge can see, while a dropped result removes
+a **quantity the edge's budget is derived from**, which it cannot.
+
 **A `command.result` is ledger data; a telemetry sample is not.** A lost sample
 is fail-safe — it makes data look older, and stale data blocks watering — so
 telemetry gets no acknowledgement and no retry, deliberately. A lost
