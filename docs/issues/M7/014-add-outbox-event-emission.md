@@ -40,12 +40,12 @@ rows forever.
 
 ## Acceptance criteria
 
-- [ ] Every documented event kind is emitted.
-- [ ] Emission shares the transaction with its change.
-- [ ] **`event_id` is stable across retries**, asserted by a test.
-- [ ] `value_tier` is correct per kind.
-- [ ] With `cloud.enabled = false`, no outbox rows are written.
-- [ ] A rolled-back change emits no event.
+- [x] Every documented event kind is emitted.
+- [x] Emission shares the transaction with its change.
+- [x] **`event_id` is stable across retries**, asserted by a test.
+- [x] `value_tier` is correct per kind.
+- [x] With `cloud.enabled = false`, no outbox rows are written.
+- [x] A rolled-back change emits no event.
 
 ## Verification
 

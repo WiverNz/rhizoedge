@@ -16,7 +16,7 @@ serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["migrate"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
+uuid = { workspace = true, features = ["v4", "v7"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

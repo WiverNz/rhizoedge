@@ -33,8 +33,8 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 | SAFETY-005 | Stale or invalid moisture disables automatic watering | Edge | M6 | ENFORCED |
 | SAFETY-006 | Daily automatic water never exceeds the configured maximum | Edge | M6 | ENFORCED |
 | SAFETY-007 | The device hard maximum cannot be bypassed by edge or cloud | Device firmware | M6 (sim), M11 (hw) | ENFORCED (validator, simulator) |
-| SAFETY-008 | Cloud unavailability never disables local monitoring | Edge | M7 | PLANNED |
-| SAFETY-009 | Cloud unavailability never bypasses local watering safety | Edge | M7 | PLANNED |
+| SAFETY-008 | Cloud unavailability never disables local monitoring | Edge | M7 | ENFORCED |
+| SAFETY-009 | Cloud unavailability never bypasses local watering safety | Edge | M7 | ENFORCED |
 | SAFETY-010 | Edge restart never re-executes a completed command | Edge | M6 | ENFORCED |
 | SAFETY-011 | Device restart during watering converges to pump-off | Device | M9 (fw), M11 (hw) | PLANNED |
 | SAFETY-012 | Uncertainty defaults to not watering | Edge domain + device | M6 | ENFORCED |
@@ -426,12 +426,12 @@ loop has no code path that awaits a cloud response.
 low-value events (measurements) while preserving high-value ones (watering
 events, lockouts) and raising an alert.
 
-**Planned tests.**
-- `safety_008_local_operation_without_cloud` (integration, M7): cloud down for
-  the whole test, assert full local function.
+**Planned tests.** Demonstrated in M7:
+- `safety_008_edge_readiness_stays_200_without_cloud` and the real-Mosquitto
+  Edge integration/irrigation suites with `cloud-api` stopped (M7).
 - M8 scenario `cloud-outage-recovery`.
 
-**Becomes enforced.** M7.
+**Enforced since M7 (2026-08-31).**
 
 ---
 
@@ -449,12 +449,12 @@ exactly the class of bug this forbids.
 `rhizo_domain::evaluate`. This is enforced structurally: `IrrigationInputs` has
 no cloud-derived field, and the `domain` crate cannot depend on `cloud-client`.
 
-**Planned tests.**
+**Planned tests.** Demonstrated in M7:
 - `safety_009_decisions_identical_with_cloud_down` (integration, M7): run the
   same scenario with cloud up and down, assert the issued command sequence is
   identical.
 
-**Becomes enforced.** M7.
+**Enforced since M7 (2026-08-31).**
 
 ---
 

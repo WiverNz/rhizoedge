@@ -36,11 +36,11 @@ an absence is not something review reliably catches.
 
 ## Acceptance criteria
 
-- [ ] All read endpoints return the documented shapes.
-- [ ] Time ranges and pagination work.
-- [ ] **A route-enumeration test asserts no command or config-write endpoint exists.**
-- [ ] 404 for unknown edges or plants.
-- [ ] Range caps prevent unbounded responses.
+- [x] All read endpoints return the documented shapes.
+- [x] Time ranges and pagination work.
+- [x] **A route-enumeration test asserts no command or config-write endpoint exists.**
+- [x] 404 for unknown edges or plants.
+- [x] Range caps prevent unbounded responses.
 
 ## Verification
 

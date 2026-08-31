@@ -41,13 +41,13 @@ the exact failure the per-event design prevents.
 
 ## Acceptance criteria
 
-- [ ] A batch of new events returns all `accepted`.
-- [ ] Re-POSTing the identical batch returns all `duplicate` and creates no rows.
-- [ ] A malformed event returns `rejected` while the rest succeed.
-- [ ] An unknown kind is **stored in `synced_events`** and reported `rejected`.
-- [ ] A malformed request envelope returns 4xx.
-- [ ] A batch over 500 events or 5 MiB is rejected.
-- [ ] The batch is atomic.
+- [x] A batch of new events returns all `accepted`.
+- [x] Re-POSTing the identical batch returns all `duplicate` and creates no rows.
+- [x] A malformed event returns `rejected` while the rest succeed.
+- [x] An unknown kind is **stored in `synced_events`** and reported `rejected`.
+- [x] A malformed request envelope returns 4xx.
+- [x] A batch over 500 events or 5 MiB is rejected.
+- [x] The batch is atomic.
 
 ## Verification
 

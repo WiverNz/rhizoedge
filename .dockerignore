@@ -1,0 +1,7 @@
+target
+.git
+.env
+data
+*.state.json
+*.sqlite
+*.sqlite-*

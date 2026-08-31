@@ -151,8 +151,36 @@ services:
     # The control API binds to loopback (M2-009) and is deliberately **not**
     # published: it is a test affordance, and reaching it means `docker exec`.
 
-  # cloud-api — M7 (the service), M8-002 (topology)
-  # postgres — M7-002. Not started before there is a schema to put in it.
+  postgres:
+    image: postgres:17-bookworm
+    container_name: rhizo-postgres
+    environment:
+      POSTGRES_USER: rhizo
+      POSTGRES_PASSWORD: rhizo
+      POSTGRES_DB: rhizo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rhizo -d rhizo"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [rhizo]
+    ports: ["5432:5432"]
+
+  cloud-api:
+    build:
+      context: ..
+      dockerfile: deploy/cloud-api.Dockerfile
+    container_name: rhizo-cloud-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RHIZO_CLOUD__DATABASE_URL: postgres://rhizo:rhizo@postgres:5432/rhizo
+      RHIZO_CLOUD__BIND: 0.0.0.0:8081
+    ports: ["8081:8081"]
+    networks: [rhizo]
 
 networks:
   rhizo:
@@ -164,3 +192,4 @@ volumes:
   mosquitto-data:
   # The simulator's persisted device state, for the same reason.
   device-simulator-state:
+  postgres-data:

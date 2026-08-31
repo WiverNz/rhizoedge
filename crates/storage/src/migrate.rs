@@ -4,6 +4,15 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations/edge
 
 /// Applies the embedded migrations, backing the database up first.
 ///
+/// The backup fires whenever `applied < target` and the database file is
+/// present and non-empty. **That includes a fresh create**: `EdgeDb::connect`
+/// sets `journal_mode = WAL`, which writes the 4 KiB header before this
+/// function runs, so a brand-new database is non-empty and gets a 4 KiB backup
+/// of nothing. Harmless — it is overwritten by the next real one — but it is
+/// what happens, and
+/// [`tests::a_fresh_file_database_is_backed_up_before_its_first_migration`]
+/// holds that to be true so the next reader does not have to guess.
+///
 /// The queries here are deliberately *not* compile-time checked (M3-004). They
 /// read `sqlite_master` and `_sqlx_migrations` — the migrator's own bookkeeping
 /// table, which does not exist on a fresh database and is created by the very
@@ -65,6 +74,41 @@ mod tests {
         assert_eq!(tables, 1);
     }
 
+    /// The pre-migration backup on a **fresh** file database.
+    ///
+    /// Written because the obvious assumption — "a fresh database is absent or
+    /// empty, so the backup is skipped" — is wrong, and was stated as fact in
+    /// this file and in ADR-004 until this test was written.
+    /// `EdgeDb::connect` applies `journal_mode = WAL`, and switching journal
+    /// mode writes the SQLite header, so by the time [`run`] looks the file
+    /// exists and is 4 KiB.
+    ///
+    /// The behaviour is left alone: a 4 KiB copy of an empty database on first
+    /// start is harmless, and tightening the condition risks skipping a backup
+    /// that matters. This test exists to keep the *documentation* honest, and
+    /// will fail if the pragmas or the backup condition change — at which point
+    /// the comments above need revisiting too.
+    #[tokio::test]
+    async fn a_fresh_file_database_is_backed_up_before_its_first_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge.sqlite");
+
+        let db = EdgeDb::connect(&path).await.unwrap();
+        assert!(path.exists(), "connect creates the file");
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > 0,
+            "WAL journal mode writes the header, so the file is not empty"
+        );
+
+        db.migrate().await.unwrap();
+
+        let backup = path.with_extension("sqlite.pre-migration.bak");
+        assert!(
+            backup.exists(),
+            "a fresh create still satisfies `applied < target` with a non-empty file"
+        );
+    }
+
     /// The canonical pre-release baseline holds the **whole** schema.
     ///
     /// **The single-migration assertion is deliberate.** It fails the moment
@@ -78,10 +122,10 @@ mod tests {
     /// column order of every table, the partial-index predicates, and the
     /// cascade count — so an edit to the baseline has to be deliberate too.
     ///
-    /// Note that with one migration, [`run`]'s pre-migration backup has no
-    /// version change to fire on: it is reached only on a fresh create, where it
-    /// is skipped because the file is absent or empty. The path stays for the
-    /// next real migration and is currently uncovered.
+    /// Note that with one migration there is no *upgrade* left to back up
+    /// before. The backup still runs on a fresh create, though — see
+    /// [`tests::a_fresh_file_database_is_backed_up_before_its_first_migration`],
+    /// which pins what actually happens rather than what is easy to assume.
     #[tokio::test]
     async fn canonical_baseline_contains_the_final_schema() {
         use sqlx::Row as _;
@@ -103,6 +147,7 @@ mod tests {
             [
                 "actuator_bindings",
                 "actuator_states",
+                "cloud_sync_settings",
                 "command_intents",
                 "command_results",
                 "commands",

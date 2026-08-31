@@ -130,6 +130,8 @@ command_ttl_seconds   = 120
 [cloud]
 enabled  = false
 base_url = "http://localhost:8081"
+outbox_max_rows = 500000
+request_timeout_seconds = 10
 
 [api]
 bind = "127.0.0.1:8080"
@@ -212,6 +214,10 @@ pub struct CloudConfig {
     pub enabled: bool,
     /// Base URL of the cloud API. Validated only when `enabled`.
     pub base_url: String,
+    /// Maximum pending rows before low-tier oldest-first pruning.
+    pub outbox_max_rows: u64,
+    /// Whole request timeout used by the independent drain task.
+    pub request_timeout_seconds: u64,
 }
 
 /// The edge's own HTTP surface.
@@ -555,6 +561,18 @@ fn validate(c: &EdgeConfig) -> Result<(), ConfigError> {
 
     if c.cloud.enabled {
         validate_http_url("cloud.base_url", &c.cloud.base_url)?;
+    }
+    if c.cloud.outbox_max_rows == 0 {
+        return Err(ConfigError::invalid(
+            "cloud.outbox_max_rows",
+            "must be greater than zero",
+        ));
+    }
+    if c.cloud.request_timeout_seconds == 0 {
+        return Err(ConfigError::invalid(
+            "cloud.request_timeout_seconds",
+            "must be greater than zero",
+        ));
     }
     if c.api
         .cors_allowed_origins

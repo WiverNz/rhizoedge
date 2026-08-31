@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0–M6 complete; M7 next.
+**Planning status:** complete. **Implementation status:** M0–M7 complete; M8 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -63,7 +63,7 @@ pin may move forward deliberately
 | M4 | Device Registry and Health | Device lifecycle, staleness, sensor health, config drift, and the first REST surface | M3 | 13 | **DONE** |
 | M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 22 | **DONE** |
 | M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **DONE** |
-| M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **READY** |
+| M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **DONE** |
 | M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **READY** |
 | M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | PLANNED |
 | M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 13 | PLANNED |
@@ -368,7 +368,7 @@ firmware-owned and land in M9.
 
 ---
 
-### M7 — Cloud API and PostgreSQL · READY
+### M7 — Cloud API and PostgreSQL · DONE
 
 **Objective.** Optional history that cannot become load-bearing.
 
@@ -884,14 +884,14 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0–M6 are `DONE`. M7 is `READY`.** The next unstarted issue is:
+**M0–M7 are `DONE`. M8 is `READY` and has not started.** The next unstarted issue is:
 
 ```text
-M7-001 — Create the cloud-api binary and PostgreSQL service
+M8-001 — Add production Dockerfiles
 ```
 
 It depends on M6-024, which is complete, so it is executable now. See
-[docs/issues/M7/001-add-cloud-api-and-postgres.md](docs/issues/M7/001-add-cloud-api-and-postgres.md)
+[docs/issues/M8/001-add-dockerfiles.md](docs/issues/M8/001-add-dockerfiles.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
 
 M6's report is [docs/reports/M6.md](docs/reports/M6.md).

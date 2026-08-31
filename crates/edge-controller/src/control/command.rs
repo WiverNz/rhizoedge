@@ -820,6 +820,9 @@ mod command {
         #[tokio::test]
         async fn the_transition_and_the_outbox_row_share_the_transaction() {
             let api = TestApi::start().await;
+            rhizo_storage::repo::outbox::configure(&api.db, true, 500_000)
+                .await
+                .unwrap();
             let command_id = issue(&api).await;
             let state = command_repo::irrigation_state(&api.db, "monstera-01")
                 .await

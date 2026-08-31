@@ -419,10 +419,13 @@ holding the whole schema through M6. While no release exists it may keep
 absorbing development-only schema changes (`versioning-policy.md` §4); after the
 first deployment it and every later migration are immutable.
 
-With a single migration the automatic pre-migration backup in
-`storage::migrate::run` has no version change to fire on, so it is reached only
-on a fresh create, where it is skipped because the file is absent or empty. The
-path stays for the next real migration.
+With a single migration there is no *upgrade* left for the automatic backup in
+`storage::migrate::run` to precede. It still runs on a fresh create, though:
+`EdgeDb::connect` sets `journal_mode = WAL`, which writes the 4 KiB header before
+migration, so a brand-new database is non-empty and gets a 4 KiB backup of
+nothing. Harmless, and pinned by
+`migrate::tests::a_fresh_file_database_is_backed_up_before_its_first_migration`
+so the assumption is not re-invented.
 
 ## Alternatives considered
 

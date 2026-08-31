@@ -2,7 +2,7 @@
 #![allow(missing_docs)]
 use super::{
     ApiState, bindings, device_config, devices, health, intents, measurement_policies,
-    offline_policy, plants, presets, profiles, recommendation, watering,
+    offline_policy, plants, presets, profiles, recommendation, sync, watering,
 };
 use axum::{
     Router,
@@ -44,6 +44,8 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
             get(devices::latest_measurements),
         )
         .route("/api/v1/quarantined-messages", get(devices::quarantined))
+        .route("/api/v1/sync/status", get(sync::status))
+        .route("/api/v1/sync/quarantined", get(sync::quarantined))
         // ------------------------------------------------------------ plants
         .route("/api/v1/plants", get(plants::list).post(plants::create))
         .route(

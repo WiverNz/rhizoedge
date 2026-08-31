@@ -118,6 +118,8 @@ CREATE UNIQUE INDEX uq_open_water_intent
 CREATE INDEX idx_intents_open ON command_intents(state, intent_expires_at);
 CREATE TABLE pending_cloud_events (event_id TEXT PRIMARY KEY, kind TEXT NOT NULL, value_tier TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, synced_at INTEGER);
 CREATE INDEX idx_outbox_ready ON pending_cloud_events(status,next_attempt_at);
+CREATE TABLE cloud_sync_settings (singleton INTEGER PRIMARY KEY CHECK(singleton=1), enabled INTEGER NOT NULL DEFAULT 0, outbox_max_rows INTEGER NOT NULL DEFAULT 500000);
+INSERT INTO cloud_sync_settings(singleton,enabled,outbox_max_rows) VALUES(1,0,500000);
 
 CREATE TABLE device_isolation_periods (id INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL REFERENCES devices(device_id), started_at INTEGER NOT NULL, ended_at INTEGER, duration_ms INTEGER);
 CREATE INDEX idx_device_isolation_periods ON device_isolation_periods(device_id, started_at DESC);

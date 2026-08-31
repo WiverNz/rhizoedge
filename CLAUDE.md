@@ -6,7 +6,7 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 through M6 are implemented and green. M7 is READY and
+**Planning is complete. M0 through M7 are implemented and green. M8 is READY and
 has not started.**
 
 | | State |
@@ -22,8 +22,9 @@ has not started.**
 | Battery pass | ✅ done (2026-08-28) — ADR-018 (see §12), then the post-M4 correction and its independent review; both dated in [docs/reports/M4.md](docs/reports/M4.md) |
 | M5 | 22 issues, **DONE** — report in [docs/reports/M5.md](docs/reports/M5.md) |
 | M6 | 24 issues, **DONE** — report in [docs/reports/M6.md](docs/reports/M6.md) |
+| M7 | 15 issues, **DONE** — report in [docs/reports/M7.md](docs/reports/M7.md) |
 | Post-M6 correction | ✅ done (2026-08-31) — durable `command.result.ack`, offline-dose attribution by name, and the M6 report's test-count evidence; see [docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections and §13 below |
-| M7-001 | ⬜ **next** — create the cloud-api binary and PostgreSQL service |
+| M8-001 | ⬜ **next** — add production Dockerfiles |
 
 **This section goes stale fastest. Verify it before trusting it:**
 

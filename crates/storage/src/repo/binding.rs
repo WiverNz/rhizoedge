@@ -149,6 +149,7 @@ pub async fn upsert_sensor_binding(
     db: &EdgeDb,
     binding: &SensorBindingRow,
 ) -> Result<(), StorageError> {
+    let mut tx = db.begin().await?;
     sqlx::query(
         "INSERT INTO sensor_bindings(binding_id,plant_id,device_id,sensor_id,point,kind,role,created_at) \
          VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(binding_id) DO UPDATE SET \
@@ -162,10 +163,11 @@ pub async fn upsert_sensor_binding(
     .bind(&binding.kind)
     .bind(&binding.role)
     .bind(binding.created_at)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    Ok(())
+    crate::repo::outbox::emit(&mut tx, "plant.binding_changed", &serde_json::json!({"plant_id":binding.plant_id,"binding_id":binding.binding_id,"device_id":binding.device_id,"sensor_id":binding.sensor_id,"point":binding.point,"kind":binding.kind,"role":binding.role}), binding.created_at).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)
 }
 
 pub async fn delete_sensor_binding(db: &EdgeDb, binding_id: &str) -> Result<bool, StorageError> {
@@ -203,6 +205,7 @@ pub async fn upsert_actuator_binding(
     db: &EdgeDb,
     binding: &ActuatorBindingRow,
 ) -> Result<(), StorageError> {
+    let mut tx = db.begin().await?;
     sqlx::query(
         "INSERT INTO actuator_bindings(plant_id,device_id,actuator_id,kind,created_at) VALUES(?,?,?,?,?) \
          ON CONFLICT(plant_id) DO UPDATE SET device_id=excluded.device_id,actuator_id=excluded.actuator_id,kind=excluded.kind",
@@ -212,10 +215,11 @@ pub async fn upsert_actuator_binding(
     .bind(&binding.actuator_id)
     .bind(&binding.kind)
     .bind(binding.created_at)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    Ok(())
+    crate::repo::outbox::emit(&mut tx, "plant.binding_changed", &serde_json::json!({"plant_id":binding.plant_id,"device_id":binding.device_id,"actuator_id":binding.actuator_id,"kind":binding.kind}), binding.created_at).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)
 }
 
 pub async fn delete_actuator_binding(db: &EdgeDb, plant_id: &str) -> Result<bool, StorageError> {
@@ -279,6 +283,7 @@ pub async fn upsert_measurement_policy(
     policy: &MeasurementPolicyRow,
     now: i64,
 ) -> Result<(), StorageError> {
+    let mut tx = db.begin().await?;
     sqlx::query(
         "INSERT INTO measurement_policies(plant_id,kind,target_min,target_max,warning_low,warning_high,critical_low,critical_high,stale_after_ms,hysteresis,confirm_duration_ms,updated_at) \
          VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(plant_id,kind) DO UPDATE SET \
@@ -298,10 +303,11 @@ pub async fn upsert_measurement_policy(
     .bind(policy.hysteresis)
     .bind(policy.confirm_duration_ms)
     .bind(now)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    Ok(())
+    crate::repo::outbox::emit(&mut tx, "plant.policy_changed", &serde_json::json!({"plant_id":policy.plant_id,"kind":policy.kind,"target_min":policy.target_min,"target_max":policy.target_max,"warning_low":policy.warning_low,"warning_high":policy.warning_high,"critical_low":policy.critical_low,"critical_high":policy.critical_high,"stale_after_ms":policy.stale_after_ms,"hysteresis":policy.hysteresis,"confirm_duration_ms":policy.confirm_duration_ms}), now).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)
 }
 
 pub async fn delete_measurement_policy(

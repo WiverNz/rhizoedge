@@ -97,6 +97,13 @@ mod tests {
         assert_eq!(json["control_loop"]["status"], "not_applicable");
     }
     #[tokio::test]
+    async fn safety_008_edge_readiness_stays_200_without_cloud() {
+        let _guard = gauge_lock().lock().await;
+        let (status, Json(body)) = ready(State(state(3).await)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(serde_json::to_value(body).unwrap().get("cloud").is_none());
+    }
+    #[tokio::test]
     async fn disconnected_is_specific_and_unready() {
         let _guard = gauge_lock().lock().await;
         let (status, Json(body)) = ready(State(state(0).await)).await;

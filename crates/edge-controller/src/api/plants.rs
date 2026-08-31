@@ -338,7 +338,7 @@ pub async fn patch(
         pot_volume_ml: body.pot_volume_ml.map(Some),
         auto_watering_enabled: body.auto_watering_enabled,
     };
-    match plant_repo::update(&state.db, &id, &patch).await {
+    match plant_repo::update(&state.db, &id, &patch, state.clock.now().timestamp_millis()).await {
         Ok(Some(_)) => get(State(state), Path(id)).await,
         Ok(None) => error(StatusCode::NOT_FOUND, "plant_not_found", "unknown plant"),
         Err(rhizo_storage::StorageError::Constraint(message)) => {

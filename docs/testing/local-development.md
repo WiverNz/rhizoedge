@@ -357,18 +357,24 @@ instead of connecting, and fails with `set DATABASE_URL to use query macros
 online, or run cargo sqlx prepare to update the query cache` if it is missing or
 stale. One file per checked query is the expected shape.
 
-### If migrations fail with "previously applied but is missing"
+### If migrations fail with "previously applied but ..."
+
+Either of these means the same thing:
 
 ```text
 error: migration 2 was previously applied but is missing in the resolved migrations
+error: migration 1 was previously applied but has been modified
 ```
 
-Your `data/edge.sqlite` is older than the current baseline: its
-`_sqlx_migrations` table records a migration that no longer exists, because
-pre-release migrations are squashed into `0001_initial.sql`
-([versioning-policy.md](../protocol/versioning-policy.md) §4).
+Your `data/edge.sqlite` is older than the current baseline. A pre-release squash
+folds development-only migrations into `0001_initial.sql`
+([versioning-policy.md](../protocol/versioning-policy.md) §4), which both removes
+the files it absorbed and changes the baseline's own checksum — so depending on
+what your database had applied, `sqlx` notices one or the other first. **Neither
+is a fault to work around, and both have the same remedy.**
 
-Nothing is corrupted — `sqlx` refused and changed nothing. **Recreate it:**
+Nothing is corrupted: `sqlx` refused and changed nothing. **Recreate the
+database:**
 
 ```bash
 rm -f data/edge.sqlite data/edge.sqlite-wal data/edge.sqlite-shm
@@ -377,9 +383,11 @@ sqlx database create
 sqlx migrate run --source migrations/edge      # expect: Applied 1/migrate initial
 ```
 
-There is nothing to preserve: local databases hold sample data from simulator
-runs. This applies only before the first deployment; after that migrations are
-immutable and the situation cannot arise.
+**Pre-release migration compatibility is intentionally not preserved.** There is
+nothing to keep — local databases hold sample data from simulator runs — and the
+alternative would be carrying upgrade paths for schemas no deployment has ever
+run. This applies only before the first deployment; after that migrations are
+immutable and neither error can arise.
 
 ---
 

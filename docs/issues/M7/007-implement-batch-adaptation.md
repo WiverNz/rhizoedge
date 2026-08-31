@@ -36,11 +36,11 @@ oscillate on a marginal link.
 
 ## Acceptance criteria
 
-- [ ] A timeout halves the batch size.
-- [ ] The size never goes below 10.
-- [ ] It grows back after consecutive successes.
-- [ ] The current size is exported as a metric.
-- [ ] A slow link eventually drains rather than stalling.
+- [x] A timeout halves the batch size.
+- [x] The size never goes below 10.
+- [x] It grows back after consecutive successes.
+- [x] The current size is exported as a metric.
+- [x] A slow link eventually drains rather than stalling.
 
 ## Verification
 

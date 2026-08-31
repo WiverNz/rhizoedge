@@ -46,13 +46,13 @@ so a week-long outage does not produce a week of ERROR lines.
 
 ## Acceptance criteria
 
-- [ ] Events sync when the cloud is available.
-- [ ] **The control loop is unaffected while the cloud is down**, asserted by tick duration.
-- [ ] Backoff delays increase within bounds and reset on success.
-- [ ] 429 honours `Retry-After`.
-- [ ] Per-event 4xx quarantines that event only.
-- [ ] The first failure logs ERROR, subsequent WARN.
-- [ ] No control path awaits the cloud client.
+- [x] Events sync when the cloud is available.
+- [x] **The control loop is unaffected while the cloud is down**, asserted by tick duration.
+- [x] Backoff delays increase within bounds and reset on success.
+- [x] 429 honours `Retry-After`.
+- [x] Per-event 4xx quarantines that event only.
+- [x] The first failure logs ERROR, subsequent WARN.
+- [x] No control path awaits the cloud client.
 
 ## Verification
 

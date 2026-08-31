@@ -38,12 +38,12 @@ failure modes here are precision and boundary related.
 
 ## Acceptance criteria
 
-- [ ] A round trip preserves the instant exactly, to the millisecond.
-- [ ] Sub-second precision is preserved.
-- [ ] Pre-1970 values round-trip.
-- [ ] Far-future values round-trip.
-- [ ] All representations are UTC with no local-time path.
-- [ ] A property test over random instants passes.
+- [x] A round trip preserves the instant exactly, to the millisecond.
+- [x] Sub-second precision is preserved.
+- [x] Pre-1970 values round-trip.
+- [x] Far-future values round-trip.
+- [x] All representations are UTC with no local-time path.
+- [x] A property test over random instants passes.
 
 ## Verification
 

@@ -40,11 +40,11 @@ without its database.
 
 ## Acceptance criteria
 
-- [ ] The binary starts and connects to PostgreSQL.
-- [ ] Health endpoints respond.
-- [ ] `/health/ready` is 503 when the database is unreachable.
-- [ ] Compose starts PostgreSQL with a healthcheck.
-- [ ] The volume persists across restarts.
+- [x] The binary starts and connects to PostgreSQL.
+- [x] Health endpoints respond.
+- [x] `/health/ready` is 503 when the database is unreachable.
+- [x] Compose starts PostgreSQL with a healthcheck.
+- [x] The volume persists across restarts.
 
 ## Verification
 

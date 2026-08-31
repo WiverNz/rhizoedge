@@ -40,12 +40,12 @@ cap and confirms every high-tier row survives.
 
 ## Acceptance criteria
 
-- [ ] Growth stops at the cap.
-- [ ] Low-tier events are pruned oldest first.
-- [ ] **Every high-tier event survives** filling the outbox to twice the cap.
-- [ ] `value_tier` defaults to `high`.
-- [ ] Pruning logs at alert level and increments the counter.
-- [ ] It is assigned at exactly one write site.
+- [x] Growth stops at the cap.
+- [x] Low-tier events are pruned oldest first.
+- [x] **Every high-tier event survives** filling the outbox to twice the cap.
+- [x] `value_tier` defaults to `high`.
+- [x] Pruning logs at alert level and increments the counter.
+- [x] It is assigned at exactly one write site.
 
 ## Verification
 

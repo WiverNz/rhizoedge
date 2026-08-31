@@ -181,13 +181,27 @@ pub async fn persist_telemetry(
             Some(sample_index as i64),
         )
         .await?;
+        let mut cloud_payload =
+            serde_json::to_value(sample).map_err(|e| StorageError::Serialization(e.to_string()))?;
+        if let Some(object) = cloud_payload.as_object_mut() {
+            object.insert(
+                "device_id".into(),
+                serde_json::Value::String(device.clone()),
+            );
+            object.insert(
+                "batch_id".into(),
+                serde_json::Value::String(batch_id.clone()),
+            );
+            object.insert("origin".into(), serde_json::Value::String("live".into()));
+        }
+        crate::repo::outbox::emit(&mut tx, "measurement.sample", &cloud_payload, received_at)
+            .await?;
         if valid {
             accepted += 1
         } else {
             record_invalid(&mut tx, &device, &message, sample, received_at).await?;
         }
     }
-    enqueue(&mut tx, &message, "telemetry.batch", received_at).await?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok((Dedup::New, accepted))
 }
@@ -278,25 +292,6 @@ async fn record_invalid(
     .map_err(StorageError::from_sqlx)?;
     Ok(())
 }
-async fn enqueue(
-    tx: &mut Transaction<'_, Sqlite>,
-    id: &str,
-    kind: &str,
-    at: i64,
-) -> Result<(), StorageError> {
-    sqlx::query!(
-        "INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,next_attempt_at,created_at) VALUES(?,?,'low','{}','pending',?,?) ON CONFLICT(event_id) DO NOTHING",
-        id,
-        kind,
-        at,
-        at
-    )
-    .execute(&mut **tx)
-    .await
-    .map_err(StorageError::from_sqlx)?;
-    Ok(())
-}
-
 /// Persists current actuator state separately from measurements.
 pub async fn persist_actuator(
     db: &EdgeDb,
@@ -965,6 +960,36 @@ pub async fn persist_status_with_transitions(
         {
             transitions.push(transition);
         }
+    }
+    crate::repo::outbox::emit(&mut tx, "device.status", &serde_json::json!({"device_id":dev,"status":status,"firmware_version":firmware,"protocol_version":protocol,"boot_id":boot,"sequence":seq,"last_seen_at":last_seen,"connectivity_mode":connectivity,"power_mode":power_mode}), at).await?;
+    if applied.is_some() {
+        crate::repo::outbox::emit(
+            &mut tx,
+            "device.config_applied",
+            &serde_json::json!({"device_id":dev,"applied_config_version":applied}),
+            at,
+        )
+        .await?;
+    }
+    if transitions
+        .iter()
+        .any(|transition| transition.kind == "capabilities_changed")
+    {
+        crate::repo::outbox::emit(
+            &mut tx,
+            "device.capabilities_changed",
+            &serde_json::json!({"device_id":dev,"capabilities":e.data.capabilities}),
+            at,
+        )
+        .await?;
+    }
+    for transition in &transitions {
+        let cloud_kind = match transition.kind.as_str() {
+            "device_isolated" => "device.isolated",
+            "device_reconciled" => "device.reconciled",
+            _ => "device.event",
+        };
+        crate::repo::outbox::emit(&mut tx, cloud_kind, &serde_json::json!({"device_id":dev,"kind":transition.kind,"severity":transition.severity,"detail":transition.detail}), at).await?;
     }
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(StatusPersistResult {

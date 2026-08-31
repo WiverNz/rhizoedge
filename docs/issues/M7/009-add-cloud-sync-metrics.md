@@ -37,11 +37,11 @@ attention and nothing drains them automatically.
 
 ## Acceptance criteria
 
-- [ ] All metrics are exported and accurate.
-- [ ] `pending_cloud_events` tracks the real backlog.
-- [ ] `cloud_last_success_timestamp_seconds` updates on success.
-- [ ] The sync endpoints return the documented shapes.
-- [ ] The cardinality guard still passes.
+- [x] All metrics are exported and accurate.
+- [x] `pending_cloud_events` tracks the real backlog.
+- [x] `cloud_last_success_timestamp_seconds` updates on success.
+- [x] The sync endpoints return the documented shapes.
+- [x] The cardinality guard still passes.
 
 ## Verification
 

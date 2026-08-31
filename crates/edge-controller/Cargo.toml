@@ -23,6 +23,7 @@ clap = { workspace = true }
 figment = { workspace = true }
 prometheus = { workspace = true }
 rhizo-domain = { path = "../domain" }
+rhizo-cloud-client = { path = "../cloud-client" }
 rhizo-mqtt-contract = { path = "../mqtt-contract" }
 rhizo-policy = { path = "../policy" }
 rhizo-storage = { path = "../storage" }

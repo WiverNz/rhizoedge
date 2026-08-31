@@ -43,6 +43,13 @@ pub struct Metrics {
     pub command_intents_pending: IntGauge,
     pub command_intents_expired: IntCounter,
     pub clock_steps: IntCounterVec,
+    pub pending_cloud_events: IntGauge,
+    pub cloud_sync_attempts: IntCounterVec,
+    pub cloud_sync_duration: prometheus::Histogram,
+    pub cloud_events_quarantined: IntCounter,
+    pub cloud_events_dropped: IntCounter,
+    pub cloud_last_success: IntGauge,
+    pub cloud_batch_size: IntGauge,
 }
 impl Metrics {
     /// Registers the catalogue in a private registry-friendly process registry.
@@ -193,6 +200,34 @@ impl Metrics {
                 Opts::new(CLOCK_STEPS_TOTAL, "Edge wall-clock steps"),
                 &["direction"]
             )?),
+            pending_cloud_events: reg!(IntGauge::new(
+                "pending_cloud_events",
+                "Pending cloud history events"
+            )?),
+            cloud_sync_attempts: reg!(IntCounterVec::new(
+                Opts::new("cloud_sync_attempts_total", "Cloud sync attempts"),
+                &["outcome"]
+            )?),
+            cloud_sync_duration: reg!(prometheus::Histogram::with_opts(HistogramOpts::new(
+                "cloud_sync_duration_seconds",
+                "Cloud request duration"
+            ))?),
+            cloud_events_quarantined: reg!(IntCounter::new(
+                "cloud_events_quarantined_total",
+                "Cloud-rejected events"
+            )?),
+            cloud_events_dropped: reg!(IntCounter::new(
+                "cloud_events_dropped_total",
+                "Low-tier events pruned at cap"
+            )?),
+            cloud_last_success: reg!(IntGauge::new(
+                "cloud_last_success_timestamp_seconds",
+                "Last successful cloud sync"
+            )?),
+            cloud_batch_size: reg!(IntGauge::new(
+                "cloud_sync_batch_size",
+                "Adaptive cloud batch size"
+            )?),
         };
         for metric in [&metrics.received, &metrics.duplicate, &metrics.measurements] {
             metric.with_label_values(&["unknown"]);
@@ -250,6 +285,9 @@ impl Metrics {
         metrics.lockouts.with_label_values(&["unknown"]);
         for direction in ["forward", "backward"] {
             metrics.clock_steps.with_label_values(&[direction]);
+        }
+        for outcome in ["success", "failure"] {
+            metrics.cloud_sync_attempts.with_label_values(&[outcome]);
         }
         let _ = INSTANCE.set(metrics.clone());
         Ok(metrics)

@@ -49,6 +49,9 @@ async fn start() -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     db.migrate().await.map_err(|e| e.to_string())?;
+    rhizo_storage::repo::outbox::configure(&db, c.cloud.enabled, c.cloud.outbox_max_rows)
+        .await
+        .map_err(|e| e.to_string())?;
     let devices = rhizo_storage::repo::query::device_count(&db)
         .await
         .map_err(|e| e.to_string())?;
@@ -99,6 +102,24 @@ async fn start() -> Result<(), String> {
         "reconciled the command ledger at startup"
     );
     let mut supervisor = Supervisor::new(metrics.clone(), Duration::from_secs(10));
+    if c.cloud.enabled {
+        let cloud_client = rhizo_cloud_client::CloudClient::new(
+            &c.cloud.base_url,
+            c.edge_id.clone(),
+            Duration::from_secs(c.cloud.request_timeout_seconds),
+        )
+        .map_err(|e| e.to_string())?;
+        supervisor.spawn(
+            "cloud_outbox",
+            edge_controller::cloud::drain::run(
+                db.clone(),
+                cloud_client,
+                clock.clone(),
+                metrics.clone(),
+                supervisor.shutdown_receiver(),
+            ),
+        );
+    }
     supervisor.spawn(
         "mqtt_ingress",
         ingress::run(

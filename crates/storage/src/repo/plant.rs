@@ -80,6 +80,7 @@ fn row_to_plant(row: &sqlx::sqlite::SqliteRow) -> PlantRow {
 
 /// Inserts a plant. Automation is off, whatever the caller wanted.
 pub async fn create(db: &EdgeDb, plant: &NewPlant, now: i64) -> Result<PlantRow, StorageError> {
+    let mut tx = db.begin().await?;
     sqlx::query(
         "INSERT INTO plants(plant_id,profile_id,name,species,pot_volume_ml,soil_type,auto_watering_enabled,created_at) \
          VALUES(?,?,?,?,?,?,0,?)",
@@ -91,9 +92,11 @@ pub async fn create(db: &EdgeDb, plant: &NewPlant, now: i64) -> Result<PlantRow,
     .bind(plant.pot_volume_ml)
     .bind(&plant.soil_type)
     .bind(now)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    crate::repo::outbox::emit(&mut tx, "plant.created", &serde_json::json!({"plant_id":plant.plant_id,"name":plant.name,"species":plant.species,"profile_id":plant.profile_id,"pot_volume_ml":plant.pot_volume_ml,"soil_type":plant.soil_type}), now).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
     get(db, &plant.plant_id)
         .await?
         .ok_or_else(|| StorageError::Database("the plant vanished between insert and read".into()))
@@ -137,6 +140,7 @@ pub async fn update(
     db: &EdgeDb,
     plant_id: &str,
     patch: &PlantPatch,
+    now: i64,
 ) -> Result<Option<PlantRow>, StorageError> {
     if get(db, plant_id).await?.is_none() {
         return Ok(None);
@@ -164,6 +168,7 @@ pub async fn update(
     set!("pot_volume_ml", patch.pot_volume_ml);
     set!("soil_type", patch.soil_type.clone());
     set!("auto_watering_enabled", patch.auto_watering_enabled);
+    crate::repo::outbox::emit(&mut tx, "plant.updated", &serde_json::json!({"plant_id":plant_id,"patch":{"name":patch.name,"species":patch.species,"profile_id":patch.profile_id,"pot_volume_ml":patch.pot_volume_ml,"soil_type":patch.soil_type,"auto_watering_enabled":patch.auto_watering_enabled}}), now).await?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     get(db, plant_id).await
 }
@@ -276,6 +281,13 @@ pub async fn record_state_transition(
     .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    crate::repo::outbox::emit(
+        &mut tx,
+        "plant.state_changed",
+        &serde_json::json!({"plant_id":plant_id,"from":from,"to":to}),
+        now,
+    )
+    .await?;
     let event_id = format!("plant:{plant_id}:state:{now}:{to}");
     let detail = serde_json::json!({ "from": from, "to": to }).to_string();
     sqlx::query(
@@ -284,7 +296,7 @@ pub async fn record_state_transition(
     )
     .bind(event_id)
     .bind(plant_id)
-    .bind(detail)
+    .bind(&detail)
     .bind(now)
     .execute(&mut *tx)
     .await
@@ -304,6 +316,7 @@ pub async fn record_plant_event(
     now: i64,
 ) -> Result<bool, StorageError> {
     let detail = detail.map(ToString::to_string);
+    let mut tx = db.begin().await?;
     let done = sqlx::query(
         "INSERT INTO plant_events(event_id,plant_id,kind,severity,detail_json,occurred_at) \
          VALUES(?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING",
@@ -312,11 +325,20 @@ pub async fn record_plant_event(
     .bind(plant_id)
     .bind(kind)
     .bind(severity)
-    .bind(detail)
+    .bind(&detail)
     .bind(now)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    if done.rows_affected() == 1 {
+        let cloud_kind = match severity {
+            "critical" => "threshold.critical",
+            "warning" => "threshold.warning",
+            _ => "device.event",
+        };
+        crate::repo::outbox::emit(&mut tx, cloud_kind, &serde_json::json!({"plant_id":plant_id,"source_event_id":event_id,"kind":kind,"severity":severity,"detail":detail}), now).await?;
+    }
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(done.rows_affected() == 1)
 }
 
@@ -592,6 +614,7 @@ pub async fn insert_detected_watering(
     detail: &serde_json::Value,
 ) -> Result<bool, StorageError> {
     let id = format!("detected:{plant_id}:{at}");
+    let mut tx = db.begin().await?;
     let done = sqlx::query(
         "INSERT INTO watering_events(watering_event_id,plant_id,device_id,command_id,mode,origin,started_at,completed_at,requested_ml,delivered_ml,status,reason_json) \
          VALUES(?,?,?,NULL,'detected','detected',?,?,NULL,?,'completed',?) ON CONFLICT(watering_event_id) DO NOTHING",
@@ -603,9 +626,13 @@ pub async fn insert_detected_watering(
     .bind(at)
     .bind(estimated_ml)
     .bind(detail.to_string())
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    if done.rows_affected() == 1 {
+        crate::repo::outbox::emit(&mut tx, "watering.detected", &serde_json::json!({"watering_event_id":id,"plant_id":plant_id,"device_id":device_id,"completed_at":at,"delivered_ml":estimated_ml,"detail":detail}), at).await?;
+    }
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(done.rows_affected() == 1)
 }
 
@@ -768,6 +795,7 @@ mod tests {
                 soil_type: Some(None),
                 ..Default::default()
             },
+            2_000,
         )
         .await
         .unwrap()
@@ -780,7 +808,9 @@ mod tests {
             "an omitted field is left alone"
         );
         assert_eq!(
-            update(&db, "absent", &PlantPatch::default()).await.unwrap(),
+            update(&db, "absent", &PlantPatch::default(), 1_000)
+                .await
+                .unwrap(),
             None
         );
         assert_eq!(live_count(&db).await.unwrap(), 2);
@@ -809,6 +839,7 @@ mod tests {
                 auto_watering_enabled: Some(true),
                 ..Default::default()
             },
+            2_000,
         )
         .await
         .unwrap()

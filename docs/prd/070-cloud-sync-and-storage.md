@@ -1,6 +1,6 @@
 # PRD 070 — Cloud Sync and Storage
 
-**Milestone:** M7 · **Status:** PLANNED · **Depends on:** M6
+**Milestone:** M7 · **Status:** IMPLEMENTED · **Depends on:** M6
 
 ## Summary
 
@@ -236,21 +236,21 @@ the drained count.
 
 ## Acceptance criteria
 
-- [ ] With the cloud stopped for an entire scenario, ingestion, storage,
+- [x] With the cloud stopped for an entire scenario, ingestion, storage,
       recommendations, automatic watering, the REST API, and metrics all work.
-- [ ] `/health/ready` returns **200** with the cloud stopped.
-- [ ] `pending_cloud_events` grows during the outage and returns to 0 after
+- [x] `/health/ready` returns **200** with the cloud stopped.
+- [x] `pending_cloud_events` grows during the outage and returns to 0 after
       recovery.
-- [ ] Every event reaches PostgreSQL exactly once, verified by
+- [x] Every event reaches PostgreSQL exactly once, verified by
       `SELECT COUNT(*) FROM synced_events` against the edge's emitted count.
-- [ ] Re-POSTing an identical batch returns all `duplicate` and creates no rows.
-- [ ] `safety_009_decisions_identical_with_cloud_down` passes.
-- [ ] A deliberately rejected event is quarantined while the other 499 sync.
-- [ ] Filling the outbox past the cap prunes measurements and preserves **every**
+- [x] Re-POSTing an identical batch returns all `duplicate` and creates no rows.
+- [x] `safety_009_decisions_identical_with_cloud_down` passes.
+- [x] A deliberately rejected event is quarantined while the other 499 sync.
+- [x] Filling the outbox past the cap prunes measurements and preserves **every**
       watering event, command, and lockout.
-- [ ] `cloud-api reproject --edge-id home-01` reproduces byte-identical
+- [x] `cloud-api reproject --edge-id home-01` reproduces byte-identical
       projection tables.
-- [ ] `rhizo-domain`'s `Cargo.toml` contains no dependency on
+- [x] `rhizo-domain`'s `Cargo.toml` contains no dependency on
       `rhizo-cloud-client`.
 
 ## Dependencies

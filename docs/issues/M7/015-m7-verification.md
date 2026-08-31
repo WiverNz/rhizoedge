@@ -48,17 +48,17 @@ SAFETY-008 and could trigger a pointless restart loop.
 
 ## Acceptance criteria
 
-- [ ] All gate commands pass.
-- [ ] With the cloud stopped, every local function works.
-- [ ] **`/health/ready` returns 200 with the cloud stopped.**
-- [ ] `pending_cloud_events` grows during the outage and returns to 0 after recovery.
-- [ ] Every event reaches PostgreSQL exactly once.
-- [ ] Re-POSTing a batch returns all `duplicate` and creates no rows.
-- [ ] `safety_009_decisions_identical_with_cloud_down` passes.
-- [ ] Filling the outbox past the cap preserves every high-tier event.
-- [ ] `reproject` reproduces identical tables.
-- [ ] `rhizo-domain` has no cloud dependency.
-- [ ] safety-invariants.md and ROADMAP.md updated; report recorded.
+- [x] All gate commands pass.
+- [x] With the cloud stopped, every local function works.
+- [x] **`/health/ready` returns 200 with the cloud stopped.**
+- [x] `pending_cloud_events` grows during the outage and returns to 0 after recovery.
+- [x] Every event reaches PostgreSQL exactly once.
+- [x] Re-POSTing a batch returns all `duplicate` and creates no rows.
+- [x] `safety_009_decisions_identical_with_cloud_down` passes.
+- [x] Filling the outbox past the cap preserves every high-tier event.
+- [x] `reproject` reproduces identical tables.
+- [x] `rhizo-domain` has no cloud dependency.
+- [x] safety-invariants.md and ROADMAP.md updated; report recorded.
 
 ## Verification
 

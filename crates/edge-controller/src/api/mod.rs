@@ -12,6 +12,7 @@ pub mod profiles;
 pub mod recommendation;
 pub mod server;
 pub mod support;
+pub mod sync;
 #[cfg(test)]
 pub mod testsupport;
 pub mod watering;

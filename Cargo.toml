@@ -46,16 +46,17 @@ axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "4.6.6", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
+httpdate = "1.0.3"
 proptest = "1.11.0"
 prometheus = { version = "0.14.0", default-features = false }
 # Pinned to the 0.9 line so it unifies with the one `proptest` depends on:
 # `cargo tree -d` must show no shared dependency twice (M0-002).
 rand = "0.9.5"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 rumqttc = "0.25.1"
 serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "macros", "migrate", "chrono", "uuid", "json"] }
 thiserror = "2.0.20"
 # Only a dev-dependency: `ServiceExt::oneshot` drives an axum router in a unit
 # test without binding a socket, so the control API is testable without a port.

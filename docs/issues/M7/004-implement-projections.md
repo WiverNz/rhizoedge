@@ -39,12 +39,12 @@ through a partial failure.
 
 ## Acceptance criteria
 
-- [ ] Each known kind projects into its table.
-- [ ] Projection shares the ledger's transaction.
-- [ ] A late older status does **not** overwrite a newer one.
-- [ ] Re-projecting the same event is an upsert with no duplicate.
-- [ ] `watering.completed` fills in `completed_at` regardless of arrival order.
-- [ ] Shuffling a batch produces identical final projections.
+- [x] Each known kind projects into its table.
+- [x] Projection shares the ledger's transaction.
+- [x] A late older status does **not** overwrite a newer one.
+- [x] Re-projecting the same event is an upsert with no duplicate.
+- [x] `watering.completed` fills in `completed_at` regardless of arrival order.
+- [x] Shuffling a batch produces identical final projections.
 
 ## Verification
 

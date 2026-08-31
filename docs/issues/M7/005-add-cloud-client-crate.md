@@ -40,12 +40,12 @@ rather than applying its own backoff over the server's instruction.
 
 ## Acceptance criteria
 
-- [ ] `send_batch` returns per-event results.
-- [ ] Each error condition maps to the correct variant.
-- [ ] `Classify` matches exhaustively with no catch-all.
-- [ ] 429 carries `Retry-After` when present.
-- [ ] Timeouts produce `Transport`, classified Transient.
-- [ ] Time conversion happens only in this crate.
+- [x] `send_batch` returns per-event results.
+- [x] Each error condition maps to the correct variant.
+- [x] `Classify` matches exhaustively with no catch-all.
+- [x] 429 carries `Retry-After` when present.
+- [x] Timeouts produce `Transport`, classified Transient.
+- [x] Time conversion happens only in this crate.
 
 ## Verification
 

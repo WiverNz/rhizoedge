@@ -217,16 +217,10 @@ pub async fn issue(
     // written here purely so history survives a later sync (M7). It shares the
     // transaction because a command the cloud never hears about is a hole in the
     // ledger, not a retryable failure.
-    sqlx::query(
-        "INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,next_attempt_at,created_at) \
-         VALUES(?,'command.issued','high','{}','pending',?,?) ON CONFLICT(event_id) DO NOTHING",
-    )
-    .bind(format!("command:{}", command.command_id))
-    .bind(now)
-    .bind(now)
-    .execute(&mut *tx)
-    .await
-    .map_err(StorageError::from_sqlx)?;
+    crate::repo::outbox::emit(&mut tx,"command.issued",&serde_json::json!({"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"kind":command.kind,"requested_ml":command.requested_ml,"mode":command.mode,"issued_at":command.issued_at}),now).await?;
+    if command.kind == "water" {
+        crate::repo::outbox::emit(&mut tx,"watering.started",&serde_json::json!({"watering_event_id":command.command_id,"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"requested_ml":command.requested_ml,"mode":command.mode,"started_at":command.issued_at}),now).await?;
+    }
 
     tx.commit().await.map_err(StorageError::from_sqlx)
 }
@@ -332,22 +326,14 @@ pub async fn settle(
         .execute(&mut *tx)
         .await
         .map_err(StorageError::from_sqlx)?;
+        crate::repo::outbox::emit(&mut tx,"watering.completed",&serde_json::json!({"watering_event_id":event.watering_event_id,"command_id":command_id,"device_id":event.device_id,"plant_id":event.plant_id,"mode":event.mode,"started_at":event.started_at,"completed_at":event.completed_at,"requested_ml":event.requested_ml,"delivered_ml":event.delivered_ml}),now).await?;
     }
 
     if let Some((plant_id, state)) = next_state {
         put_state_in_tx(&mut tx, plant_id, state, now).await?;
     }
 
-    sqlx::query(
-        "INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,next_attempt_at,created_at) \
-         VALUES(?,'command.settled','high','{}','pending',?,?) ON CONFLICT(event_id) DO NOTHING",
-    )
-    .bind(format!("command-settled:{command_id}"))
-    .bind(now)
-    .bind(now)
-    .execute(&mut *tx)
-    .await
-    .map_err(StorageError::from_sqlx)?;
+    crate::repo::outbox::emit(&mut tx,"command.settled",&serde_json::json!({"command_id":command_id,"status":status,"reason":reason,"occurred_at":now}),now).await?;
 
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(true)
@@ -415,6 +401,7 @@ pub async fn set_lockout(
     cleared_by: Option<&str>,
     now: i64,
 ) -> Result<(), StorageError> {
+    let mut tx = db.begin().await?;
     sqlx::query(
         "UPDATE plants SET lockout_reason=?,lockout_since=?,lockout_until=?,lockout_cleared_by=?,lockout_cleared_at=? \
          WHERE plant_id=? AND deleted_at IS NULL",
@@ -425,9 +412,16 @@ pub async fn set_lockout(
     .bind(cleared_by)
     .bind(if reason.is_none() { Some(now) } else { None })
     .bind(plant_id)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    let kind = if reason.is_some() {
+        "lockout.set"
+    } else {
+        "lockout.cleared"
+    };
+    crate::repo::outbox::emit(&mut tx, kind, &serde_json::json!({"plant_id":plant_id,"reason":reason,"since":since,"hold_until":hold_until,"cleared_by":cleared_by}), now).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(())
 }
 
@@ -462,6 +456,9 @@ mod tests {
     async fn db() -> EdgeDb {
         let db = EdgeDb::in_memory().await.unwrap();
         db.migrate().await.unwrap();
+        crate::repo::outbox::configure(&db, true, 500_000)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO plants(plant_id,name,created_at) VALUES('monstera-01','Monstera',0)",
         )
@@ -506,11 +503,26 @@ mod tests {
         let state = irrigation_state(&db, "monstera-01").await.unwrap().unwrap();
         assert_eq!(state.state, "dose_issued");
         assert_eq!(state.active_command_id.as_deref(), Some("cmd-1"));
-        let outbox: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
+        let outbox: Vec<String> =
+            sqlx::query_scalar("SELECT kind FROM pending_cloud_events ORDER BY kind")
+                .fetch_all(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(outbox, vec!["command.issued", "watering.started"]);
+    }
+
+    #[tokio::test]
+    async fn disabled_cloud_emits_no_outbox_row() {
+        let db = db().await;
+        crate::repo::outbox::configure(&db, false, 500_000)
+            .await
+            .unwrap();
+        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
             .fetch_one(db.pool())
             .await
             .unwrap();
-        assert_eq!(outbox, 1);
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]

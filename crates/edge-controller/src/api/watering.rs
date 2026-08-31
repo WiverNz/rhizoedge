@@ -357,6 +357,7 @@ async fn set_auto(state: &ApiState, plant_id: &str, enabled: bool) -> Response {
             auto_watering_enabled: Some(enabled),
             ..plant_repo::PlantPatch::default()
         },
+        state.clock.now().timestamp_millis(),
     )
     .await
     {

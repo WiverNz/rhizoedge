@@ -44,12 +44,12 @@ deliberate — it buys rebuildability, which is worth more than the disk.
 
 ## Acceptance criteria
 
-- [ ] All tables exist with the documented columns.
-- [ ] `UNIQUE (edge_id, event_id)` is present on `synced_events`.
-- [ ] Every projection table includes `edge_id` in its primary key.
-- [ ] Migrations are idempotent.
-- [ ] A failing migration exits non-zero.
-- [ ] Time columns are `TIMESTAMPTZ`, payloads `JSONB`.
+- [x] All tables exist with the documented columns.
+- [x] `UNIQUE (edge_id, event_id)` is present on `synced_events`.
+- [x] Every projection table includes `edge_id` in its primary key.
+- [x] Migrations are idempotent.
+- [x] A failing migration exits non-zero.
+- [x] Time columns are `TIMESTAMPTZ`, payloads `JSONB`.
 
 ## Verification
 

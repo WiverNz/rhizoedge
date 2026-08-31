@@ -41,12 +41,12 @@ differential test confirms what the type system already forbids.
 
 ## Acceptance criteria
 
-- [ ] The scenario runs identically with the cloud up and down.
-- [ ] Command sequences match modulo ids and timestamps.
-- [ ] Every lockout occurs in both runs.
-- [ ] `rhizo-domain`'s dependency list contains no cloud crate.
-- [ ] The test is deterministic across repeated runs.
-- [ ] **`safety_009_decisions_identical_with_cloud_down` passes.**
+- [x] The scenario runs identically with the cloud up and down.
+- [x] Command sequences match modulo ids and timestamps.
+- [x] Every lockout occurs in both runs.
+- [x] `rhizo-domain`'s dependency list contains no cloud crate.
+- [x] The test is deterministic across repeated runs.
+- [x] **`safety_009_decisions_identical_with_cloud_down` passes.**
 
 ## Verification
 

@@ -38,11 +38,11 @@ The consistency check is the more valuable half — it turns 'we could rebuild' 
 
 ## Acceptance criteria
 
-- [ ] Reprojection reproduces byte-identical projection tables.
-- [ ] Running it twice is idempotent.
-- [ ] The consistency check detects a deliberately corrupted projection.
-- [ ] It is safe against live data.
-- [ ] Progress is reported for large ledgers.
+- [x] Reprojection reproduces byte-identical projection tables.
+- [x] Running it twice is idempotent.
+- [x] The consistency check detects a deliberately corrupted projection.
+- [x] It is safe against live data.
+- [x] Progress is reported for large ledgers.
 
 ## Verification
 
