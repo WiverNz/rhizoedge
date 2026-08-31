@@ -7,8 +7,9 @@ upstream documentation on 2026-08-25; re-verify at the start of M9 (issue
 M9-001).** The firmware Rust version is an explicit exception to the host
 workspace's 1.98.0 pin — see "Rust version: the embedded toolchain exception".
 
-**Amended 2026-08-28 — board portability.** The chip commitment (ESP32-C3) and
-the *development board* commitment (ESP32-C3-DevKitC-02) are separated, and
+**Amended 2026-08-31 — actual development board.** The chip commitment
+(ESP32-C3) and the *development board* commitment (official Espressif
+ESP32-C3-DEVKITM-1-N4X) are separated, and
 board wiring is moved behind a compile-time-selected board profile. See
 "Board: development board versus product board" and the revised firmware
 structure. No other part of this ADR changed.
@@ -64,12 +65,13 @@ conflated. Four distinct things:
 
 ```text
 MCU / platform choice:              ESP32-C3               committed
-development board:                  ESP32-C3-DevKitC-02    initial, reference
+development board:                  ESP32-C3-DEVKITM-1-N4X initial, reference
 possible battery deployment board:  Seeed XIAO ESP32-C3    candidate, unpurchased
 future:                             custom ESP32-C3 PCB    must remain possible
 ```
 
-**ESP32-C3-DevKitC-02 is the initial development and reference board.** It is
+**The official Espressif ESP32-C3-DEVKITM-1-N4X is the initial development and
+reference board.** It is
 chosen for bring-up convenience, not for deployment: a full pin header for
 breadboarding, an on-board USB-to-UART bridge for serial provisioning and
 `espflash --monitor`, exposed strapping pins, and a form factor that tolerates
@@ -77,7 +79,8 @@ a multimeter probe on the pump driver input — which is exactly what HIL-1
 requires.
 
 None of those properties matter in a sealed battery enclosure, and some of them
-are actively wrong there: the DevKitC-02's regulator and USB bridge draw current
+are actively wrong there: the development board's regulator and USB circuitry
+draw current
 that a device sleeping fourteen minutes out of every fifteen
 ([ADR-018](018-battery-and-deep-sleep-device-mode.md)) cannot afford. The
 **Seeed XIAO ESP32-C3** is the candidate replacement for that deployment, and a
@@ -120,7 +123,7 @@ has quietly become one.
 Exactly one board profile is selected per firmware build, by a Cargo feature:
 
 ```text
-board-devkitc02        # ESP32-C3-DevKitC-02 — the first supported profile
+board-devkitm1         # ESP32-C3-DEVKITM-1-N4X — first supported profile
 board-xiao-esp32c3     # Seeed XIAO ESP32-C3 — added with the battery hardware
 ```
 
@@ -136,7 +139,7 @@ state that decides which pin energises a pump. ADR-011 keeps hard limits out of
 messages for the same reason. It also costs nothing here: the board is soldered
 in place, so nothing legitimate ever changes it after flashing.
 
-**M9 ships `board-devkitc02` only.** The XIAO profile is written when the board
+**M9 ships `board-devkitm1` only.** The XIAO profile is written when the board
 is purchased and tested. What M9 must deliver is the *seam*: adding the second
 profile is a new file under `src/board/` and a feature entry, with no change to
 `app/`, `safety/`, `sensors/`, `pump/`, or `net/`. That is a structural
@@ -288,7 +291,7 @@ firmware/esp32-node/
     ├── main.rs           # pump-off FIRST, then init
     ├── board/            # THE ONLY place a GPIO number may appear
     │   ├── mod.rs        # profile selection, the board trait/struct, compile_error!
-    │   ├── devkitc02.rs  # ESP32-C3-DevKitC-02 pin map and peripheral construction
+    │   ├── devkitm1.rs   # ESP32-C3-DEVKITM-1-N4X pin map/peripheral construction
     │   └── xiao_esp32c3.rs   # added with the battery hardware, not before
     ├── net/              # wifi.rs, mqtt.rs, time_sync.rs
     ├── sensors/          # trait defs + fake/ + real/
@@ -351,7 +354,8 @@ move a new file later.
 deployment board, but it is not purchased, and bringing up unfamiliar firmware
 on a board with few exposed pins, no header, and no comfortable place to attach
 a multimeter would make HIL-1 — the one gate that genuinely matters in M9 —
-harder for no gain. Develop on the DevKitC-02, deploy on whatever measures best.
+harder for no gain. Develop on the official DEVKITM-1-N4X, then deploy on the
+compact ESP32-C3 board that measures best.
 
 **A runtime pin table in NVS or in device config.** Rejected. It makes the
 mapping between a GPIO and the pump a remotely reachable value, which is
@@ -434,7 +438,7 @@ Negative, accepted:
   resolves the Rust-version exception one way or the other.
 - M9-002 adds the CI firmware-build job, and builds every board profile that
   exists.
-- M9-003 creates `src/board/`, the `board-devkitc02` profile, the
+- M9-003 creates `src/board/`, the `board-devkitm1` profile, the
   exactly-one-profile compile error, and the pin-leak check.
 - M9-005, M9-007, and M9-020 take their pins, polarities, and rail control from
   the board profile rather than defining them.
@@ -448,7 +452,7 @@ Negative, accepted:
 - `esp-idf-template`: <https://github.com/esp-rs/esp-idf-template>
 - `esp-idf-svc`: <https://github.com/esp-rs/esp-idf-svc>
 - `esp-idf-hal`: <https://github.com/esp-rs/esp-idf-hal>
-- ESP32-C3-DevKitC-02 user guide:
-  <https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/hw-reference/esp32c3/user-guide-devkitc-02.html>
+- Official ESP32-C3-DevKitM-1 user guide:
+  <https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32c3/esp32-c3-devkitm-1/user_guide.html>
 - Seeed XIAO ESP32-C3 (candidate battery board, unpurchased):
   <https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/>

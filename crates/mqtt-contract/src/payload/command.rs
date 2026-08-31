@@ -135,6 +135,43 @@ pub struct CommandResult {
     /** Future diagnostic detail. */
     pub detail: Option<String>,
 }
+
+/// Durable acknowledgement of one `command.result` (edge → device).
+///
+/// # Why QoS 1 is not this
+///
+/// MQTT QoS 1 is **hop by hop**. The PUBACK a device receives for its
+/// `command.result` is written by the *broker*, on receipt, and says nothing
+/// about the edge — which may not have read the message yet, may crash before
+/// it commits, and (with a clean session) will never be offered it again. A
+/// device that stopped retrying on that PUBACK would therefore drop a result
+/// the edge never recorded.
+///
+/// A lost result is not a lost sample. It is ledger data: the edge's rolling
+/// 24-hour budget (SAFETY-006) is derived from the rows results produce, so a
+/// silently dropped `completed` under-counts delivered volume, and under-counting
+/// is the direction that waters again too soon.
+///
+/// This is the same argument protocol §5.4 already makes for `event.ack`, and
+/// the same shape of answer: an application-level acknowledgement published
+/// **after** the edge's transaction commits.
+///
+/// # Per `command_id`, not cumulative
+///
+/// `event.ack` can be cumulative because replayed events carry a total order —
+/// `device_seq`. Results have no such order: a `command_id` is a UUID minted by
+/// whoever issued the command. So the acknowledgement names exactly the result
+/// it covers, and a device clears that one entry.
+///
+/// Idempotent in both directions: acknowledging a `command_id` the device is no
+/// longer holding is a no-op, and an edge that has already committed a result
+/// re-acknowledges it on every redelivery — which is what lets a device whose
+/// acknowledgement was lost make progress on its next retry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CommandResultAck {
+    /// The result the edge has durably committed.
+    pub command_id: CommandId,
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,5 +213,20 @@ mod tests {
         })
         .unwrap();
         assert!(value.get_mut("delivered_ml").unwrap().is_null());
+    }
+    #[test]
+    fn a_result_acknowledgement_round_trips() {
+        let ack = CommandResultAck {
+            command_id: CommandId::from_uuid(Uuid::nil()),
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        assert_eq!(
+            json,
+            r#"{"command_id":"00000000-0000-0000-0000-000000000000"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<CommandResultAck>(&json).unwrap(),
+            ack
+        );
     }
 }

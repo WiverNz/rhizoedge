@@ -515,6 +515,128 @@ async fn restart_mid_command() {
     assert_eq!(count(&edge.db, "commands").await, 1, "no second command");
 }
 
+/// **`command.result` durability, over a real broker** (protocol §5.14).
+///
+/// The property: a device learns that its result is durable *here* only from
+/// `command.result.ack`, published after the edge's transaction commits — and a
+/// redelivered result is acknowledged again, so a device whose acknowledgement
+/// was lost can still make progress.
+///
+/// # Why the PUBACK could not have carried this
+///
+/// MQTT 3.1.1 QoS 1 acknowledges hop by hop. The PUBACK for the publish below is
+/// written by *this broker*, on receipt, and the edge may not have read the
+/// message yet. Nothing the edge does to its own PUBACK travels back through the
+/// broker to the publisher. This test subscribes as the device and waits for an
+/// application-level message, because that is the only signal that carries the
+/// edge's commit.
+#[tokio::test]
+async fn a_committed_result_is_acknowledged_to_the_device_and_re_acknowledged_on_redelivery() {
+    let Some(broker) = support::broker("result_ack_over_the_wire").await else {
+        return;
+    };
+    let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+    db.migrate().await.unwrap();
+    let edge = Edge::start_on(&broker, db.clone()).await;
+    let now = edge.clock.now();
+    waterable(&edge.db, now).await;
+    mark_connected(&edge.db, now).await;
+
+    let (status, body) = edge
+        .json(
+            "POST",
+            "/api/v1/plants/monstera-01/water",
+            serde_json::json!({ "ml": 40.0 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let command_id = body["command_id"].as_str().unwrap().to_owned();
+
+    // Subscribe as the device does: the exact acknowledgement topic, which is
+    // *not* the result topic. A device that received its own results would be
+    // back in the seam the exact subscriptions closed.
+    let mut device = support::Subscriber::connect(
+        &broker,
+        &format!("plant-node-02-ack-{}", uuid::Uuid::new_v4()),
+        "plant-node-02",
+        &broker.device_password("plant-node-02"),
+        "rhizo/v1/devices/plant-node-02/commands/result/ack",
+    )
+    .await;
+
+    let result = serde_json::json!({
+        "v": 1, "kind": "command.result",
+        "message_id": uuid::Uuid::now_v7(),
+        "device_id": "plant-node-02",
+        "data": {
+            "command_id": command_id,
+            "status": "completed",
+            "requested_ml": 40.0,
+            "delivered_ml": 40.0,
+            "duration_ms": 4_878,
+            "clamped": false,
+            "reason": null,
+            "delivered_today_ml": 40.0,
+            "origin": "edge_command",
+        },
+    });
+    support::publish(
+        &device.client(),
+        "rhizo/v1/devices/plant-node-02/commands/result",
+        &result.to_string(),
+        false,
+    )
+    .await;
+
+    let wanted = command_id.clone();
+    let ack = device
+        .next_matching(support::RECEIVE_TIMEOUT, move |m| {
+            m.topic.ends_with("/commands/result/ack")
+                && m.json()["data"]["command_id"] == serde_json::json!(wanted)
+        })
+        .await
+        .expect("the edge must acknowledge a committed result");
+    assert!(
+        !ack.retain,
+        "an acknowledgement is a statement about one moment"
+    );
+    assert_eq!(ack.json()["kind"], "command.result.ack");
+
+    // And the commit really did happen before the acknowledgement went out.
+    assert_eq!(
+        count(&edge.db, "watering_events").await,
+        1,
+        "the acknowledgement follows the commit, so the row is already there"
+    );
+
+    // A redelivery -- a device retrying because the first acknowledgement was
+    // lost -- is acknowledged again rather than silently deduplicated into
+    // silence, which would leave that device retrying for ever.
+    let mut redelivery = result.clone();
+    redelivery["message_id"] = serde_json::json!(uuid::Uuid::now_v7());
+    support::publish(
+        &device.client(),
+        "rhizo/v1/devices/plant-node-02/commands/result",
+        &redelivery.to_string(),
+        false,
+    )
+    .await;
+    let wanted = command_id.clone();
+    assert!(
+        device
+            .next_matching(support::RECEIVE_TIMEOUT, move |m| {
+                m.topic.ends_with("/commands/result/ack")
+                    && m.json()["data"]["command_id"] == serde_json::json!(wanted)
+            })
+            .await
+            .is_some(),
+        "a duplicate result must be re-acknowledged, not answered with silence"
+    );
+    // Idempotent by `command_id`: the second delivery adds nothing.
+    assert_eq!(count(&edge.db, "watering_events").await, 1);
+    assert_eq!(count(&edge.db, "commands").await, 1);
+}
+
 /// Polls an async condition until it holds or the window elapses.
 ///
 /// The shared `support::eventually` takes a synchronous predicate, because every

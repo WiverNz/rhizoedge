@@ -19,12 +19,17 @@ use tokio::sync::{mpsc, watch};
 /// # The acknowledgement follows the commit
 ///
 /// `process` returns only after its transaction has committed, and **only then**
-/// is the PUBACK sent. That ordering is what makes a device's "stop retrying"
-/// condition depend on the edge's durable commit rather than on the broker's
-/// receipt (M6-010). A message whose processing failed transiently is not
+/// is the PUBACK sent. A message whose processing failed transiently is not
 /// acknowledged, so the broker redelivers it; a message that was quarantined
 /// **is** acknowledged, because redelivering a permanently unparseable payload
 /// for ever would wedge every device behind it.
+///
+/// That ordering governs the **broker-to-edge** hop and nothing further. A
+/// device's own retry stops on the PUBACK the *broker* wrote it, which this
+/// process never sees, so `command.result` additionally gets an
+/// application-level `command.result.ack` published on the success arm of
+/// `process` — after the commit, and for duplicates as well as new rows. See
+/// `mqtt::ingress::Inbound::publish` for the full trace.
 #[allow(
     clippy::too_many_arguments,
     reason = "the pipeline owns the single writer path and needs every one of               them; a bundle would hide that the commander is optional"
@@ -245,7 +250,21 @@ async fn process(
                     .with_label_values(&["unknown_command"])
                     .inc();
             }
-            retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?
+            let dedup = retry_transient(m, || ingest::persist_command_result(db, &e, at)).await?;
+            // The durable acknowledgement, published **after** both commits.
+            //
+            // The PUBACK this pipeline sends a moment later goes to the broker,
+            // and the broker had already acknowledged the device on receipt --
+            // QoS 1 is hop by hop, so the device's retry never depended on this
+            // edge at all. Only an application-level acknowledgement can tell a
+            // device that the result is durable here, which is the same
+            // argument, and the same answer, as `event.ack` (protocol §5.14).
+            //
+            // Published for a **duplicate** as readily as for a new row: a
+            // duplicate is the device retrying a result whose acknowledgement
+            // was lost, and staying silent would leave it retrying for ever.
+            publish_result_ack(client, &e.device_id, e.data.command_id).await?;
+            dedup
         }
         Msg::Events(e) => {
             for event in &e.data.events {
@@ -348,6 +367,50 @@ fn log_device_transitions(
             );
         }
     }
+}
+
+/// Tells a device that one `command.result` is durably committed here.
+///
+/// A failure to publish is not a failure of the message: the row is committed,
+/// and the device will retry the result until an acknowledgement reaches it.
+/// Returning an error would re-run the whole pipeline step against a
+/// transaction that has already landed.
+async fn publish_result_ack(
+    client: &rumqttc::AsyncClient,
+    device: &rhizo_mqtt_contract::DeviceId,
+    command_id: rhizo_mqtt_contract::CommandId,
+) -> Result<(), EdgeError> {
+    let envelope = Envelope {
+        v: 1,
+        kind: rhizo_mqtt_contract::MessageKind::CommandResultAck,
+        message_id: rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4()),
+        device_id: device.clone(),
+        boot_id: None,
+        sequence: None,
+        device_time_ms: None,
+        clock_synced: None,
+        data: rhizo_mqtt_contract::payload::CommandResultAck { command_id },
+    };
+    let payload = envelope
+        .to_json()
+        .map_err(|x| EdgeError::Decode(x.to_string()))?;
+    if let Err(error) = client
+        .publish(
+            Topic::CommandResultAck(device.clone()).as_string(),
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            payload,
+        )
+        .await
+    {
+        tracing::warn!(
+            device = %device,
+            %command_id,
+            %error,
+            "could not acknowledge a committed command result; the device will retry it"
+        );
+    }
+    Ok(())
 }
 
 async fn publish_edge_time(

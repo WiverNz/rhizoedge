@@ -95,6 +95,8 @@ start → run migrations (Fatal on failure) → open pool (WAL)
 | F-030-23 | All writes flow through the single pipeline task |
 | F-030-24 | `SQLITE_BUSY` retried 3× with 50/100/200 ms jitter, then a clean failure that leaves the message unprocessed |
 | F-030-25 | WAL, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON` |
+| F-030-26 | A `command.result` is acknowledged to its device with `command.result.ack` (protocol §5.14) **after** the persisting transaction commits, and for a duplicate result as readily as for a new one. The edge's MQTT session stays clean: durability between device and edge is carried by this acknowledgement, not by broker session state |
+| F-030-27 | A replayed `watering.offline_autonomous` event is charged to the plant named in `detail.plant_id`, resolved and written inside the same transaction as the event. An absent or unknown name falls back to binding-based attribution and is reported; an unknown name never fails the replay |
 
 ### Schema and migrations
 

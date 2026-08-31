@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO watering_events(watering_event_id,device_id,plant_id,mode,origin,started_at,completed_at,delivered_ml,status) VALUES(?,?,?,'automatic','offline_autonomous',?,?,?,'completed') ON CONFLICT(watering_event_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "f9a77e45c09c958f9cc40d015134a18f3d2d4893af00802929b69e05582acc1d"
+}

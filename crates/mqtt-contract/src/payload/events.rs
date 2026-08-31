@@ -1,4 +1,5 @@
 //! Typed buffered event replay.
+use crate::payload::SensorId;
 use crate::{BootId, EventId, UtcMillis};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -55,6 +56,26 @@ impl<'de> Deserialize<'de> for EventKind {
 #[serde(tag = "detail_type", rename_all = "snake_case")]
 pub enum EventDetail {
     Watering {
+        /// The plant the dose was delivered to, as the **device** understood it.
+        ///
+        /// A replayed dose has to name its own subject. The edge otherwise has
+        /// to infer ownership from the actuator bindings that exist *at replay
+        /// time*, which is a different fact from the one that was true when the
+        /// water went into the pot: bindings can be edited, moved, or deleted
+        /// while a device is isolated, and the budget would then be charged to
+        /// whichever plant happens to be bound now. That misattribution is
+        /// unsafe in both directions at once — the plant that really was watered
+        /// keeps a clean budget and may be watered again, and a plant that was
+        /// never touched is charged for water it did not receive.
+        ///
+        /// The device already knows the answer: `evaluate_offline` runs against
+        /// exactly one `OfflinePolicy`, and that policy names its `plant_id`.
+        /// Carrying it costs one optional field.
+        ///
+        /// `None` only for a v1 device published before this field existed. The
+        /// edge falls back to binding-based attribution for those and says so.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plant_id: Option<SensorId>,
         /** Applied policy. */
         policy_version: u32,
         /** Delivered volume. */

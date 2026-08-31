@@ -379,10 +379,22 @@ Three properties, each with an invariant:
 3. **Budget continuity.** Offline doses count toward the same rolling window as
    commanded doses. There is one budget per plant, not one per control path
    (SAFETY-014).
+4. **Attribution by name, not by binding.** A replayed
+   `watering.offline_autonomous` carries `detail.plant_id` — the plant whose
+   policy the device evaluated — and the edge charges *that* plant, writing the
+   name in the same transaction as the event. Resolving it from the actuator
+   bindings that exist at replay time would ask a question about the present and
+   apply the answer to the past: an isolated device is exactly when someone has
+   time to move a pump, and the dose would land in the wrong budget, leaving the
+   plant that was watered free to be watered again. Binding-based attribution
+   survives only as the fallback for a device that names no plant.
 
 The device retains replayed events until the edge acknowledges them with an
 `event.ack` ([mqtt-v1.md](../protocol/mqtt-v1.md) §5.13), so an edge
-crash mid-reconciliation loses nothing — it simply replays again.
+crash mid-reconciliation loses nothing — it simply replays again. The same holds
+for `command.result` and `command.result.ack` (§5.14): in both cases the
+acknowledgement that counts is the **edge's**, published after its commit, never
+the broker's QoS 1 PUBACK.
 
 ## 9. What this costs
 

@@ -425,7 +425,8 @@ and pump, so the simulator's fidelity claim is tested.
 **Deliverables.** Verified toolchain (M9-001 executes and corrects ADR-007) ·
 firmware CI job · own workspace with the contract crate by **path** ·
 **a board layer isolating every GPIO, polarity, and peripheral construction
-behind a compile-time board profile, with `ESP32-C3-DevKitC-02` as the initial
+behind a compile-time board profile, with the official
+`ESP32-C3-DEVKITM-1-N4X` as the initial
 reference board and a second ESP32-C3 board a profile addition rather than a
 refactor** ([ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md)) · NVS
 and MAC-derived identity · hardware traits with `Clock::now_ms() -> Option` · the
@@ -462,7 +463,8 @@ missed wake and no watchdog reset.
 real silicon; SAFETY-001 gains its device-side enforcement point; SAFETY-013,
 -015, -019, -020 on the device that actually owns them.
 
-**External dependency.** One **ESP32-C3-DevKitC-02** (the reference board);
+**External dependency.** One official **Espressif ESP32-C3-DEVKITM-1-N4X**
+(the reference board; a real board is required for M9 hardware verification);
 ADR-007's toolchain verified on the development machine. A battery board is not
 required here — M9 delivers the board seam, not a second profile.
 

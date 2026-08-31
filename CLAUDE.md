@@ -22,6 +22,7 @@ has not started.**
 | Battery pass | ✅ done (2026-08-28) — ADR-018 (see §12), then the post-M4 correction and its independent review; both dated in [docs/reports/M4.md](docs/reports/M4.md) |
 | M5 | 22 issues, **DONE** — report in [docs/reports/M5.md](docs/reports/M5.md) |
 | M6 | 24 issues, **DONE** — report in [docs/reports/M6.md](docs/reports/M6.md) |
+| Post-M6 correction | ✅ done (2026-08-31) — durable `command.result.ack`, offline-dose attribution by name, and the M6 report's test-count evidence; see [docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections and §13 below |
 | M7-001 | ⬜ **next** — create the cloud-api binary and PostgreSQL service |
 
 **This section goes stale fastest. Verify it before trusting it:**
@@ -43,6 +44,14 @@ RHIZO_REQUIRE_BROKER=1 cargo test --workspace --all-features
 Without `RHIZO_REQUIRE_BROKER` they print a loud skip and pass, so a fresh clone
 is green. **With** it — as CI sets — a missing broker is a failure, because a
 suite that can silently skip its own subject eventually proves nothing.
+
+**Never quote a bare workspace test total as evidence.** 46 tests are
+broker-gated, `cargo test` captures their skip messages, and they count as
+passed either way — so the workspace total is *identical* with the broker
+stopped and with it running under `RHIZO_REQUIRE_BROKER=1`. Measured, not
+assumed: 1 101 both times. Quote the environment and the per-suite counts, or
+the number says nothing. This is what the post-M6 pass corrected in the M6
+report.
 
 Then **update this table in the same change** that moves the project on. A
 CLAUDE.md that lies about the current position is worse than none.
@@ -288,14 +297,20 @@ why `scripts/verify-mosquitto-acls.sh` passes `-V 5` and asserts on output
 rather than exit status. Any future ACL test must do the same or it will pass
 unconditionally.
 
-**The device subscribes to seven *exact* topics, never a wildcard.** An earlier
+**The device subscribes to eight *exact* topics, never a wildcard.** An earlier
 revision of protocol §3 specified `commands/+`, which also matches
 `commands/result` — the device's own output — and MQTT 3.1.1 has no "no local"
 option. The rule had to be "receive it but never act on it", which is a property
 of the dispatch code rather than of the wire. It is now
-`Topic::device_subscriptions` returning `[String; 7]`, and
+`Topic::device_subscriptions` returning `[String; 8]`, and
 `Topic::device_command_filter` is gone. The cost: **adding a command kind means
 adding a subscription**, in the same change as the topic itself.
+
+It was seven until the post-M6 correction added `commands/result/ack` (§13).
+That topic is a *child* of `commands/result` and a distinct exact topic from it,
+so subscribing to the acknowledgement still does not deliver the device its own
+results — which is the whole property the exact form exists to guarantee, and is
+asserted rather than assumed.
 
 **A `history.gap` marker is sealed when it is first sent.** It accumulates
 mutably while unsent — range widened, count raised — and
@@ -307,6 +322,48 @@ smaller first version; and a sequence allocated at the first loss would sit belo
 events buffered afterwards, where a cumulative `event.ack` would bury a marker the
 edge had never seen. `replay_events()` therefore does **not** include a pending
 gap — a test that inspects the buffer directly must seal first, or reconnect.
+
+**A QoS 1 PUBACK is hop by hop and proves nothing about the edge.** This is the
+single most reusable fact in this repository, and both `event.ack` and
+`command.result.ack` exist because of it. A device's PUBACK is written by the
+*broker*, on receipt; the edge may not have read the message, may crash before
+its transaction commits, and — the edge session is clean on purpose — will never
+be offered it again. `set_manual_acks(true)` in `mqtt::ingress` makes the edge's
+own PUBACK follow its commit, which is worth having and governs the
+**broker-to-edge hop only**. An earlier comment there claimed it made a device's
+retry depend on the edge's commit; it never could. Anything that must survive
+that gap needs an application-level acknowledgement.
+
+**A `command.result` is retained on the device until `command.result.ack` names
+it** (protocol §5.14), not until the broker acks the publish, and it is
+republished every `COMMAND_RESULT_RETRY_MS` (15 s) while it is unacknowledged —
+on a timer, not only on reconnect, because the failure it covers is an edge that
+crashes and restarts while the device's socket never drops. The edge publishes
+the acknowledgement **after** its commit and **also for a duplicate result**: a
+duplicate is a device retrying because the first acknowledgement was lost, so
+silence would leave it retrying for ever. Per `command_id`, not cumulative —
+results carry no `device_seq`-style total order. Do not "fix" a related problem
+with `clean_session=false`: that moves durability into the broker, which holds
+no application state and is explicitly replaceable.
+
+**A `command.result` is ledger data; a telemetry sample is not.** A lost sample
+is fail-safe — it makes data look older, and stale data blocks watering — so
+telemetry gets no acknowledgement and no retry, deliberately. A lost
+`completed` result *under-counts* the SAFETY-006 budget, which is the direction
+that waters again too soon. Do not generalise the result-durability machinery
+to telemetry.
+
+**A replayed `watering.offline_autonomous` names its own plant.**
+`detail.plant_id` is the plant whose `OfflinePolicy` the device evaluated, and
+`persist_replay` writes it onto the `watering_events` row in the same
+transaction as the event. Binding-based attribution still exists but is now only
+the **fallback**, for a device that predates the field or names a plant this
+edge has never provisioned — the latter falls back rather than failing, because
+`watering_events.plant_id` is a foreign key and a rejected replay wedges
+reconciliation for ever. Resolving the plant from `actuator_bindings` at replay
+time asks a question about the present and applies the answer to the past: move
+a pump while a device is isolated and the dose lands in the wrong budget, which
+leaves the plant that *was* watered free to be watered again.
 
 **An `event.ack` beyond the highest sequence a device issued is refused whole,
 not clamped.** Clamping would turn one corrupt field into "delete the entire
@@ -614,8 +671,9 @@ this area:
 
 - **The protocol.** Two `MeasurementKind` variants, optional `power` blocks, one
   offline `reason`. All additive within v1; no version bump, no new topic, no
-  retention change, and the device still subscribes to exactly seven exact
-  topics. Holding a command is an Edge-side mechanism with no wire representation.
+  retention change, and the device still subscribed to exactly seven exact
+  topics *at that date* — the post-M6 correction later took it to eight (§13).
+  Holding a command is an Edge-side mechanism with no wire representation.
 - **Command TTL and `edge.time`.** Unchanged, because the command is minted at
   the wake. SAFETY-002 is untouched.
 - **M4.** Its completed report carries a dated battery-compatibility correction
@@ -625,3 +683,33 @@ this area:
   treatment M0 got in the 2026-08-26 pass — because M5 is the first milestone
   still open. That is why M5, a plant milestone, contains device issues: M5-019's
   remaining contract scope and M5-021's simulator.
+
+---
+
+## 13. The 2026-08-31 post-M6 correction
+
+A focused pass over two guarantees M6 **claimed** but did not hold, plus the
+evidence that had been offered for them. M6 was not reopened as a milestone —
+the treatment M0 got in the 2026-08-26 pass and M4 got in the battery pass —
+because M7 had not started. Full write-up in
+[docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections.
+
+| Was | Is now |
+|---|---|
+| Manual PUBACKs made a device's retry depend on the edge's commit | They govern the **broker-to-edge hop only**; QoS 1 is hop by hop, and a `command.result` could be lost by an edge that crashed before committing |
+| A result is retired when the broker acks the publish | Retired only by `command.result.ack` (protocol §5.14), retried every 15 s until then, and persisted across reboot |
+| A replayed autonomous dose was attributed from current `actuator_bindings` | It carries `detail.plant_id`, written in the same transaction as the event; bindings are the **fallback** |
+| 7 exact device subscriptions | **8** — `commands/result/ack` added |
+| "1 092 passed" quoted as the headline evidence | A bare total is *identical* with the broker stopped: 46 tests skip silently and count as passed. Quote the environment and per-suite counts |
+| `edge-controller/integration` reported 20/20 | It was 18/20 against a broker carrying one leftover retained status; four assertions read `devices` without a `WHERE` clause. Scoped, and verified **against** the pollution rather than its absence |
+
+Three things did **not** change:
+
+- **Telemetry loss semantics.** A lost sample is fail-safe and still gets no
+  acknowledgement and no retry. The durability machinery is for ledger data only.
+- **`clean_session = true` on the edge.** Deliberately not the fix: it would move
+  durability into the broker, which is the one participant holding no application
+  state. `mqtt::ingress::options` now says so.
+- **Every existing payload, retention rule, QoS, command TTL, and `edge.time`.**
+  Both changes are additive within v1, and a device implementing the old rules
+  still interoperates.

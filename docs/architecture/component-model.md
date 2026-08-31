@@ -37,7 +37,8 @@ Owns:
 
 - the message envelope type and its JSON representation
 - all v1 wire payloads, including telemetry, actuator state, status, config,
-  policy, time, commands/results, offline events, and event acknowledgements
+  policy, time, commands/results, offline events, and both acknowledgements
+  (`event.ack` and `command.result.ack`)
 - topic grammar: building and parsing `rhizo/v1/...` topics
 - `DeviceId` newtype and its validation grammar
 - protocol version constant and compatibility rules
@@ -324,7 +325,8 @@ Owns:
   sleep-cycle accounting ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md))
 - **the board layer** (`src/board/`): every GPIO number, pin polarity, and
   board-specific peripheral construction, behind a compile-time board profile.
-  ESP32-C3-DevKitC-02 is the reference board; a battery board (Seeed XIAO
+  the official Espressif ESP32-C3-DEVKITM-1-N4X is the reference board; a
+  compact battery board (Seeed XIAO
   ESP32-C3, or a custom ESP32-C3 PCB) is a profile addition
   ([ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md))
 

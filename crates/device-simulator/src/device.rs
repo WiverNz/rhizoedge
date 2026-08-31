@@ -137,6 +137,13 @@ pub struct Device {
     /// The offline refusal most recently recorded, so a persistent condition
     /// buffers one audit event rather than one per tick (M6-019).
     last_offline_refusal: Option<rhizo_policy::RefuseReason>,
+    /// Monotonic instant of the last `command.result` publication attempt.
+    ///
+    /// A result is retried until the **edge** acknowledges it, not until the
+    /// broker does, so the device needs its own retry clock. In memory rather
+    /// than in the store because losing it costs one early retry and nothing
+    /// else, while a reboot republishes from `pending_results` anyway.
+    last_result_publish_ms: u64,
 }
 
 impl Device {
@@ -234,6 +241,7 @@ impl Device {
             unpersisted_runtime_ms: 0,
             last_offline_refusal: None,
             last_ack_outcome: None,
+            last_result_publish_ms: 0,
             power: if cli.power_mode.is_battery() {
                 crate::power::PowerState::battery(
                     cli.wake_interval_seconds,
@@ -349,6 +357,30 @@ impl Device {
     #[must_use]
     pub const fn store(&self) -> &StateStore {
         &self.store
+    }
+
+    /// Monotonic milliseconds since this boot, for the retry clocks.
+    pub(crate) const fn elapsed_ms(&self) -> u64 {
+        self.monotonic.elapsed_ms()
+    }
+
+    /// When results were last handed to the broker.
+    pub(crate) const fn last_result_publish_ms(&self) -> u64 {
+        self.last_result_publish_ms
+    }
+
+    /// Records a publication attempt, restarting the retry interval.
+    pub(crate) const fn note_result_publish(&mut self) {
+        self.last_result_publish_ms = self.monotonic.elapsed_ms();
+    }
+
+    /// How many results the edge has not yet acknowledged.
+    ///
+    /// Public so a test can assert the durability property directly: a result
+    /// that has been published but not acknowledged is still held.
+    #[must_use]
+    pub fn unacknowledged_results(&self) -> usize {
+        self.store.state().pending_results.len()
     }
 
     /// Seeds persisted state directly, for tests only.
@@ -556,7 +588,7 @@ impl Device {
     /// Exact topics from the contract, never a wildcard: `commands/+` would
     /// also match `commands/result`, which this device publishes.
     #[must_use]
-    pub fn subscriptions(&self) -> [String; 7] {
+    pub fn subscriptions(&self) -> [String; 8] {
         Topic::device_subscriptions(self.device_id())
     }
 
@@ -624,6 +656,11 @@ impl Device {
         if !self.connected {
             return publications;
         }
+        // Results the edge has not acknowledged are republished on a timer, not
+        // only on reconnect. The failure this covers is an edge that crashes
+        // and restarts while the device's own socket never drops, so nothing
+        // else would ever prompt a retry (protocol §5.14).
+        publications.extend(self.retry_unacknowledged_results());
         let now = self.monotonic.elapsed_ms();
         let synced = self.clock_synced();
         // An unsynchronised device republishes its retained status at a bounded
@@ -948,6 +985,7 @@ impl Device {
             Topic::CommandCalibrate(_) => self.on_calibrate_command(payload),
             Topic::Policy(_) => self.on_policy(payload),
             Topic::EventsAck(_) => self.on_event_ack(payload),
+            Topic::CommandResultAck(_) => self.on_command_result_ack(payload),
             // Never subscribed to: the device publishes all of these. Since the
             // subscriptions became exact topics, the broker cannot deliver one
             // here at all — refusing again is belt and braces, so no future call
@@ -1751,7 +1789,7 @@ mod tests {
     }
 
     #[test]
-    fn subscriptions_are_the_four_normative_filters_and_exclude_results() {
+    fn subscriptions_are_the_normative_exact_filters_and_exclude_results() {
         let device = Device::new(&cli(&[]));
         assert_eq!(
             device.subscriptions(),
@@ -1762,9 +1800,16 @@ mod tests {
                 "rhizo/v1/devices/plant-node-01/commands/water",
                 "rhizo/v1/devices/plant-node-01/commands/tare",
                 "rhizo/v1/devices/plant-node-01/commands/calibrate",
+                "rhizo/v1/devices/plant-node-01/commands/result/ack",
                 "rhizo/v1/devices/plant-node-01/events/ack",
             ]
             .map(String::from)
+        );
+        assert!(
+            !device
+                .subscriptions()
+                .contains(&"rhizo/v1/devices/plant-node-01/commands/result".to_owned()),
+            "the result acknowledgement must not drag in the result topic itself"
         );
     }
 

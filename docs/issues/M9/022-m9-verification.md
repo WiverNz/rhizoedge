@@ -67,7 +67,7 @@ Everything else in M9 can be verified on the host.
 - [ ] The CI firmware job passes.
 - [ ] ADR-007's toolchain section has been executed and corrected.
 - [ ] ADR-007's firmware-structure section matches the board layer as built.
-- [ ] `board-devkitc02` builds; zero or two board features fail with a clear
+- [ ] `board-devkitm1` builds; zero or two board features fail with a clear
       `compile_error!` naming the available profiles.
 - [ ] The structural board-isolation check passes: no GPIO number, pin polarity,
       or board-specific peripheral construction outside `src/board/`.

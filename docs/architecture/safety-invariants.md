@@ -330,6 +330,28 @@ issuing a dose; clock adjustment; partial delivery accounting.
 passes at `PROPTEST_CASES=10000` against histories containing restarts, forward
 and backward clock steps, interrupted doses, and duplicate results.
 
+**The cap is only as good as the rows it sums** (post-M6 correction,
+2026-08-31). The invariant is derived from `watering_events`, so anything that
+loses or misfiles a row weakens it silently, in the over-watering direction. Two
+such paths were found and closed:
+
+- **A lost `command.result`.** Protocol §5.10 previously stopped a device's
+  retry on the broker's QoS 1 PUBACK, which is written on receipt and says
+  nothing about whether the edge committed. An edge that crashed in between lost
+  the row and the device never sent it again, so a delivered dose was never
+  counted. Closed by `command.result.ack` (§5.14): a result is retained on the
+  device until the edge acknowledges its own commit.
+- **A misattributed offline dose.** A replayed `watering.offline_autonomous`
+  event was charged to whichever plant held the actuator binding *at replay
+  time*. Rebinding the pump while a device was isolated therefore charged the
+  wrong plant — leaving the plant that really was watered with a clean budget
+  and free to be watered again. Closed by `detail.plant_id` (§5.4): the dose
+  names its own subject, and that name is written in the same transaction as the
+  event.
+
+Both are covered by named tests; neither changed the invariant's statement, its
+enforcing component, or its rolling-window derivation.
+
 ---
 
 ## SAFETY-007 — Device hard maximum cannot be bypassed
@@ -697,6 +719,22 @@ after replay but before acknowledgement; two reconnections racing.
 **Enforced since M6 (2026-08-31)** on the edge; the device side shipped in M2;
 re-verified M8. The hold is derived from `replay_progress` rather than stored in
 a flag, so a routine `device.status` cannot clear it.
+
+**"Exactly once" also means "to exactly one plant"** (post-M6 correction,
+2026-08-31). Idempotence on `event_id` guarantees one row per dose; it says
+nothing about *whose* row it is. Attribution originally resolved the plant from
+`actuator_bindings` at replay time, which asks a question about the present and
+applies the answer to the past — and an isolated device is precisely when an
+operator has time to rebind a pump. A dose delivered to plant A while A was
+alone was then charged to plant B, leaving A with a clean budget and free to be
+watered again immediately. A replayed `watering.offline_autonomous` event now
+carries `detail.plant_id` (protocol §5.4), written onto the `watering_events`
+row inside the same transaction as the event, so the charge is fixed when the
+history is committed. Covered by
+`safety_016_a_replayed_dose_is_charged_to_the_plant_the_device_named` and
+`safety_016_a_named_dose_survives_repeated_replay_and_further_rebinding`, with
+`without_a_named_plant_the_dose_follows_the_binding` as the negative control
+that pins the fallback for a device predating the field.
 
 ---
 

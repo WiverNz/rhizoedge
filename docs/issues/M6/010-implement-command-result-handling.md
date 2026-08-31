@@ -31,6 +31,28 @@ depend on the edge's commit rather than on the broker's receipt. A budget that
 silently misses a delivered dose reopens exactly the over-watering that
 SAFETY-006 exists to prevent.
 
+### Correction — 2026-08-31
+
+**M6 chose the first option, and the first option does not satisfy the
+requirement.** `set_manual_acks(true)` makes the edge's own PUBACK follow its
+commit, which is worth having, but MQTT 3.1.1 QoS 1 is **hop by hop**: the
+PUBACK a device receives was written by the *broker*, on receipt, before the
+edge saw the bytes. Nothing the edge does to its own PUBACK travels back through
+the broker to the publisher, so the device's stop-retrying condition never moved.
+The three options listed above were not equivalent, and the sentence "or an
+equivalent" is what admitted the mistake.
+
+Closed by the second option, in the post-M6 correction: `command.result.ack`
+(protocol §5.14), a result-level acknowledgement of exactly the same shape as
+`event.ack`, published after the commit and republished for a duplicate result.
+Manual acks remain — they close the broker-to-edge hop — and the edge session
+stays clean, because `clean_session = false` would move durability into the
+broker rather than establishing it between the two parties that need it.
+
+The last acceptance criterion below was ticked on the strength of manual acks
+and is now genuinely met. See [docs/reports/M6.md](../../reports/M6.md)
+§Post-M6 corrections.
+
 ## Goal
 
 Process results and update state and history correctly.
@@ -70,7 +92,7 @@ not create a command row to match a result it did not issue.
 - [x] An unknown `command_id` is ignored with a log.
 - [x] A duplicate result creates no second event.
 - [x] All updates are atomic.
-- [x] A `command.result` is not treated as delivered until the edge has committed it, and the device's retry stops on that fact rather than on the broker PUBACK.
+- [x] A `command.result` is not treated as delivered until the edge has committed it, and the device's retry stops on that fact rather than on the broker PUBACK. *(Ticked in M6 on the strength of manual acks, which do not establish it; genuinely met by `command.result.ack` in the 2026-08-31 correction above.)*
 
 ## Verification
 
@@ -86,6 +108,9 @@ cargo test safety_001
 - Duplicate result idempotency.
 - Unknown command_id handling.
 - **A result acknowledged to the device is still present after an edge crash between receipt and commit.**
+- **The acknowledgement the device acts on is the edge's, not the broker's** — asserted by subscribing as the device and waiting for `command.result.ack`, which is the only signal that carries the edge's commit (`a_committed_result_is_acknowledged_to_the_device_and_re_acknowledged_on_redelivery`, broker-backed).
+- **A duplicate result is re-acknowledged**, so a device whose acknowledgement was lost can make progress.
+- **An unacknowledged result is republished on a timer**, not only on reconnect (`an_unacknowledged_result_is_retried_until_the_edge_speaks`).
 
 ## Documentation impact
 

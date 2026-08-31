@@ -40,7 +40,7 @@ an ordering regression is otherwise invisible until hardware exists.
 
 `main` calls `pump_off()` on the board-supplied pump; it does not name a pin.
 The pull-down requirement is a property of a specific board's wiring, so it is
-documented in `src/board/devkitc02.rs` beside that board's pump pin, and every
+documented in `src/board/devkitm1.rs` beside that board's pump pin, and every
 future board profile carries the same note for its own pin. A board profile that
 cannot satisfy it is not a supported board.
 
@@ -74,5 +74,5 @@ cargo test safety_011_boot_state_pump_off
 
 ```text
 firmware/esp32-node/src/main.rs
-firmware/esp32-node/src/board/devkitc02.rs
+firmware/esp32-node/src/board/devkitm1.rs
 ```

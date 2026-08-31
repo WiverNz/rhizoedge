@@ -9,8 +9,8 @@ M11 swap in real hardware without the edge learning about it — and what lets
 M9's safety logic be host-tested.
 
 It is also what makes the board replaceable. The traits are the seam the board
-layer fills: `board-devkitc02` constructs the real adapters from
-ESP32-C3-DevKitC-02 pins, a later `board-xiao-esp32c3` constructs them from
+layer fills: `board-devkitm1` constructs the real adapters from official
+ESP32-C3-DEVKITM-1-N4X pins, a later `board-xiao-esp32c3` constructs them from
 different ones, and nothing above the trait can tell which
 ([ADR-007](../../adr/007-esp32-rust-framework-and-toolchain.md), amended
 2026-08-28).
@@ -45,7 +45,7 @@ is not a time, and the type makes forgetting to check impossible. That is the
 mechanism behind SAFETY-002's refusal path.
 
 Pin assignments belong to the board profile, not here. This issue defines *what*
-a pump is; `src/board/devkitc02.rs` defines *which pin* it is on and whether it
+a pump is; `src/board/devkitm1.rs` defines *which pin* it is on and whether it
 is active-high. Keeping the two apart is what makes the XIAO a new file instead
 of a refactor, and M9-003's structural check fails the suite if a pin number
 appears in `src/pump/` or `src/sensors/`.
@@ -88,5 +88,5 @@ cd firmware/esp32-node && cargo test adapters::
 firmware/esp32-node/src/sensors/mod.rs
 firmware/esp32-node/src/pump/mod.rs
 firmware/esp32-node/src/board/mod.rs
-firmware/esp32-node/src/board/devkitc02.rs
+firmware/esp32-node/src/board/devkitm1.rs
 ```

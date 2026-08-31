@@ -56,7 +56,7 @@ settled.
 
 A board that has no RS485 rail says so in its own profile, and the sampling code
 asks the board rather than assuming. This is the first place the board seam earns
-its keep: the DevKitC-02's spare header pins and a XIAO's much smaller pin budget
+its keep: the DEVKITM-1's header pins and a XIAO's much smaller pin budget
 will not agree on which rails exist, and that disagreement must stay inside
 `src/board/`.
 
@@ -122,5 +122,5 @@ grep -rniE 'sen0601|warmup_ms *[:=] *[0-9]' src/   # expect no hardcoded value
 firmware/esp32-node/src/hal/rail.rs
 firmware/esp32-node/src/app/sampling.rs
 firmware/esp32-node/src/board/mod.rs
-firmware/esp32-node/src/board/devkitc02.rs
+firmware/esp32-node/src/board/devkitm1.rs
 ```

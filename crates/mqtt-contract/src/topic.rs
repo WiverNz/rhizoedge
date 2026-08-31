@@ -17,7 +17,7 @@ pub struct TopicMetadata {
     /** Required retain flag. */
     pub retained: bool,
 }
-/// Every MQTT v1 topic (twelve concrete topic forms).
+/// Every MQTT v1 topic (thirteen concrete topic forms).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Topic {
     Telemetry(DeviceId),
@@ -31,6 +31,7 @@ pub enum Topic {
     CommandTare(DeviceId),
     CommandCalibrate(DeviceId),
     CommandResult(DeviceId),
+    CommandResultAck(DeviceId),
     EventsAck(DeviceId),
 }
 /// Topic parse failure.
@@ -55,7 +56,7 @@ impl Topic {
         "rhizo/v1/devices/+/status",
         "rhizo/v1/devices/+/commands/result",
     ];
-    /// The seven subscriptions a device MUST establish, in protocol §3 order.
+    /// The eight subscriptions a device MUST establish, in protocol §3 order.
     ///
     /// **Exact topics, never a wildcard.** `commands/+` would also match
     /// `commands/result`, which the device itself publishes, and MQTT 3.1.1 has
@@ -65,8 +66,11 @@ impl Topic {
     /// unenforced. Naming the three command topics costs two extra SUBSCRIBE
     /// entries and removes the seam entirely.
     ///
-    /// `telemetry`, `actuator`, `events`, `status`, and `commands/result` are
-    /// absent deliberately: a device publishes those. Returning the complete set
+    /// `commands/result/ack` is an edge-to-device topic and is subscribed to;
+    /// `commands/result` is not, and the two are distinct exact topics, so the
+    /// device never receives its own output. `telemetry`, `actuator`, `events`,
+    /// `status`, and `commands/result` are absent deliberately: a device
+    /// publishes those. Returning the complete set
     /// as one value is what lets a reconnect restore *exactly* these, rather
     /// than whichever subset a call site remembered.
     ///
@@ -75,7 +79,7 @@ impl Topic {
     /// failure: an unreceived command is a command not executed, whereas a
     /// wildcard that silently delivered the device its own output is a live
     /// seam in the one topic tree that carries actuation.
-    pub fn device_subscriptions(device_id: &DeviceId) -> [String; 7] {
+    pub fn device_subscriptions(device_id: &DeviceId) -> [String; 8] {
         [
             Self::Config(device_id.clone()).as_string(),
             Self::Policy(device_id.clone()).as_string(),
@@ -83,6 +87,7 @@ impl Topic {
             Self::CommandWater(device_id.clone()).as_string(),
             Self::CommandTare(device_id.clone()).as_string(),
             Self::CommandCalibrate(device_id.clone()).as_string(),
+            Self::CommandResultAck(device_id.clone()).as_string(),
             Self::EventsAck(device_id.clone()).as_string(),
         ]
     }
@@ -100,6 +105,7 @@ impl Topic {
             Self::CommandTare(i) => (i, "commands/tare"),
             Self::CommandCalibrate(i) => (i, "commands/calibrate"),
             Self::CommandResult(i) => (i, "commands/result"),
+            Self::CommandResultAck(i) => (i, "commands/result/ack"),
             Self::EventsAck(i) => (i, "events/ack"),
         };
         alloc::format!("rhizo/v1/devices/{id}/{suffix}")
@@ -126,6 +132,7 @@ impl Topic {
             ["commands", "tare"] => Ok(Self::CommandTare(id)),
             ["commands", "calibrate"] => Ok(Self::CommandCalibrate(id)),
             ["commands", "result"] => Ok(Self::CommandResult(id)),
+            ["commands", "result", "ack"] => Ok(Self::CommandResultAck(id)),
             ["events", "ack"] => Ok(Self::EventsAck(id)),
             _ => Err(TopicError::UnknownSuffix),
         }
@@ -144,6 +151,7 @@ impl Topic {
             | Self::CommandTare(i)
             | Self::CommandCalibrate(i)
             | Self::CommandResult(i)
+            | Self::CommandResultAck(i)
             | Self::EventsAck(i) => i,
         }
     }
@@ -197,6 +205,11 @@ mod tests {
                 false,
             ),
             (Topic::CommandResult(id.clone()), "commands/result", false),
+            (
+                Topic::CommandResultAck(id.clone()),
+                "commands/result/ack",
+                false,
+            ),
             (Topic::EventsAck(id), "events/ack", false),
         ];
         for (topic, suffix, retained) in cases {
@@ -221,13 +234,33 @@ mod tests {
     #[test]
     fn an_acknowledgement_is_never_retained() {
         let id = DeviceId::parse("node-01").unwrap();
-        assert!(
-            !Topic::EventsAck(id).metadata().retained,
-            "a retained acknowledgement would be replayed at every reconnect"
-        );
+        for ack in [Topic::EventsAck(id.clone()), Topic::CommandResultAck(id)] {
+            assert!(
+                !ack.metadata().retained,
+                "a retained {ack} would be replayed at every reconnect"
+            );
+        }
     }
 
-    /// Protocol §3 "Subscriptions": exactly seven **exact** topics, and no
+    /// `commands/result/ack` is subscribed to and `commands/result` is not, and
+    /// the two must stay distinct exact topics.
+    ///
+    /// This is the one place the new topic could go wrong: a device that ended
+    /// up subscribed to its own results would be back in the seam the exact
+    /// subscriptions were introduced to close.
+    #[test]
+    fn the_result_acknowledgement_is_not_the_result_topic() {
+        let id = DeviceId::parse("node-01").unwrap();
+        let result = Topic::CommandResult(id.clone()).as_string();
+        let ack = Topic::CommandResultAck(id.clone()).as_string();
+        assert_ne!(result, ack);
+        assert_eq!(Topic::parse(&ack).unwrap(), Topic::CommandResultAck(id));
+        let subs = Topic::device_subscriptions(&DeviceId::parse("node-01").unwrap());
+        assert!(subs.contains(&ack));
+        assert!(!subs.contains(&result));
+    }
+
+    /// Protocol §3 "Subscriptions": exactly eight **exact** topics, and no
     /// wildcard that could reach the device's own output.
     #[test]
     fn device_subscribes_to_exactly_the_normative_topics() {
@@ -242,6 +275,7 @@ mod tests {
                 "rhizo/v1/devices/node-01/commands/water",
                 "rhizo/v1/devices/node-01/commands/tare",
                 "rhizo/v1/devices/node-01/commands/calibrate",
+                "rhizo/v1/devices/node-01/commands/result/ack",
                 "rhizo/v1/devices/node-01/events/ack",
             ]
             .map(String::from)

@@ -545,15 +545,54 @@ pub async fn persist_replay(
             .await
             .map_err(StorageError::from_sqlx)?;
         }
-        if let (EventKind::WateringOfflineAutonomous, EventDetail::Watering { delivered_ml, .. }) =
-            (&event.kind, &event.detail)
+        if let (
+            EventKind::WateringOfflineAutonomous,
+            EventDetail::Watering {
+                plant_id,
+                delivered_ml,
+                ..
+            },
+        ) = (&event.kind, &event.detail)
         {
             let happened_at = event.device_time_ms.map_or(at, |v| v.0);
             let delivered = f64::from(*delivered_ml);
+            // The dose names its own subject, and that name is written in the
+            // same transaction as the event. Attribution is therefore fixed at
+            // the moment the history is committed and can never be re-decided
+            // by whatever the actuator bindings happen to say later.
+            //
+            // The plant is looked up rather than trusted: `watering_events.
+            // plant_id` is a foreign key, so a device naming a plant this edge
+            // has never provisioned would abort the whole replay transaction
+            // and wedge reconciliation for ever. An unknown name falls through
+            // to `NULL`, which is exactly the pre-field behaviour and is picked
+            // up by the binding-based fallback in `control::reconcile`.
+            //
+            // Soft-deleted plants are *not* excluded. The row satisfies the
+            // foreign key, and charging a deleted plant honestly is better than
+            // charging a live one that was never watered.
+            let named = match plant_id {
+                Some(id) => {
+                    let id = id.as_str();
+                    let known = sqlx::query_scalar!(
+                        r#"SELECT EXISTS(SELECT 1 FROM plants WHERE plant_id=?) AS "present!: i64""#,
+                        id
+                    )
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(StorageError::from_sqlx)?;
+                    // An unknown name falls back silently here; the fallback
+                    // path in `control::reconcile` is what reports it, because
+                    // that is where the alternative attribution is chosen.
+                    (known == 1).then(|| id.to_owned())
+                }
+                None => None,
+            };
             sqlx::query!(
-                "INSERT INTO watering_events(watering_event_id,device_id,mode,origin,started_at,completed_at,delivered_ml,status) VALUES(?,?,'automatic','offline_autonomous',?,?,?,'completed') ON CONFLICT(watering_event_id) DO NOTHING",
+                "INSERT INTO watering_events(watering_event_id,device_id,plant_id,mode,origin,started_at,completed_at,delivered_ml,status) VALUES(?,?,?,'automatic','offline_autonomous',?,?,?,'completed') ON CONFLICT(watering_event_id) DO NOTHING",
                 eid,
                 dev,
+                named,
                 happened_at,
                 happened_at,
                 delivered

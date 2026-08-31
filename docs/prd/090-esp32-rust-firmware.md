@@ -52,7 +52,8 @@
 > assignments in one `board.rs`", which is a filing convention rather than a
 > requirement. It is now an explicit portability requirement
 > ([ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md), amended):
-> **ESP32-C3-DevKitC-02 is the initial development and reference board**, the
+> **The official Espressif ESP32-C3-DEVKITM-1-N4X is the initial development
+> and reference board**, the
 > Seeed XIAO ESP32-C3 is a candidate battery-deployment board, and a custom
 > ESP32-C3 PCB must stay possible. All three are ESP32-C3, so **changing the
 > board must not change application logic, MQTT behaviour, offline policy
@@ -60,8 +61,8 @@
 > safety state machine.**
 >
 > Board wiring lives behind a board layer selected by a Cargo feature
-> (`board-devkitc02`, later `board-xiao-esp32c3`); exactly one profile per build,
-> enforced at compile time. **M9 ships the DevKitC-02 profile only** — what M9
+> (`board-devkitm1`, later `board-xiao-esp32c3`); exactly one profile per build,
+> enforced at compile time. **M9 ships the DEVKITM-1 profile only** — what M9
 > must deliver is the seam, so that adding the XIAO is a board-profile addition
 > rather than a firmware refactor.
 >
@@ -105,7 +106,7 @@ sensors and a real pump deferred to M10 and M11.
 - Solar, charging, or outdoor power (M14-009).
 - PCB design of any kind.
 - **A working Seeed XIAO ESP32-C3 profile.** The board is not purchased and
-  nothing about it is measured, so M9 delivers `board-devkitc02` and the seam
+  nothing about it is measured, so M9 delivers `board-devkitm1` and the seam
   that makes `board-xiao-esp32c3` a new file. Writing an unverifiable pin map is
   not the same as portability.
 - Supporting a non-ESP32-C3 chip. The board layer is a board abstraction, not a
@@ -156,7 +157,7 @@ edge publishes command.water
 | F-090-11 | MQTT with `clean_session = true` and LWT configured **before** connect |
 | F-090-12 | Retained `status: online` on connect; heartbeat every `5 × telemetry_interval` |
 | F-090-13 | Wall clock synchronised from the Edge via `edge.time` over MQTT (no SNTP client); an `edge.time` **less than or equal to** the last applied one is ignored and does not refresh `synced_at_monotonic`; `clock_synced` reflects synchronisation **age** and is reported truthfully |
-| F-090-14 | Subscribes to the seven exact topics of protocol §3 and to no wildcard; never to a topic it publishes |
+| F-090-14 | Subscribes to the eight exact topics of protocol §3 and to no wildcard; never to a topic it publishes |
 | F-090-15 | Telemetry buffered across a disconnect to at most 16 samples, then dropped |
 | F-090-16 | Command results retried up to 60 s, then persisted to NVS and republished after reboot |
 
@@ -210,7 +211,7 @@ edge publishes command.water
 | F-090-40 | Hardware behind traits: `Pump`, `SoilSensor`, `TankSensor`, `LeakSensor`, `Scale`, `Clock`, `NvsStore`, `PowerRail`, `BatterySensor` |
 | F-090-41 | Fake adapters for all of them, usable on the host |
 | F-090-42 | `src/app/` contains **no `esp_idf_*` imports** and is host-testable |
-| F-090-43 | **ESP32-C3-DevKitC-02 is the initial development and reference board**, and `board-devkitc02` is the first supported board profile |
+| F-090-43 | **The official Espressif ESP32-C3-DEVKITM-1-N4X is the initial development and reference board**, and `board-devkitm1` is the first supported board profile |
 | F-090-44 | All board-specific detail is isolated behind the board layer (`src/board/`): GPIO numbers, UART pins, RS485 DE/RE pins, pump-control GPIO, sensor power-enable / load-switch GPIO, tank and leak input pins, active-high/active-low polarity, board-specific peripheral construction, and any board-specific power-control pin |
 | F-090-45 | **No file under `src/app/`, `src/safety/`, `src/sensors/`, `src/pump/`, or `src/net/` contains a concrete GPIO number or pin polarity.** Everything above the board layer receives constructed trait objects and cannot observe which board it runs on |
 | F-090-46 | Board selection is **compile-time**, by Cargo feature; **exactly one** profile per build, with zero or more than one a `compile_error!` naming the available profiles — never a runtime default and never a runtime pin table |
@@ -383,8 +384,8 @@ With a board attached: HIL-1 and HIL-2 from
 
 - [ ] `cargo build --release` succeeds for `riscv32imc-esp-espidf` with no board.
 - [ ] The CI firmware job passes.
-- [ ] ESP32-C3-DevKitC-02 is the initial development/reference board, and
-      `board-devkitc02` builds.
+- [ ] The official Espressif ESP32-C3-DEVKITM-1-N4X is the initial
+      development/reference board, and `board-devkitm1` builds.
 - [ ] All board-specific GPIO/peripheral mapping is isolated behind the board
       layer.
 - [ ] No file under application, safety, sensor, pump, or networking code
@@ -426,9 +427,11 @@ completed and reviewed before hardware arrives.
 
 - M8 (a proven software system to compare against).
 - M1 (the shared contract and validator).
-- Hardware: one **ESP32-C3-DevKitC-02** and a USB cable. Nothing analogue. Any
+- Hardware: one official **Espressif ESP32-C3-DEVKITM-1-N4X** and a USB data
+  cable. Nothing analogue. Any
   ESP32-C3 board works for the host and compile criteria; the board-dependent
-  criteria — HIL-1 in particular — assume the DevKitC-02's exposed pins.
+  criteria — HIL-1 in particular — assume the DEVKITM-1's exposed pins. A real
+  board is required to complete the hardware-verification criteria honestly.
 
 ## Open questions
 

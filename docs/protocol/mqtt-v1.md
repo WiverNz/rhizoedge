@@ -83,6 +83,7 @@ Base namespace: `rhizo/v1/`
 | `rhizo/v1/devices/{id}/commands/tare` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/calibrate` | edge | device | 1 | no |
 | `rhizo/v1/devices/{id}/commands/result` | device | edge | 1 | no |
+| `rhizo/v1/devices/{id}/commands/result/ack` | edge | device | 1 | **no — never** |
 | `rhizo/v1/devices/{id}/events/ack` | edge | device | 1 | **no — never** |
 
 **`telemetry` carries a batch**, not one measurement kind. One message per
@@ -105,6 +106,20 @@ replaying it for ever or discard it on a guess. Both are wrong; an explicit
 acknowledgement is the only mechanism that lets a bounded buffer be emptied
 without losing history.
 
+**`commands/result/ack` closes the result loop** (§5.14), for exactly the same
+reason and by exactly the same mechanism. A `command.result` is ledger data: the
+edge's rolling 24-hour budget is derived from the rows results produce
+(SAFETY-006), so a result the edge never commits under-counts delivered volume —
+the direction that waters again too soon. QoS 1 does not close this loop, because
+QoS 1 acknowledges **hop by hop**: the PUBACK a device receives for its result is
+written by the broker on receipt, and says nothing about whether any edge read
+it, committed it, or survived. An earlier revision of §5.10 stopped the device's
+retry on that PUBACK, which meant a result could be lost by an edge that crashed
+between receipt and commit and never be sent again.
+
+It is a separate exact topic from `commands/result`, so a device subscribing to
+its acknowledgements still never receives its own output.
+
 **`time` MUST NOT be retained.** A retained timestamp is stale the instant it is
 stored, and a device applying one after a reconnect would set its clock to
 whenever the message was published. This is the one topic where retention would
@@ -123,18 +138,18 @@ stated twice: here, and in the retention rules below.
   delivered to a reconnecting device as though current, moving its clock
   backwards to the moment of publication and making expired commands appear
   valid — a direct route to violating SAFETY-002.
-- **`events/ack` MUST NOT be retained**, for the same shape of reason. An
-  acknowledgement is a statement about one moment: "as of now, everything
-  through this sequence is committed here." Retained, the broker would repeat
-  that statement to a device reconnecting hours later, and the device would
-  delete buffered history on the strength of a claim about a database that may
-  since have been restored from an older backup. Acknowledgements are live
-  messages or they are nothing.
+- **`events/ack` and `commands/result/ack` MUST NOT be retained**, for the same
+  shape of reason. An acknowledgement is a statement about one moment: "as of
+  now, this is committed here." Retained, the broker would repeat that statement
+  to a device reconnecting hours later, and the device would delete buffered
+  history — or a pending result — on the strength of a claim about a database
+  that may since have been restored from an older backup. Acknowledgements are
+  live messages or they are nothing.
 
 ### Subscriptions
 
 - Edge subscribes to `rhizo/v1/devices/+/#`.
-- A device MUST subscribe to exactly these **seven exact topics**, and to no
+- A device MUST subscribe to exactly these **eight exact topics**, and to no
   wildcard:
 
   | | |
@@ -142,10 +157,15 @@ stated twice: here, and in the retention rules below.
   | `rhizo/v1/devices/{own_id}/config` | `rhizo/v1/devices/{own_id}/commands/water` |
   | `rhizo/v1/devices/{own_id}/policy` | `rhizo/v1/devices/{own_id}/commands/tare` |
   | `rhizo/v1/devices/{own_id}/time` | `rhizo/v1/devices/{own_id}/commands/calibrate` |
-  | `rhizo/v1/devices/{own_id}/events/ack` | |
+  | `rhizo/v1/devices/{own_id}/events/ack` | `rhizo/v1/devices/{own_id}/commands/result/ack` |
 
 - A device MUST NOT subscribe to `telemetry`, `actuator`, `events`, `status`, or
   `commands/result`, all of which it publishes.
+
+  `commands/result/ack` and `commands/result` are distinct exact topics, so
+  subscribing to the first does not deliver the second. This is precisely the
+  property the exact form exists to guarantee, and it is why the acknowledgement
+  is a child of the result topic rather than a `commands/+` sibling.
 
 **Exact topics, not `commands/+`.** An earlier revision specified a
 `commands/+` filter. That filter also matches `commands/result`, which is the
@@ -372,7 +392,8 @@ reconnection, oldest first.
     { "event_id": "018fd7c0-…", "device_seq": 4411, "tier": "audit",
       "kind": "watering.offline_autonomous",
       "monotonic_ms": 8814000, "device_time_ms": null,
-      "detail": { "policy_version": 7, "delivered_ml": 35.0,
+      "detail": { "plant_id": "monstera-01", "policy_version": 7,
+                  "delivered_ml": 35.0,
                   "trigger_value": 26.4, "duration_ms": 4270 } },
     { "event_id": "018fd7c1-…", "device_seq": 4412, "tier": "audit",
       "kind": "offline.refused",
@@ -400,6 +421,25 @@ Normative behaviour:
 
 - A device MUST NOT regenerate `event_id` on replay. A regenerated id defeats
   deduplication and would create duplicate history (SAFETY-016).
+- **A `watering.offline_autonomous` event SHOULD carry `detail.plant_id`**: the
+  `plant_id` of the `OfflinePolicy` the device evaluated when it delivered the
+  dose. A replayed dose has to name its own subject.
+
+  The edge otherwise has to infer ownership from the actuator bindings that
+  exist *at replay time*, which is a different fact from the one that was true
+  when the water went into the pot. Bindings are editable, and an isolated
+  device is exactly the situation in which an operator has time to edit them:
+  move the pump from plant A to plant B while A is alone, and A's autonomous
+  dose lands in B's budget. That is wrong in both directions at once — A, which
+  really was watered, keeps a clean budget and may be watered again immediately,
+  while B is charged for water it never received.
+
+  The field is optional so that a v1 device built before it existed remains
+  conformant. An edge receiving a dose with no `plant_id`, or one naming a plant
+  it does not know, MUST fall back to binding-based attribution and SHOULD
+  record that it did so. It MUST NOT fail the replay over an unrecognised name:
+  a rejected replay wedges reconciliation, which is far worse than an
+  approximate charge.
 - A device MUST retain replayed events until the edge acknowledges them with an
   `event.ack` (§5.13), so an edge crash mid-reconciliation loses nothing.
   QoS 1 is not sufficient and MUST NOT be treated as sufficient: it gives the
@@ -698,7 +738,7 @@ part**. The correct value is a measured property of the hardware (M10-011), and 
 guess baked into firmware is how a device reads a probe that has not settled.
 
 A device in `battery` mode changes nothing about the protocol: it subscribes to
-the same seven exact topics (§3), publishes the same messages, and validates
+the same eight exact topics (§3), publishes the same messages, and validates
 command TTL by the same rules. It is simply connected less often.
 
 Device behaviour:
@@ -903,9 +943,36 @@ leak_unknown     tank_unknown     tank_low            pump_unavailable
 over_daily_max
 ```
 
-Results MUST be retried until the broker acknowledges the QoS 1 publish, for up
-to 60 s. A result that cannot be published MUST be persisted to NVS and
-published after the next boot — a result is ledger data, not a sample.
+#### Durability — normative
+
+A result is **ledger data, not a sample.** The edge's rolling 24-hour budget is
+derived from the rows results produce (SAFETY-006), so a result that is lost
+under-counts delivered volume — the direction that waters again too soon. It is
+therefore retried until it is *known* to be durable, and only an
+acknowledgement from the edge establishes that.
+
+- A device MUST retain a published result until it receives a
+  `command.result.ack` naming that `command_id` (§5.14), and MUST republish it
+  periodically until then. A device SHOULD wait at least 10 s between attempts
+  for one result.
+- **A device MUST NOT treat the QoS 1 PUBACK as delivery, and MUST NOT stop
+  retrying on it.** QoS 1 acknowledges hop by hop: that PUBACK is written by the
+  *broker*, on receipt. It says nothing about whether an edge read the message,
+  committed it, or was even running. An edge that crashes between receipt and
+  commit loses the result, and a device that stopped on the PUBACK would never
+  send it again.
+- A result that cannot be published MUST be persisted to NVS and published after
+  the next boot. So must one that was published and not acknowledged: the
+  retained copy is what makes a reboot mid-flight harmless.
+- A device MAY bound how many unacknowledged results it holds, evicting oldest
+  first. It MUST NOT bound how long it retries one.
+
+> **This rule changed within v1.** It previously read "retried until the broker
+> acknowledges the QoS 1 publish, for up to 60 s", which made a device's retry
+> depend on a hop that does not reach the edge. Nothing on the wire was removed;
+> `command.result` is byte-identical, and a device implementing the old rule
+> still interoperates — it simply loses a result the edge fails to commit, which
+> is the defect. See §9 Change log.
 
 ---
 
@@ -1235,6 +1302,85 @@ destroy M6's guarantee.
 
 ---
 
+### 5.14 `command.result.ack` → `commands/result/ack` (edge → device, **never retained**)
+
+The durable acknowledgement of one `command.result` (§5.10). It is to results
+what §5.13 is to replayed events, and exists for the same reason: **QoS 1 gives
+a device the broker's acknowledgement, not the edge's.**
+
+```json
+{
+  "v": 1, "kind": "command.result.ack",
+  "message_id": "018fd8c0-…",
+  "device_id": "plant-node-01",
+  "data": { "command_id": "018fd7b1-4c2e-7f10-a3b8-9d1e2f304050" }
+}
+```
+
+| Field | Type | Required | Rules |
+|---|---|---|---|
+| `command_id` | UUID | yes | the result the edge has durably committed |
+
+#### Per `command_id`, not cumulative — normative
+
+§5.13 can acknowledge a **prefix** because replayed events carry a total order,
+`device_seq`. Results have no such order: a `command_id` is a UUID minted by
+whoever issued the command, and two results may be committed in either order.
+The acknowledgement therefore names exactly the result it covers.
+
+This costs one message per result, which is the right price: results are as rare
+as doses, whereas a replay is a backlog.
+
+#### Publishing — normative
+
+- The edge MUST NOT publish a `command.result.ack` before the transaction that
+  persists the result has **committed**. The order is: receive → settle →
+  persist → commit → acknowledge. Acknowledging on receipt tells a device to
+  discard a result the edge does not have, which is exactly the failure this
+  topic exists to prevent.
+- The edge MUST publish an acknowledgement for a **duplicate** result as readily
+  as for a new one. A duplicate is a device retrying because the first
+  acknowledgement was lost; answering it with silence leaves that device
+  retrying for ever. The result itself is deduplicated on `message_id` and the
+  effect on `command_id`, so re-acknowledging changes nothing but the device's
+  state.
+- `command.result.ack` MUST NOT be retained (§3).
+- Losing an acknowledgement is not an error: the device retries the result and
+  the edge acknowledges again. The edge is not required to retry the
+  acknowledgement itself.
+- The edge MUST NOT make any watering decision conditional on having
+  acknowledged. The acknowledgement is an obligation to the device, not an input
+  to the gate.
+
+#### Applying — normative
+
+On receiving a `command.result.ack`, a device:
+
+1. Discards its retained copy of the result with that `command_id`, in one
+   durable step.
+2. **MUST treat an acknowledgement for a `command_id` it is not holding as a
+   no-op.** That is the ordinary outcome of a duplicate delivery, and it MUST
+   NOT be an error and MUST NOT clear any other result.
+3. MUST NOT publish anything in response. There is no acknowledgement of the
+   acknowledgement.
+4. MUST NOT let an acknowledgement affect its command deduplication ring. The
+   ring is what makes a repeated `command.water` re-publish a stored result
+   instead of actuating (§6); an acknowledged result is still a command the
+   device has executed.
+
+#### Why not `clean_session=false` on the edge
+
+A persistent edge session would make the *broker* redeliver a message the edge
+accepted but did not acknowledge, which sounds like the same guarantee and is
+not. It moves durability into the broker — the one participant in this protocol
+that holds no application state and is explicitly replaceable — where a broker
+restarted without persistence, a queue limit, or a session expiry loses it
+again. It also says nothing about whether the edge *process* committed, which is
+the question. The edge's session is clean on purpose, and durability between a
+device and the edge is carried end to end by §5.13 and this section.
+
+---
+
 ## 6. Deduplication — normative
 
 Receivers MUST use `message_id` as the transport deduplication key. Because
@@ -1297,20 +1443,25 @@ Receivers MUST NOT assume ordered delivery. Specifically:
 
 1. Configure LWT before connecting.
 2. Connect with `clean_session = true`.
-3. Subscribe to the seven exact topics of §3 — `config`, `policy`, `time`,
-   `events/ack`, and the three `commands/*` topics. No wildcard: a device MUST
-   NOT subscribe to a filter that matches a topic it publishes.
+3. Subscribe to the eight exact topics of §3 — `config`, `policy`, `time`,
+   `events/ack`, `commands/result/ack`, and the three `commands/*` topics. No
+   wildcard: a device MUST NOT subscribe to a filter that matches a topic it
+   publishes, and `commands/result/ack` is a distinct exact topic from
+   `commands/result`.
 4. Publish retained `status: online`. This is what triggers the Edge to publish
    `edge.time` (§5.12); until one is applied, the device MUST refuse water
    commands with `clock_unsynced`.
 5. Resume telemetry on schedule. A device MUST NOT flush a backlog of buffered
    telemetry beyond its bounded ring.
-6. Republish any pending `command.result` from NVS.
+6. Republish every `command.result` still held in NVS — that is, every result
+   no `command.result.ack` has retired (§5.14), not merely those that failed to
+   publish.
 7. **Replay buffered offline events** (§5.4) in `device_seq` order, in batches,
    setting `"complete": true` on the final batch. Any accumulated `history.gap`
    is sealed and takes its `device_seq` at this point (§5.4). Events MUST be
    retained until an `event.ack` (§5.13) covers them — not merely until the
-   broker has acked the publish.
+   broker has acked the publish. The same rule governs results: **the broker's
+   publish ack retires neither.**
 
 **Edge:**
 
@@ -1353,6 +1504,34 @@ one broker indefinitely. Full process in
 
 ### Change log within v1
 
+**2026-08-31 — result durability and dose attribution (post-M6 correction).**
+Additive throughout; **no version bump, and none was needed.** Two defects were
+found by tracing existing guarantees rather than by a failing test, and both
+were places where v1 relied on a property MQTT does not have.
+
+*Added:* the `command.result.ack` message kind and the
+`rhizo/v1/devices/{id}/commands/result/ack` topic (§5.14), never retained; and
+the optional `detail.plant_id` on a `watering.offline_autonomous` event (§5.4).
+
+*Changed:* §5.10's retry rule. It read "retried until the broker acknowledges
+the QoS 1 publish, for up to 60 s" — a hop-by-hop guarantee described as though
+it were end to end. The broker PUBACKs a device on receipt, so a result could be
+lost by an edge that crashed between receipt and its commit, and the device,
+already acknowledged, would never send it again. A lost `completed` under-counts
+the SAFETY-006 budget, which is the direction that over-waters. §5.13 had always
+said this plainly for replayed events ("QoS 1 is not sufficient and MUST NOT be
+treated as sufficient"); §5.10 now says the same, with the same mechanism.
+
+*Also changed:* the device subscription set is now **eight** exact topics, not
+seven. `commands/result/ack` is a distinct exact topic from `commands/result`,
+so no device receives its own output.
+
+Both changes are backward compatible on the wire. A v1 device that never
+subscribes to `commands/result/ack` still works and simply retries results it
+has no way to retire; one that omits `detail.plant_id` gets binding-based
+attribution, which is what every v1 device got before. No field was removed,
+retyped, or given a new meaning, and no retention or QoS rule changed.
+
 **2026-08-28 — battery and deep-sleep device mode
 ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)).** Additive
 throughout; **no version bump, and none was needed.** Added: the
@@ -1362,7 +1541,8 @@ optional `power` block in `device.config` (§5.7) and in `device.status` (§5.5)
 and the `sleeping` offline reason (§5.6).
 
 No topic was added, no retention or QoS rule changed, and the device subscription
-set is still exactly seven exact topics. Holding commands for a sleeping device
+set was still exactly seven exact topics at that date (it became eight on
+2026-08-31, above). Holding commands for a sleeping device
 is entirely an edge-side mechanism — an intent persisted in SQLite and turned
 into an ordinary command once the device is awake — so nothing about command
 delivery, command TTL, or `edge.time` changed on the wire
@@ -1408,7 +1588,7 @@ writes per minute per device.
 An implementation is conformant when:
 
 - [ ] `clean_session = true`; LWT configured before connect
-- [ ] the four device subscriptions are established on **every** connect
+- [ ] the eight device subscriptions are established on **every** connect
 - [ ] messages arriving on `commands/result` are ignored, never acted on
 - [ ] retained on `status`, `config`, and `policy` only; never on `commands/*`, telemetry, events, actuator, or time
 - [ ] QoS 1 everywhere
@@ -1419,6 +1599,13 @@ An implementation is conformant when:
 - [ ] NVS persistence precedes actuation
 - [ ] a `command.result` is published for every command, including rejections
 - [ ] results are retried and survive a reboot
+- [ ] a result is retained until `command.result.ack` names its `command_id`,
+      and is **never** retired on the broker's publish ack
+- [ ] an unacknowledged result is republished periodically, not only on reconnect
+- [ ] a `command.result.ack` for an unheld `command_id` is a no-op and clears no
+      other result
+- [ ] `command.result.ack` is published **non-retained**, QoS 1, only after the
+      persisting transaction has committed, and **also for a duplicate result**
 - [ ] `validate_water_command` is the only actuation gate
 - [ ] unknown fields are ignored; unknown enum values map to a safe branch
 - [ ] telemetry is published as **one batch per sampling cycle**, never split
@@ -1429,10 +1616,13 @@ An implementation is conformant when:
 - [ ] `policy` is validated, staged, verified, then activated atomically
 - [ ] a policy with `policy_version` ≤ applied is ignored
 - [ ] an invalid or interrupted policy update leaves the previous policy active
-- [ ] the device subscribes to seven **exact** topics and to no wildcard
+- [ ] the device subscribes to eight **exact** topics and to no wildcard
 - [ ] no subscription matches a topic the device publishes, `commands/result`
       included — checked as a subscription-set property, not as "ignored on
       receipt"
+- [ ] a `watering.offline_autonomous` event names the plant it dosed in
+      `detail.plant_id`, and the edge charges that plant rather than whichever
+      plant the actuator is bound to at replay time
 - [ ] buffered events keep a stable `event_id` across every replay
 - [ ] the final replay batch sets `"complete": true`
 - [ ] buffer overflow emits a `history.gap` event with range and count

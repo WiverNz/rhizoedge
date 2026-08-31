@@ -9,6 +9,15 @@ use rumqttc::{MqttOptions, QoS};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// The device every assertion in this suite is about.
+///
+/// Named rather than implied: the broker is shared and the edge subscribes to
+/// `+/status`, so a retained status from any other suite registers a second
+/// device in this edge's table. An unscoped `SELECT ... FROM devices` then reads
+/// whichever row SQLite happens to return, which made two of these tests depend
+/// on leftover broker state instead of on the edge.
+const DEVICE: &str = "plant-node-01";
+
 struct EdgeHarness {
     db: rhizo_storage::EdgeDb,
     commander: edge_controller::control::command::Commander,
@@ -291,10 +300,18 @@ async fn intentional_sleep_and_duplicate_each_receive_edge_time() {
             "every valid status receipt, including a duplicate, needs edge.time"
         );
     }
-    let row = sqlx::query("SELECT connectivity_mode,last_seen_at,expected_wake_at FROM devices")
-        .fetch_one(edge.db.pool())
-        .await
-        .unwrap();
+    // Scoped to the device under test. The broker is shared and the edge
+    // subscribes to `+/status`, so a retained status left behind by any other
+    // suite registers a second device here and an unscoped `fetch_one` reads
+    // whichever row SQLite returns first. That is what made this assertion
+    // depend on broker state rather than on the edge's behaviour.
+    let row = sqlx::query(
+        "SELECT connectivity_mode,last_seen_at,expected_wake_at FROM devices WHERE device_id=?",
+    )
+    .bind(DEVICE)
+    .fetch_one(edge.db.pool())
+    .await
+    .unwrap();
     use sqlx::Row as _;
     assert_eq!(row.get::<String, _>("connectivity_mode"), "sleeping");
     assert_eq!(row.get::<Option<i64>, _>("last_seen_at"), None);
@@ -382,9 +399,11 @@ async fn safety_021_a_retained_sleep_redelivered_after_a_broker_restart_extends_
     );
 
     let snapshot = |db: rhizo_storage::EdgeDb| async move {
+        // Scoped: see the note in `intentional_sleep_and_duplicate_each_receive_edge_time`.
         let row = sqlx::query(
-            "SELECT connectivity_mode,expected_wake_at,overdue_at,sleep_received_at FROM devices",
+            "SELECT connectivity_mode,expected_wake_at,overdue_at,sleep_received_at FROM devices WHERE device_id=?",
         )
+        .bind(DEVICE)
         .fetch_one(db.pool())
         .await
         .unwrap();
@@ -456,8 +475,9 @@ async fn safety_021_a_retained_sleep_redelivered_after_a_broker_restart_extends_
     }
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM processed_messages WHERE kind='device.status'"
+            "SELECT count(*) FROM processed_messages WHERE kind='device.status' AND device_id=?"
         )
+        .bind(DEVICE)
         .fetch_one(edge.db.pool())
         .await
         .unwrap(),
@@ -465,7 +485,8 @@ async fn safety_021_a_retained_sleep_redelivered_after_a_broker_restart_extends_
         "the redelivery is the same message and must be deduplicated, not re-applied"
     );
     assert_eq!(
-        sqlx::query_scalar::<_, Option<i64>>("SELECT last_seen_at FROM devices")
+        sqlx::query_scalar::<_, Option<i64>>("SELECT last_seen_at FROM devices WHERE device_id=?")
+            .bind(DEVICE)
             .fetch_one(edge.db.pool())
             .await
             .unwrap(),

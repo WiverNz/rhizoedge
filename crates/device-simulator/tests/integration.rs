@@ -15,7 +15,7 @@ use support::{RECEIVE_TIMEOUT, Received, SimulatedDevice, clear_retained, publis
 
 const DEVICE: &str = "plant-node-01";
 
-fn topics(device_id: &str) -> [String; 7] {
+fn topics(device_id: &str) -> [String; 8] {
     let id = DeviceId::parse(device_id).unwrap();
     Topic::device_subscriptions(&id)
 }

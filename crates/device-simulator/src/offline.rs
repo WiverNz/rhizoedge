@@ -75,6 +75,11 @@ impl Device {
         let next = next_offline_state(seam.policy, &seam.state, &decision, seam.elapsed);
         // `seam` borrows the active policy; the write below needs the device.
         let policy_version = seam.policy.policy_version;
+        // Taken from the policy that was actually evaluated, not from the
+        // `plant_id` string the lookup started with: the buffered event has to
+        // name the same plant the decision was made for, in the contract's own
+        // identifier type.
+        let dosed_plant = seam.policy.plant_id.clone();
         drop(seam);
         self.apply_offline_decision(&next);
 
@@ -95,6 +100,14 @@ impl Device {
                     EventTier::Audit,
                     EventKind::WateringOfflineAutonomous,
                     EventDetail::Watering {
+                        // The dose names its own subject. `plant_id` is the
+                        // plant whose policy was just evaluated -- the only
+                        // fact about ownership that is true at the moment the
+                        // water goes into the pot. The edge would otherwise
+                        // have to infer it from bindings that may have been
+                        // edited while this device was alone, and charge the
+                        // wrong budget in both directions at once.
+                        plant_id: Some(dosed_plant),
                         policy_version,
                         delivered_ml: ml,
                         trigger_value: trigger,

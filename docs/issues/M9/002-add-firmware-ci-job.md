@@ -15,7 +15,7 @@ Build the firmware in CI on relevant changes.
 ## Scope
 
 - A job triggered by `firmware/**` or `crates/mqtt-contract/**`
-- **A build per board profile**: `board-devkitc02` in M9, and every profile that
+- **A build per board profile**: `board-devkitm1` in M9, and every profile that
   exists thereafter, from the same application code. A matrix over one entry now
   is what makes the second entry a one-line change
 - Aggressive caching of the ESP-IDF toolchain
@@ -41,7 +41,7 @@ job is the deeper verification.
 
 Enumerate the board profiles in a matrix even while there is one of them. The
 point of ADR-007's board layer is that a second ESP32-C3 board costs a profile
-and not a refactor, and a CI job that hardcodes `--features board-devkitc02`
+and not a refactor, and a CI job that hardcodes `--features board-devkitm1`
 quietly makes the second profile someone's problem later. The ESP-IDF cache is
 shared across matrix legs, so the marginal cost of a leg is a compile, not a
 toolchain download.

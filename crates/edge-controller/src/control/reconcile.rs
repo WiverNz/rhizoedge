@@ -26,16 +26,39 @@
 //! duplicates. Nothing here re-implements that; this module owns the *hold* and
 //! the *release*.
 //!
-//! # Attribution, and what happens when it is ambiguous
+//! # Attribution: the device names its own subject
 //!
-//! A `watering.offline_autonomous` event names a policy version and a volume,
-//! not a plant. The plant is resolved from the actuator bindings on that device.
-//! One actuator-bound plant is the ordinary case and the attribution is exact.
-//! If a device carries the actuator for **several** plants, the dose is charged
-//! to every one of them: over-counting reduces future doses, under-counting
-//! would permit an extra one, and the conservative direction is the safe one —
-//! the same choice PRD 060 §Open questions 2 makes for an interrupted dose. The
+//! A `watering.offline_autonomous` event carries `detail.plant_id` — the plant
+//! whose `OfflinePolicy` the device evaluated at the moment the water went into
+//! the pot. `persist_replay` writes that name onto the `watering_events` row in
+//! the same transaction as the event, so the charge is fixed when the history
+//! is committed and nothing here can re-decide it.
+//!
+//! This is not a convenience. The alternative — resolving the plant from
+//! `actuator_bindings` **at replay time** — asks a question about the present
+//! and applies the answer to the past. Bindings are editable, and an isolated
+//! device is precisely the case where an operator has time to edit them: move
+//! the pump from plant A to plant B while A is alone, and A's autonomous dose
+//! lands in B's budget. That is wrong in both directions at once. A, which
+//! really was watered, keeps a clean budget and may be watered again
+//! immediately — SAFETY-006 defeated in the over-watering direction — while B is
+//! charged for water it never received and may be refused a dose it needs.
+//!
+//! # The fallback, and when it is ambiguous
+//!
+//! `plant_id` is optional on the wire, because a v1 device built before the
+//! field exists is still a conformant v1 device. Its doses arrive with a `NULL`
+//! plant, and only then does [`attribute_autonomous_doses`] resolve them from
+//! the actuator bindings. One actuator-bound plant is the ordinary case. If a
+//! device carries the actuator for **several** plants, the dose is charged to
+//! every one of them: over-counting reduces future doses, under-counting would
+//! permit an extra one, and the conservative direction is the safe one — the
+//! same choice PRD 060 §Open questions 2 makes for an interrupted dose. The
 //! ambiguity is recorded as a warning event rather than hidden.
+//!
+//! A named plant this edge has never provisioned takes the same fallback:
+//! `watering_events.plant_id` is a foreign key, and letting an unknown name
+//! abort the replay transaction would wedge reconciliation for ever.
 
 use chrono::{DateTime, Utc};
 use rhizo_storage::EdgeDb;
@@ -202,7 +225,13 @@ async fn summarise(db: &EdgeDb, device_id: &str, boot_id: &str) -> Result<Summar
     })
 }
 
-/// Charges replayed autonomous doses to the plants the device actuates.
+/// Charges *unattributed* replayed doses to the plants the device actuates.
+///
+/// This is the **fallback**, not the primary path. A dose whose event named its
+/// plant was already charged, by name, inside the transaction that committed the
+/// event; those rows have a non-`NULL` `plant_id` and the query below does not
+/// see them. What reaches here is a dose from a device that predates
+/// `detail.plant_id`, or one naming a plant this edge does not know.
 ///
 /// Idempotent: the per-plant row id is derived from the event id, so replaying
 /// the same event any number of times produces one row per plant.
@@ -242,6 +271,15 @@ async fn attribute_autonomous_doses(
     .await
     .map_err(|e| EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string())))?;
 
+    if !unattributed.is_empty() {
+        tracing::warn!(
+            device_id = %device_id,
+            doses = unattributed.len(),
+            "replayed autonomous doses arrived without a plant; attributing them from the \
+             actuator bindings that exist now, which may not be the bindings that were in \
+             force while the device was isolated"
+        );
+    }
     let mut written = 0;
     for row in &unattributed {
         let source: String = row.get("watering_event_id");
@@ -363,12 +401,30 @@ mod reconcile {
         uuid::Uuid::from_u128(0xb)
     }
 
-    /// A replay batch as a device would publish it, with one autonomous dose.
+    /// A replay batch as a device that predates `detail.plant_id` publishes it.
+    ///
+    /// Kept as the *unnamed* form on purpose: it is the fallback path, and every
+    /// test that was written against binding-based attribution still exercises
+    /// exactly that.
     fn replay(
         boot: uuid::Uuid,
         seqs: &[u64],
         complete: bool,
         delivered_ml: f32,
+    ) -> serde_json::Value {
+        replay_named(boot, seqs, complete, delivered_ml, None)
+    }
+
+    /// A replay batch as a device would publish it, with one autonomous dose.
+    ///
+    /// `plant` is what the device says the dose was for. `None` reproduces a v1
+    /// device built before the field existed.
+    fn replay_named(
+        boot: uuid::Uuid,
+        seqs: &[u64],
+        complete: bool,
+        delivered_ml: f32,
+        plant: Option<&str>,
     ) -> serde_json::Value {
         serde_json::json!({
             "v": 1,
@@ -379,22 +435,39 @@ mod reconcile {
             "data": {
                 "replay": true,
                 "complete": complete,
-                "events": seqs.iter().map(|seq| serde_json::json!({
-                    "event_id": uuid::Uuid::from_u128(u128::from(*seq) + 1),
-                    "device_seq": seq,
-                    "tier": "audit",
-                    "kind": "watering.offline_autonomous",
-                    "monotonic_ms": 1_000,
-                    "detail": {
+                "events": seqs.iter().map(|seq| {
+                    let mut detail = serde_json::json!({
                         "detail_type": "watering",
                         "policy_version": 7,
                         "delivered_ml": delivered_ml,
                         "trigger_value": 20.0,
                         "duration_ms": 4_000,
-                    },
-                })).collect::<Vec<_>>(),
+                    });
+                    if let Some(plant) = plant {
+                        detail["plant_id"] = serde_json::json!(plant);
+                    }
+                    serde_json::json!({
+                        "event_id": uuid::Uuid::from_u128(u128::from(*seq) + 1),
+                        "device_seq": seq,
+                        "tier": "audit",
+                        "kind": "watering.offline_autonomous",
+                        "monotonic_ms": 1_000,
+                        "detail": detail,
+                    })
+                }).collect::<Vec<_>>(),
             },
         })
+    }
+
+    /// Moves the pump from one plant to another, as an operator would while the
+    /// device was unreachable.
+    async fn rebind_actuator(api: &TestApi, from: &str, to: &str) {
+        sqlx::query("DELETE FROM actuator_bindings WHERE plant_id=?")
+            .bind(from)
+            .execute(api.db.pool())
+            .await
+            .unwrap();
+        api.bind_actuator(to).await;
     }
 
     async fn persist(api: &TestApi, batch: &serde_json::Value) {
@@ -603,6 +676,150 @@ mod reconcile {
         assert_eq!(recovery.republished, 0);
         assert!(is_reconciling(&api.db, "plant-node-01").await.unwrap());
         assert!(api.transport.published().is_empty());
+    }
+
+    /// **The misattribution regression.** A dose delivered to plant A while the
+    /// device was isolated is charged to A even though the actuator has since
+    /// been rebound to plant B.
+    ///
+    /// ```text
+    /// plant A bound -> isolate -> A waters offline
+    ///               -> binding moves to B -> replay
+    ///               -> A charged exactly once, B unchanged
+    /// ```
+    ///
+    /// Before `detail.plant_id`, the replay resolved ownership from
+    /// `actuator_bindings` as they stood at replay time, so this charged B and
+    /// left A with a clean budget — the plant that had just been watered was the
+    /// one free to be watered again.
+    #[tokio::test]
+    async fn safety_016_a_replayed_dose_is_charged_to_the_plant_the_device_named() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.plant("fern-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+
+        // The operator moves the pump while the device is alone. The dose that
+        // is about to replay happened before this, to monstera-01.
+        rebind_actuator(&api, "monstera-01", "fern-01").await;
+
+        persist(
+            &api,
+            &replay_named(boot_a(), &[0], true, 35.0, Some("monstera-01")),
+        )
+        .await;
+
+        let charged = rhizo_storage::repo::command::delivered_in_window(&api.db, "monstera-01", 0)
+            .await
+            .unwrap();
+        assert!(
+            (charged - 35.0).abs() < 1e-6,
+            "the plant the device watered must carry the charge, got {charged}"
+        );
+        let untouched = rhizo_storage::repo::command::delivered_in_window(&api.db, "fern-01", 0)
+            .await
+            .unwrap();
+        assert!(
+            untouched.abs() < 1e-6,
+            "a plant that was never watered must not be charged, got {untouched}"
+        );
+
+        // Exactly once: one row, not one per replay and not one per binding.
+        let rows: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM watering_events WHERE plant_id='monstera-01'")
+                .fetch_one(api.db.pool())
+                .await
+                .unwrap();
+        assert_eq!(rows, 1, "one charge for one dose");
+    }
+
+    /// The same scenario replayed repeatedly still charges once, and rebinding
+    /// *between* replays does not add a second charge.
+    #[tokio::test]
+    async fn safety_016_a_named_dose_survives_repeated_replay_and_further_rebinding() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.plant("fern-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+
+        let batch = replay_named(boot_a(), &[0], true, 35.0, Some("monstera-01"));
+        persist(&api, &batch).await;
+        rebind_actuator(&api, "monstera-01", "fern-01").await;
+        persist(&api, &batch).await;
+        rebind_actuator(&api, "fern-01", "monstera-01").await;
+        persist(&api, &batch).await;
+
+        let charged = rhizo_storage::repo::command::delivered_in_window(&api.db, "monstera-01", 0)
+            .await
+            .unwrap();
+        assert!((charged - 35.0).abs() < 1e-6, "{charged}");
+        let untouched = rhizo_storage::repo::command::delivered_in_window(&api.db, "fern-01", 0)
+            .await
+            .unwrap();
+        assert!(untouched.abs() < 1e-6, "{untouched}");
+    }
+
+    /// **The negative control.** Strip `plant_id` from exactly the same batch
+    /// and the misattribution comes back: the dose follows the binding.
+    ///
+    /// This is what proves the test above is testing the field and not the
+    /// fixture. It also pins the documented behaviour for a v1 device that
+    /// predates the field — binding-based attribution, which is the best the
+    /// edge can do when the device says nothing.
+    #[tokio::test]
+    async fn without_a_named_plant_the_dose_follows_the_binding() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.plant("fern-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+        rebind_actuator(&api, "monstera-01", "fern-01").await;
+
+        persist(&api, &replay_named(boot_a(), &[0], true, 35.0, None)).await;
+
+        let named_plant_would_have_been_charged =
+            rhizo_storage::repo::command::delivered_in_window(&api.db, "monstera-01", 0)
+                .await
+                .unwrap();
+        assert!(
+            named_plant_would_have_been_charged.abs() < 1e-6,
+            "an unnamed dose cannot reach the plant that was actually watered"
+        );
+        let bound = rhizo_storage::repo::command::delivered_in_window(&api.db, "fern-01", 0)
+            .await
+            .unwrap();
+        assert!((bound - 35.0).abs() < 1e-6, "{bound}");
+    }
+
+    /// A name the edge has never provisioned falls back rather than aborting the
+    /// replay. A foreign-key failure here would wedge reconciliation for ever,
+    /// which is a far worse outcome than an approximate charge.
+    #[tokio::test]
+    async fn an_unknown_plant_name_falls_back_instead_of_failing_the_replay() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+
+        persist(
+            &api,
+            &replay_named(boot_a(), &[0], true, 35.0, Some("never-provisioned")),
+        )
+        .await;
+
+        assert!(
+            !is_reconciling(&api.db, "plant-node-01").await.unwrap(),
+            "the replay must still commit and release the plant"
+        );
+        let bound = rhizo_storage::repo::command::delivered_in_window(&api.db, "monstera-01", 0)
+            .await
+            .unwrap();
+        assert!(
+            (bound - 35.0).abs() < 1e-6,
+            "the dose falls back to the bound plant, got {bound}"
+        );
     }
 
     /// A device carrying the actuator for several plants cannot attribute an

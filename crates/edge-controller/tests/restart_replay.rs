@@ -67,8 +67,11 @@ async fn restart(db: EdgeDb, path: &std::path::Path) -> EdgeDb {
 }
 
 async fn window(db: &EdgeDb) -> (String, Option<i64>, Option<i64>, i64) {
+    // Scoped even though this suite uses its own file database: an assertion
+    // about one device should say which one, so it keeps meaning the same thing
+    // if a second device is ever registered here.
     let row = sqlx::query(
-        "SELECT connectivity_mode,expected_wake_at,overdue_at,missed_wake_count FROM devices",
+        "SELECT connectivity_mode,expected_wake_at,overdue_at,missed_wake_count FROM devices WHERE device_id='plant-node-01'",
     )
     .fetch_one(db.pool())
     .await

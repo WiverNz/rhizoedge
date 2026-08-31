@@ -271,7 +271,7 @@ impl Connection {
         match parsed {
             Topic::Config(_) | Topic::Policy(_) | Topic::Time(_) => {}
             Topic::CommandWater(_) | Topic::CommandTare(_) | Topic::CommandCalibrate(_) => {}
-            Topic::EventsAck(_) => {}
+            Topic::EventsAck(_) | Topic::CommandResultAck(_) => {}
             Topic::CommandResult(_)
             | Topic::Telemetry(_)
             | Topic::Actuator(_)
@@ -296,7 +296,7 @@ impl Connection {
     ///
     /// Subscriptions come from
     /// [`rhizo_mqtt_contract::Topic::device_subscriptions`] every time, so a
-    /// reconnect restores exactly the normative four rather than whichever
+    /// reconnect restores exactly the normative eight rather than whichever
     /// subset happened to be remembered.
     async fn on_connected(&mut self) {
         let (subscriptions, publications) = {

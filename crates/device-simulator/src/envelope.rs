@@ -234,7 +234,8 @@ mod tests {
             Topic::CommandWater(id.clone()),
             Topic::CommandTare(id.clone()),
             Topic::CommandCalibrate(id.clone()),
-            Topic::CommandResult(id),
+            Topic::CommandResult(id.clone()),
+            Topic::CommandResultAck(id),
         ];
         for topic in retained {
             assert!(Publication::new(topic, String::new()).retain);

@@ -8,7 +8,8 @@ ADR-001 and ADR-007. A separate workspace with a path dependency on the
 contract crate — one source of truth on disk, so the two cannot drift.
 
 ADR-007's 2026-08-28 amendment adds the second half of this issue.
-**ESP32-C3-DevKitC-02 is the development and reference board; it is not a
+**The official Espressif ESP32-C3-DEVKITM-1-N4X is the development and
+reference board; it is not a
 commitment to a product board.** The battery deployment
 ([ADR-018](../../adr/018-battery-and-deep-sleep-device-mode.md)) will likely run
 on a Seeed XIAO ESP32-C3 or a custom ESP32-C3 PCB. Same chip, different wiring —
@@ -33,7 +34,7 @@ board wiring out of application and safety code.
   pins, RS485 DE/RE pins, pump-control GPIO, sensor power-enable / load-switch
   GPIO, tank and leak inputs, active-high/active-low polarity, board-specific
   peripheral construction, and any board-specific power-control pin
-- Cargo features `board-devkitc02` (implemented) and the reserved name
+- Cargo features `board-devkitm1` (implemented) and the reserved name
   `board-xiao-esp32c3` (declared only when the board profile is written), with a
   `compile_error!` in `src/board/mod.rs` when zero or more than one is selected
 - A board interface — trait or struct, whichever is cleaner — through which the
@@ -64,7 +65,7 @@ be covered by `cargo test` without a board.
 The path dependency, not a version dependency: the firmware workspace is not
 independently publishable, which nothing requires.
 
-The illustrative layout is `src/board/{mod.rs, devkitc02.rs}`, with
+The illustrative layout is `src/board/{mod.rs, devkitm1.rs}`, with
 `xiao_esp32c3.rs` alongside them later. **Do not force that shape** if a cleaner
 separation achieves the same isolation; the isolation is the requirement and the
 file names are not.
@@ -92,7 +93,7 @@ and bare pin-number constants — and keep the allowed exception list to
 - [ ] `cargo test` runs host tests in the firmware workspace.
 - [ ] The protocol fixture corpus runs and passes here too.
 - [ ] `grep -r esp_idf firmware/esp32-node/src/app` returns nothing.
-- [ ] `board-devkitc02` exists, is the documented default profile, and builds.
+- [ ] `board-devkitm1` exists, is the documented default profile, and builds.
 - [ ] Building with **no** board feature fails with a `compile_error!` naming the
       available profiles; building with **two** fails the same way.
 - [ ] Nothing outside `src/board/` names a GPIO number, a pin polarity, or a
@@ -106,12 +107,12 @@ and bare pin-number constants — and keep the allowed exception list to
 
 ```bash
 cd firmware/esp32-node
-cargo build --release --features board-devkitc02
+cargo build --release --features board-devkitm1
 cargo test
 cargo test board_isolation
 # exactly one profile - both of these must fail, and say why:
 cargo build --release --no-default-features 2>&1 | grep -q "board profile"
-cargo build --release --features board-devkitc02,board-xiao-esp32c3 2>&1 | grep -q "board profile"
+cargo build --release --features board-devkitm1,board-xiao-esp32c3 2>&1 | grep -q "board profile"
 grep -rnE "(Gpio|gpio)[0-9]+" src/ --include=*.rs | grep -v "^src/board/"   # expect nothing
 ```
 
@@ -134,7 +135,7 @@ the assertion. A silent success there is the defect.
 firmware/esp32-node/Cargo.toml
 firmware/esp32-node/.cargo/config.toml
 firmware/esp32-node/src/board/mod.rs
-firmware/esp32-node/src/board/devkitc02.rs
+firmware/esp32-node/src/board/devkitm1.rs
 firmware/esp32-node/src/*
 firmware/esp32-node/tests/board_isolation.rs
 ```

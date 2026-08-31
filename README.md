@@ -6,23 +6,29 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M5 complete. M6 ready.**
+> **Status: M0 through M6 complete. M7 ready, and not started.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
 > Implemented and green: the engineering baseline, the shared wire contract and
 > pure domain, the device simulator, Edge ingestion and SQLite, the device
-> registry and health model, and — as of M5 — the whole plant model. Plants,
-> bindings, per-measurement thresholds, trends, manual-watering detection,
-> species presets, offline-policy authoring, and an explainable recommendation
-> engine all work, **and the system still issues no watering command at all.**
-> That is deliberate: the recommendation logic can be validated against a living
-> plant for a week before anything is able to pump.
+> registry and health model, the whole plant model — plants, bindings,
+> per-measurement thresholds, trends, manual-watering detection, species
+> presets, offline-policy authoring, and an explainable recommendation engine —
+> and, as of M6, **irrigation itself.**
 >
-> **M6 is the milestone where software can move water** — the safety gate, the
-> irrigation state machine, the command lifecycle, and the offline evaluator.
-> Start at [ROADMAP.md](ROADMAP.md); the next issue is
-> [M6-001](docs/issues/M6/001-add-irrigation-types-and-inputs.md).
+> **M6 is the milestone where software moves water.** The safety gate, the
+> irrigation state machine, the command lifecycle, reconciliation of offline
+> history, and the one shared offline evaluator a device runs while isolated.
+> Fourteen safety invariants moved to `ENFORCED`, and `cargo test safety_` is
+> the executable gate over all of them. A focused **post-M6 correction**
+> (2026-08-31) then closed two durability defects the milestone had claimed but
+> not held — see [docs/reports/M6.md](docs/reports/M6.md).
+>
+> **M7 adds the optional cloud sink** and is still disabled by default; the
+> cloud can vanish for a week without changing a watering decision. Start at
+> [ROADMAP.md](ROADMAP.md); the next issue is
+> [M7-001](docs/issues/M7/001-add-cloud-api-and-postgres.md).
 >
 > To run it now, see [Running it locally](#running-it-locally).
 
@@ -67,6 +73,24 @@ When isolated, the device may evaluate only its provisioned offline policy,
 while the same firmware hard limits remain authoritative. Those limits are
 compiled in and cannot be raised by any message, API call, or configuration — so
 even a completely wrong Edge Controller cannot flood the room.
+
+**And the record of what happened is treated as safety-critical, not as
+telemetry.** The rolling 24-hour cap is derived from stored watering rows rather
+than from a counter, so anything that loses or misfiles a row weakens it
+silently — and always in the over-watering direction. Two mechanisms exist for
+that reason alone:
+
+- **Every dose report is acknowledged end to end.** A device holds each
+  `command.result` until the Edge says it has *committed* it, and keeps
+  retrying until then. MQTT's own QoS 1 acknowledgement is not enough and is
+  never treated as enough: it is written by the broker on receipt, so it says
+  nothing about whether any Edge read the message, stored it, or was even
+  running. The same rule already governed replayed offline history.
+- **A dose delivered while isolated names the plant it watered.** The Edge
+  charges the plant the device names, not whichever plant holds the pump binding
+  when the history finally arrives — because an isolated device is exactly when
+  someone has time to move a pump, and a dose filed against the wrong plant
+  leaves the plant that *was* watered free to be watered again.
 
 ## Working offline — three different outages
 
@@ -310,11 +334,11 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 | Component | Role |
 |---|---|
 | `rhizo-mqtt-contract` | `no_std` wire contract, measurement kinds, hard limits, the shared command validator |
-| `rhizo-policy` | `no_std` offline-policy state and decision contract; M6-019 adds the one evaluator shared by simulator, firmware, and any required edge use |
-| `rhizo-domain` | Pure plants, bindings, per-measurement policies, trends, detection, thresholds, the species preset catalogue, and the recommendation engine; M6 adds the irrigation state machine and the safety gate |
+| `rhizo-policy` | `no_std` offline-policy state and decision contract, and the one offline evaluator (M6-019) shared by simulator, firmware, and any required edge use |
+| `rhizo-domain` | Pure plants, bindings, per-measurement policies, trends, detection, thresholds, the species preset catalogue, the recommendation engine, and — since M6 — the irrigation state machine and the safety gate |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
-| `edge-controller` | The control plane — the only component that decides while connected. Its M5 evaluation loop holds no MQTT client, which is why it cannot yet publish a command even by accident |
-| `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; M6 connects the shared evaluator |
+| `edge-controller` | The control plane — the only component that decides while connected. Since M6 it owns the command lifecycle, reconciliation of replayed offline history, and the durable acknowledgement of every dose result |
+| `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; since M6 it waters autonomously while isolated, through the shared evaluator |
 | `cloud-api` | Idempotent event ingestion into PostgreSQL |
 | `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
@@ -322,18 +346,20 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 ## Development strategy: simulator before hardware
 
 The Device Simulator implements the *same* MQTT protocol as the firmware and
-calls the *same* command validator. M2 supplies connectivity, policy/runtime
+calls the *same* command validator. M2 supplied connectivity, policy/runtime
 state persistence, isolation, buffering/replay, virtual time, and fault
-mechanics, but an enabled offline policy remains inert there. M6-019 then adds
-the single evaluator to `rhizo-policy` and its sole simulator call site. Firmware
-later calls that same implementation; there is never a simulator-specific copy.
-This keeps the full control plane — including offline autonomy after M6 —
-buildable and testable before electronics exist.
+mechanics, with an enabled offline policy still inert. M6-019 added the single
+evaluator to `rhizo-policy` and its sole simulator call site, and a test counts
+those call sites so a second implementation cannot appear quietly. Firmware will
+call that same implementation; there is never a simulator-specific copy. This
+keeps the full control plane — offline autonomy included — buildable and
+testable before electronics exist.
 
 **Milestones M0–M8 require no hardware at all.** When hardware does arrive at M9,
 the [home node hardware guide](docs/hardware/home-node-hardware-guide.md) is the
 bill of materials, wiring, power, and assembly order for building one — bench
-bring-up on an ESP32-C3-DevKitC-02 through a battery and solar deployment. It is
+bring-up on an official Espressif ESP32-C3-DEVKITM-1-N4X through a battery and
+optional solar deployment. It is
 practical guidance, not a specification: its parts and values are starting points
 to be measured.
 
@@ -424,11 +450,16 @@ supplies which measurement, and a threshold policy — after which
 }
 ```
 
-Through M5 that is where it stops. `POST /plants/{id}/water` answers **422**
-`no_actuator_bound` for a plant with no pump — distinguishable from a safety
-refusal, which is a 409 — and **501** for one that has a pump, because this
-milestone issues no commands. Watch `rhizo/v1/devices/+/commands/#` while a
-plant dries: it stays silent, and a test asserts that it does.
+Since M6 that recommendation can become water. `POST /plants/{id}/water`
+answers **422** `no_actuator_bound` for a plant with no pump — distinguishable
+from a safety refusal, which is a **409** carrying `{ reason, since, clearable,
+message }` — and **202** with a `command_id` when the gate allows the dose. For
+a device that is asleep it answers **202** with an `intent_id` and no
+`command_id` at all: the command is minted at the next wake, with the whole gate
+re-run against inputs that are current then.
+
+There is no override, force, or bypass parameter on any of these paths, and
+there is no control to wake, expedite, or cancel for a sleeping device.
 
 ### Debugging in VS Code
 
@@ -533,7 +564,12 @@ Stated plainly, because they are decisions rather than oversights:
 - **Device history is bounded.** An isolated device buffers what it can and
   reports an explicit gap for what it could not keep — audit events (doses,
   refusals, faults) outrank telemetry samples and are never dropped to make room
-  for them.
+  for them. Unacknowledged dose reports are bounded the same way, and for the
+  same reason.
+- **Telemetry is lossy on purpose.** Samples get no acknowledgement and no
+  retry: a lost sample makes data look older, and stale data blocks watering, so
+  losing one fails safe. Only ledger data — dose results and offline history —
+  is delivered with an end-to-end guarantee.
 
 ## Licence
 

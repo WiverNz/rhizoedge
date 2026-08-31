@@ -52,7 +52,9 @@ correction. The rest shipped with **M5-019** on 2026-08-29: the two battery
 the compatibility fixtures that assert a pre-ADR-018 status and a pre-ADR-018
 configuration still decode — and still materialise no `power` field on re-encode
 — are what makes "additive" a checked claim rather than an intention. The device
-subscription set is unchanged at seven exact topics.
+subscription set was unchanged at seven exact topics. (The 2026-08-31 result
+durability correction added `commands/result/ack` and took it to eight — also
+additive within v1; see the mqtt-v1 change log.)
 
 ---
 

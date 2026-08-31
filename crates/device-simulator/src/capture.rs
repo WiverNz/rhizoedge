@@ -113,6 +113,7 @@ pub const fn file_stem(kind: MessageKind) -> &'static str {
         MessageKind::CommandTare => "command-tare",
         MessageKind::CommandCalibrate => "command-calibrate",
         MessageKind::CommandResult => "command-result",
+        MessageKind::CommandResultAck => "command-result-ack",
         MessageKind::EventAck => "event-ack",
     }
 }
@@ -339,6 +340,7 @@ mod tests {
             MessageKind::CommandTare,
             MessageKind::CommandCalibrate,
             MessageKind::CommandResult,
+            MessageKind::CommandResultAck,
         ];
         let stems: BTreeSet<_> = kinds.iter().map(|k| file_stem(*k)).collect();
         assert_eq!(stems.len(), kinds.len());

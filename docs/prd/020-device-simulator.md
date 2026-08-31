@@ -98,18 +98,19 @@ operator/CI  → cargo run -p device-simulator -- --device-id … --time-scale 6
 |---|---|
 | F-020-01 | LWT configured before connect; `clean_session = true` |
 | F-020-02 | Retained `status: online` on connect; `offline` LWT on unclean disconnect |
-| F-020-03 | Subscribes to exactly the seven exact topics of protocol §3, built from `Topic::device_subscriptions`; no wildcard, and no filter matching a topic it publishes |
+| F-020-03 | Subscribes to exactly the eight exact topics of protocol §3, built from `Topic::device_subscriptions`; no wildcard, and no filter matching a topic it publishes |
 | F-020-04 | Publishes one `telemetry.batch` payload on `rhizo/v1/devices/{id}/telemetry` per sampling cycle, containing all `MeasurementSample` values taken in that cycle; publishes a separate `actuator.state` payload on `rhizo/v1/devices/{id}/actuator` when actuator state changes |
 | F-020-05 | `boot_id` fresh each start; `sequence` monotonic within a boot |
 | F-020-06 | `message_id` is UUIDv7 when the clock is synced |
 | F-020-07 | Applies retained config; ignores `config_version` ≤ applied; echoes `applied_config_version` |
 | F-020-08 | Publishes a `command.result` for **every** command, including rejections |
-| F-020-09 | Retries result publication up to 60 s; persists unpublished results across restart |
-| F-020-10 | Retains only `status`; device publications `telemetry`, `actuator`, `events`, and `commands/result` are never retained. Received `time`, all `commands/*`, and `events/ack` are also non-retained; edge-owned `config` and `policy` are retained |
+| F-020-09 | Retains a published `command.result` until a `command.result.ack` names its `command_id` (protocol §5.14), republishing it periodically until then; **never** retires one on the broker's publish ack; persists unacknowledged results across restart. An acknowledgement for a `command_id` it is not holding is a no-op |
+| F-020-10 | Retains only `status`; device publications `telemetry`, `actuator`, `events`, and `commands/result` are never retained. Received `time`, all `commands/*`, `events/ack`, and `commands/result/ack` are also non-retained; edge-owned `config` and `policy` are retained |
 | F-020-11 | Persists and atomically activates retained offline policies; reports applied versions |
 | F-020-12 | Models isolation/reconnect while sampling and buffering continue |
 | F-020-13 | Persists monotonic offline runtime state needed by the later shared evaluator |
 | F-020-14 | Contains no simulator-specific offline evaluator and performs no autonomous dose in M2 |
+| F-020-15 | A buffered `watering.offline_autonomous` event carries `detail.plant_id`: the `plant_id` of the `OfflinePolicy` that was evaluated for that dose, so the edge attributes it by name rather than by current bindings |
 | F-020-15 | Buffers bounded audit/telemetry history and replays stable event ids in order |
 | F-020-16 | Applies `event.ack` (protocol §5.13) cumulatively: ignores another `boot_id`, ignores a sequence beyond any it issued without clamping, ignores one not newer, and never discards an unsent `history.gap` |
 

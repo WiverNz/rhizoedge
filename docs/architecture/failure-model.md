@@ -281,22 +281,43 @@ rather than fabricated (M13-016).
 
 ### 3.6 Crash between receiving a `command.result` and committing it
 
-- **Detection:** implicit. The device believes it delivered the result, because
-  protocol §5.10 has it stop retrying once the broker acknowledges.
-- **Expected state:** the result is **not** lost. The edge sets `manual_acks` on
-  the ingress and the pipeline sends the PUBACK only after `process` returns —
-  that is, after the transaction commits. A crash before the commit leaves the
-  message unacknowledged, and the broker redelivers it.
+- **Detection:** implicit, and this is what makes the case dangerous — nothing
+  reports it. The device believes it delivered the result.
+- **Expected state:** the result is **not** lost, and it takes *two* mechanisms
+  to say that, not one.
+
+  1. The edge sets `manual_acks` on the ingress and the pipeline sends the
+     PUBACK only after `process` returns — after the transaction commits. A
+     crash before the commit leaves the message unacknowledged **to the
+     broker**, and the broker may redeliver it.
+  2. The device retains the result until the edge publishes
+     `command.result.ack` for that `command_id` (protocol §5.14), and
+     republishes it every 15 s until then.
+
+  The second is the one that actually closes the case. **QoS 1 acknowledges hop
+  by hop**: the PUBACK the *device* received came from the broker, on receipt,
+  before this edge saw the bytes, so nothing the edge does to its own PUBACK
+  reaches back to the device. And the edge's session is clean by design, so a
+  message unacknowledged when the process dies is discarded by the broker rather
+  than redelivered — mechanism 1 alone leaves the result gone for ever, with the
+  device already satisfied. `clean_session = false` is not the answer either: it
+  relocates durability into the broker, which holds no application state, and
+  still says nothing about whether the edge process committed.
+
 - **Why this needed closing before M6 enabled watering:** a `command.result` is
   ledger data. Telemetry survives an equivalent loss because a lost sample is
-  fail-safe, and offline events survive it because `event.ack` is an
-  application-level acknowledgement published after commit. A silently missed
-  delivered dose under-counts the SAFETY-006 budget, which is the direction that
-  over-waters.
-- **Safety:** ✅ SAFETY-006, SAFETY-001. Closed in M6-010 (2026-08-31); carried
-  forward from the M3 audit.
+  fail-safe — it makes data look older, and stale data blocks watering — and
+  offline events survive it because `event.ack` is an application-level
+  acknowledgement published after commit. A silently missed delivered dose
+  under-counts the SAFETY-006 budget, which is the direction that over-waters.
+- **Safety:** ✅ SAFETY-006, SAFETY-001. Half-closed in M6-010 (2026-08-31),
+  which mistook the broker-to-edge hop for the whole path; fully closed the same
+  day by the post-M6 correction that added `command.result.ack`. Carried forward
+  from the M3 audit.
 - **Observability:** the duplicate counter rises rather than the ledger going
-  quiet, which is the visible form of the safe outcome.
+  quiet, which is the visible form of the safe outcome. A device retrying a
+  result the edge already holds is the expected steady state after a lost
+  acknowledgement, and is re-acknowledged rather than met with silence.
 
 ### 3.7 A dose held for a device that never wakes
 

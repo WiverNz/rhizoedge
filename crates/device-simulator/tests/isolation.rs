@@ -14,7 +14,7 @@ use clap::Parser;
 use device_simulator::cli::Fault;
 use device_simulator::offline_state::CyclePhase;
 use device_simulator::{Cli, Device};
-use rhizo_mqtt_contract::payload::{ConnectivityMode, MeasurementKind};
+use rhizo_mqtt_contract::payload::{ConnectivityMode, EventDetail, EventKind, MeasurementKind};
 use rhizo_mqtt_contract::safety::LeakState;
 use rhizo_mqtt_contract::{DeviceId, Envelope, MessageId, Topic};
 use rhizo_policy::MonotonicMillis;
@@ -432,6 +432,30 @@ fn an_isolated_device_with_an_enabled_policy_waters_within_its_bounds() {
     // there is nobody to publish it to — which is what being isolated means.
     let buffered = device.buffered_events();
     assert!(buffered > 0, "the autonomous doses are in the audit buffer");
+
+    // **And it names the plant it watered** (protocol §5.4). Without this the
+    // edge has to infer ownership from the actuator bindings that exist when the
+    // replay lands, which is a different fact — and an isolated device is
+    // exactly when an operator has time to rebind a pump.
+    let doses: Vec<_> = device
+        .store()
+        .state()
+        .offline_events
+        .replay_events()
+        .into_iter()
+        .filter(|e| e.kind == EventKind::WateringOfflineAutonomous)
+        .collect();
+    assert!(!doses.is_empty(), "at least one dose was buffered");
+    for event in &doses {
+        let EventDetail::Watering { plant_id, .. } = &event.detail else {
+            panic!("an autonomous dose must carry a watering detail");
+        };
+        assert_eq!(
+            plant_id.as_ref().map(|id| id.as_str()),
+            Some("monstera-01"),
+            "the dose must name the plant whose policy authorised it"
+        );
+    }
 }
 
 /// SAFETY-013: absence of a policy is not permission.

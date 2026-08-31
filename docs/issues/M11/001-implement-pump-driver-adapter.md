@@ -68,5 +68,5 @@ cd firmware/esp32-node && cargo test pump::real
 
 ```text
 firmware/esp32-node/src/pump/real.rs
-firmware/esp32-node/src/board/devkitc02.rs
+firmware/esp32-node/src/board/devkitm1.rs
 ```

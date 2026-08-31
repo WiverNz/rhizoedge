@@ -269,7 +269,7 @@ cannot be changed by config, cloud, or UI (SAFETY-007). See
 | Boundary | Carries | Never carries |
 |---|---|---|
 | device → edge via broker | telemetry, actuator state, status, offline events, command results | connected-mode plant decisions |
-| edge → device via broker | config, policy, live time, water/tare/calibrate commands, event ack | unbounded doses; retained time/commands/acks |
+| edge → device via broker | config, policy, live time, water/tare/calibrate commands, event ack, command-result ack | unbounded doses; retained time/commands/acks |
 | edge → cloud | historical events | requests for permission |
 | cloud → edge | acknowledgements only (V1) | commands, config |
 | UI → edge | user intent over HTTP | MQTT of any kind |

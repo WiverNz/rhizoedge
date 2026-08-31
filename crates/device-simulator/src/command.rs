@@ -32,9 +32,19 @@
 //! a subset of the checks — is not implementable without the second rule set
 //! ADR-008 forbids.
 
+/// How long a device waits before republishing an unacknowledged result.
+///
+/// Protocol §5.10 used to bound the retry at 60 s because it was waiting for a
+/// PUBACK. Waiting for the **edge** has no such bound: a result is retried for
+/// as long as it is unacknowledged, and this is only how often.
+pub const COMMAND_RESULT_RETRY_MS: u64 = 15_000;
+
+/// How many unacknowledged results a device holds before evicting the oldest.
+pub const PENDING_RESULT_LIMIT: usize = 32;
+
 use rhizo_mqtt_contract::payload::{
-    CalibrateCommand, CommandOrigin, CommandResult, CommandStatus, RejectReason, TareCommand,
-    WaterCommand,
+    CalibrateCommand, CommandOrigin, CommandResult, CommandResultAck, CommandStatus, RejectReason,
+    TareCommand, WaterCommand,
 };
 use rhizo_mqtt_contract::safety::{
     CommandVerdict, DeviceGuardState, LeakState, PreviousCommand, validate_water_command,
@@ -504,13 +514,49 @@ impl Device {
                 .pending_results
                 .retain(|r| r.command_id != result.command_id);
             state.pending_results.push(result);
+            // The ring is the bound, exactly as it is for buffered events. An
+            // isolated device that autonomously waters for a week would
+            // otherwise grow this list without limit, and unbounded growth in
+            // the one structure that must survive a reboot is worse than losing
+            // the oldest transport copy of a dose that is *also* recorded as a
+            // `watering.offline_autonomous` audit event.
+            while state.pending_results.len() > PENDING_RESULT_LIMIT {
+                let dropped = state.pending_results.remove(0);
+                tracing::error!(
+                    command_id = %dropped.command_id,
+                    "the pending-result buffer is full; the oldest unacknowledged result was evicted"
+                );
+            }
         }) {
             tracing::error!(error = %e, "could not persist a pending result");
         }
         self.flush_results()
     }
 
-    /// Publishes every pending result, clearing them once handed to the broker.
+    /// Publishes every pending result, **keeping** them until the edge
+    /// acknowledges each one.
+    ///
+    /// # Why handing it to the broker is not delivery
+    ///
+    /// MQTT QoS 1 acknowledges hop by hop. The PUBACK for this publication is
+    /// written by the broker on receipt; the edge may not have read the message,
+    /// may crash before its transaction commits, and -- with a clean session --
+    /// will never be offered it again. Clearing the entry here, as this used to,
+    /// discarded the device's only remaining copy of a result the edge had never
+    /// recorded. A lost `completed` under-counts the rolling 24-hour budget
+    /// (SAFETY-006), and under-counting is the direction that waters again too
+    /// soon.
+    ///
+    /// So the entry survives until `command.result.ack` names it (protocol
+    /// §5.14). Republishing a result the edge already holds costs one message
+    /// and is deduplicated on `command_id`; deleting one it never held loses
+    /// ledger data for ever. This is the same trade `event.ack` already makes.
+    ///
+    /// **`clean_session=false` would not be a substitute.** A persistent session
+    /// would make the *broker* redeliver to the edge, which helps only while the
+    /// broker itself survives, only for messages it has already accepted, and
+    /// not at all for the device's own copy. The durability question is between
+    /// the device and the edge, so the answer has to be too.
     pub(crate) fn flush_results(&mut self) -> Vec<Publication> {
         if !self.is_connected() {
             return Vec::new();
@@ -526,17 +572,67 @@ impl Device {
                 Ok(publication) => publications.push(publication),
                 Err(e) => {
                     tracing::error!(error = %e, "could not encode a command result");
-                    return publications;
+                    break;
                 }
             }
         }
+        self.note_result_publish();
+        publications
+    }
+
+    /// Republishes unacknowledged results once the retry interval has elapsed.
+    ///
+    /// Called from the tick. Retrying only on reconnect would leave a result
+    /// stranded for as long as the connection happened to hold, which is the
+    /// common case: the edge crashes and restarts while the device's socket to
+    /// the broker never drops.
+    pub(crate) fn retry_unacknowledged_results(&mut self) -> Vec<Publication> {
+        if !self.is_connected() || self.store().state().pending_results.is_empty() {
+            return Vec::new();
+        }
+        let now = self.elapsed_ms();
+        if now.saturating_sub(self.last_result_publish_ms()) < COMMAND_RESULT_RETRY_MS {
+            return Vec::new();
+        }
+        tracing::debug!(
+            pending = self.store().state().pending_results.len(),
+            "retrying results the edge has not acknowledged"
+        );
+        self.flush_results()
+    }
+
+    /// Applies a `command.result.ack` (protocol §5.14).
+    ///
+    /// Deletion is the last step and is one persisted mutation, the same shape
+    /// as `event.ack`: a crash between "decided to delete" and "wrote the file"
+    /// leaves the result still pending, and a redundant republication is the
+    /// cheap failure.
+    pub(crate) fn on_command_result_ack(&mut self, payload: &[u8]) -> Vec<Publication> {
+        let Some(envelope) = self.decode::<CommandResultAck>(payload, "command.result.ack") else {
+            return Vec::new();
+        };
+        let acked = envelope.data.command_id;
+        let held = self
+            .store()
+            .state()
+            .pending_results
+            .iter()
+            .any(|r| r.command_id == acked);
+        if !held {
+            // Not an error. An acknowledgement for a result this device has
+            // already dropped is the ordinary outcome of a duplicate delivery.
+            tracing::debug!(command_id = %acked, "acknowledged a result that is no longer pending");
+            return Vec::new();
+        }
         if let Err(e) = self
             .store_mut()
-            .mutate(|state| state.pending_results.clear())
+            .mutate(|state| state.pending_results.retain(|r| r.command_id != acked))
         {
-            tracing::error!(error = %e, "could not clear the pending results");
+            tracing::error!(error = %e, "could not persist the acknowledgement; the result is kept");
+            return Vec::new();
         }
-        publications
+        tracing::info!(command_id = %acked, "the edge durably committed a result");
+        Vec::new()
     }
 
     /// Reads a stored outcome for a command, if there is one.
@@ -638,13 +734,36 @@ mod tests {
     fn run_to_completion(device: &mut Device) -> Vec<CommandResult> {
         let mut all = Vec::new();
         for _ in 0..1_000 {
-            all.extend(results(&device.tick(100)));
+            let published = device.tick(100);
+            let batch = results(&published);
+            acknowledge(device, &batch);
+            all.extend(batch);
             if !device.pump_running() {
                 break;
             }
         }
         assert!(!device.pump_running(), "the pump must stop on its own");
         all
+    }
+
+    /// Plays the edge's half of protocol §5.14 for each published result.
+    ///
+    /// Since a result is retained until the **edge** acknowledges it, a test
+    /// that never acknowledges sees the same result again on the next retry —
+    /// which is the behaviour under test in its own case, and pure noise in
+    /// every other. Acknowledging is what a live edge does after its commit.
+    fn acknowledge(device: &mut Device, batch: &[CommandResult]) {
+        for result in batch {
+            let payload = envelope(
+                "command.result.ack",
+                serde_json::json!({ "command_id": result.command_id }),
+            );
+            device.on_message(&result_ack_topic(), &payload);
+        }
+    }
+
+    fn result_ack_topic() -> Topic {
+        Topic::CommandResultAck(DeviceId::parse("plant-node-01").unwrap())
     }
 
     // ------------------------------------------------------- the happy path
@@ -871,6 +990,7 @@ mod tests {
         for id in 0..20u128 {
             let published = device.on_message(&topic("water"), &water(id, 80.0));
             let mut all = results(&published);
+            acknowledge(&mut device, &all);
             all.extend(run_to_completion(&mut device));
             for result in all {
                 match result.status {
@@ -1011,7 +1131,96 @@ mod tests {
             .find(|r| r.command_id == command_id(1))
             .expect("the pending result must be republished");
         assert_eq!(result.status, CommandStatus::Completed);
-        assert!(device.store().state().pending_results.is_empty());
+        // Handing it to the broker is **not** delivery. The broker's PUBACK is
+        // hop-by-hop and says nothing about whether the edge committed, so the
+        // result is still held (protocol §5.14).
+        assert_eq!(
+            device.unacknowledged_results(),
+            1,
+            "a published result is not a delivered one"
+        );
+
+        let payload = envelope(
+            "command.result.ack",
+            serde_json::json!({ "command_id": result.command_id }),
+        );
+        device.on_message(&result_ack_topic(), &payload);
+        assert_eq!(
+            device.unacknowledged_results(),
+            0,
+            "only the edge's own acknowledgement clears a result"
+        );
+    }
+
+    /// **The durability property, end to end on the device's side.**
+    ///
+    /// A result is republished for as long as the edge stays silent, and stops
+    /// the moment the edge speaks. The failure this covers is an edge that
+    /// crashes after the broker's PUBACK and before its commit — the device's
+    /// socket never drops, so a retry that only fired on reconnect would never
+    /// fire at all.
+    #[test]
+    fn an_unacknowledged_result_is_retried_until_the_edge_speaks() {
+        let mut device = ready(&["--initial-moisture", "20"]);
+        device.on_message(&topic("water"), &water(1, 40.0));
+        // Deliberately does not acknowledge.
+        let mut all = Vec::new();
+        for _ in 0..1_000 {
+            all.extend(results(&device.tick(100)));
+            if !device.pump_running() {
+                break;
+            }
+        }
+        assert_eq!(all.len(), 1, "the dose finished once");
+        assert_eq!(device.unacknowledged_results(), 1);
+
+        // Silence past the retry interval republishes the same result.
+        let retried = results(&device.tick(COMMAND_RESULT_RETRY_MS + 1));
+        assert_eq!(retried.len(), 1, "an unacknowledged result is retried");
+        assert_eq!(
+            retried[0].command_id,
+            command_id(1),
+            "the retry carries the same command_id, so the edge deduplicates it"
+        );
+
+        // Well inside the interval, nothing is republished.
+        assert!(
+            results(&device.tick(10)).is_empty(),
+            "the retry is rate limited, not per tick"
+        );
+
+        // The edge commits and says so.
+        acknowledge(&mut device, &retried);
+        assert_eq!(device.unacknowledged_results(), 0);
+        assert!(
+            results(&device.tick(COMMAND_RESULT_RETRY_MS + 1)).is_empty(),
+            "an acknowledged result is never republished"
+        );
+    }
+
+    /// An acknowledgement for a result this device is not holding is a no-op,
+    /// not an error and never a reason to drop a *different* result.
+    #[test]
+    fn an_acknowledgement_for_an_unknown_result_changes_nothing() {
+        let mut device = ready(&["--initial-moisture", "20"]);
+        device.on_message(&topic("water"), &water(1, 40.0));
+        for _ in 0..1_000 {
+            device.tick(100);
+            if !device.pump_running() {
+                break;
+            }
+        }
+        assert_eq!(device.unacknowledged_results(), 1);
+        let payload = envelope(
+            "command.result.ack",
+            serde_json::json!({ "command_id": command_id(99) }),
+        );
+        device.on_message(&result_ack_topic(), &payload);
+        assert_eq!(
+            device.unacknowledged_results(),
+            1,
+            "acknowledging one command must never clear another"
+        );
     }
 
     #[test]
@@ -1041,11 +1250,17 @@ mod tests {
         let mut device = ready(&[]);
         let mut count = 0;
         // One accepted, one rejected, one duplicate.
-        count += results(&device.on_message(&topic("water"), &water(1, 40.0))).len();
+        let batch = results(&device.on_message(&topic("water"), &water(1, 40.0)));
+        acknowledge(&mut device, &batch);
+        count += batch.len();
         count += run_to_completion(&mut device).len();
         device.environment_mut().tank.set_leak(LeakState::Detected);
-        count += results(&device.on_message(&topic("water"), &water(2, 40.0))).len();
-        count += results(&device.on_message(&topic("water"), &water(1, 40.0))).len();
+        let batch = results(&device.on_message(&topic("water"), &water(2, 40.0)));
+        acknowledge(&mut device, &batch);
+        count += batch.len();
+        let batch = results(&device.on_message(&topic("water"), &water(1, 40.0)));
+        acknowledge(&mut device, &batch);
+        count += batch.len();
         assert_eq!(count, 3, "one result per command, always");
     }
 

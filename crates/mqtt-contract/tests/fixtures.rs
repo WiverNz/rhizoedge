@@ -140,6 +140,11 @@ fn check_valid(path: &PathBuf) -> MessageKind {
             cmd.validate().unwrap_or_else(|e| panic!("{name}: {e:?}"));
         }),
         MessageKind::CommandResult => typed!(CommandResult, _d => {}),
+        // A result acknowledgement carries one `command_id` and no rule the
+        // bytes can break: any UUID is a representable correlation key. Whether
+        // the device is still holding that result is device state, checked in
+        // the simulator (`command::on_command_result_ack`), not here.
+        MessageKind::CommandResultAck => typed!(CommandResultAck, _d => {}),
         // `EventAck` carries no wire-level semantic rule: every `u64` is a
         // representable sequence. Whether a *particular* sequence may be
         // acted on is device state — "beyond what I have buffered" is not a
@@ -179,6 +184,7 @@ fn valid_fixtures_cover_every_message_kind() {
         MessageKind::CommandTare,
         MessageKind::CommandCalibrate,
         MessageKind::CommandResult,
+        MessageKind::CommandResultAck,
         MessageKind::EventAck,
     ] {
         assert!(covered.contains(&kind), "no valid fixture for {kind:?}");

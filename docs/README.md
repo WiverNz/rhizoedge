@@ -128,7 +128,7 @@ One PRD per milestone.
 
 | Document | Contents |
 |---|---|
-| [home-node-hardware-guide.md](hardware/home-node-hardware-guide.md) | Bill of materials, enclosure, wiring, power, and assembly order for one physical node — bench bring-up on the ESP32-C3-DevKitC-02 through a battery/solar deployment |
+| [home-node-hardware-guide.md](hardware/home-node-hardware-guide.md) | Milestone-organized BOM, wiring, measurement, and installation guide — bench bring-up on the official Espressif ESP32-C3-DEVKITM-1-N4X through battery and optional solar deployment |
 
 Practical procurement and assembly guidance, and the only document here that
 quotes prices. **It is not normative**: parts, ratings, and values are starting
