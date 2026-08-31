@@ -12,6 +12,16 @@
 //!
 //! Plus the ADR-002 rule a mock could never check — that nothing retained is
 //! ever left on a command topic — and the sleeping-device paths ADR-018 adds.
+//!
+//! # Why `plant-node-02`
+//!
+//! The broker is shared with every other test binary, and `support::broker`'s
+//! lock only serialises tests *within* one binary. An edge here subscribes to
+//! the whole `rhizo/v1/devices/+/#` tree, so another binary's traffic for
+//! `plant-node-01` would land in this suite's database and move `last_seen_at`,
+//! `connectivity_mode`, and the retained status out from under an assertion.
+//! Using the second provisioned account removes the collision rather than
+//! papering over it with a longer timeout.
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 #[path = "../../device-simulator/tests/support/mod.rs"]
@@ -166,7 +176,7 @@ async fn waterable(db: &rhizo_storage::EdgeDb, now: chrono::DateTime<Utc>) {
     use rhizo_storage::repo::{binding, plant};
     sqlx::query(
         "INSERT OR IGNORE INTO devices(device_id,created_at,status,sensors_json,connectivity_mode,last_seen_at) \
-         VALUES('plant-node-01',?,'online',?, 'connected',?)",
+         VALUES('plant-node-02',?,'online',?, 'connected',?)",
     )
     .bind(now.timestamp_millis())
     .bind(
@@ -203,7 +213,7 @@ async fn waterable(db: &rhizo_storage::EdgeDb, now: chrono::DateTime<Utc>) {
             &binding::SensorBindingRow {
                 binding_id: id.to_owned(),
                 plant_id: "monstera-01".to_owned(),
-                device_id: "plant-node-01".to_owned(),
+                device_id: "plant-node-02".to_owned(),
                 sensor_id: sensor.to_owned(),
                 point: point.to_owned(),
                 kind: kind.to_owned(),
@@ -218,7 +228,7 @@ async fn waterable(db: &rhizo_storage::EdgeDb, now: chrono::DateTime<Utc>) {
         db,
         &binding::ActuatorBindingRow {
             plant_id: "monstera-01".to_owned(),
-            device_id: "plant-node-01".to_owned(),
+            device_id: "plant-node-02".to_owned(),
             actuator_id: "pump-0".to_owned(),
             kind: "irrigation_pump".to_owned(),
             created_at: now.timestamp_millis(),
@@ -288,7 +298,7 @@ async fn scalar(
 ) {
     sqlx::query(
         "INSERT INTO measurements(device_id,sensor_id,point,kind,value_num,unit,quality,received_at,batch_id,origin) \
-         VALUES('plant-node-01',?,?,?,?,?,'ok',?,?, 'live')",
+         VALUES('plant-node-02',?,?,?,?,?,'ok',?,?, 'live')",
     )
     .bind(sensor)
     .bind(point)
@@ -312,7 +322,7 @@ async fn boolean(
 ) {
     sqlx::query(
         "INSERT INTO measurements(device_id,sensor_id,point,kind,value_bool,unit,quality,received_at,batch_id,origin) \
-         VALUES('plant-node-01',?,?,?,?,'boolean','ok',?,?, 'live')",
+         VALUES('plant-node-02',?,?,?,?,'boolean','ok',?,?, 'live')",
     )
     .bind(sensor)
     .bind(point)
@@ -335,7 +345,7 @@ async fn boolean(
 /// states its intent at the moment it matters instead of racing the ingress.
 async fn mark_connected(db: &rhizo_storage::EdgeDb, now: chrono::DateTime<Utc>) {
     sqlx::query(
-        "UPDATE devices SET connectivity_mode='connected',status='online',last_seen_at=?          WHERE device_id='plant-node-01'",
+        "UPDATE devices SET connectivity_mode='connected',status='online',last_seen_at=?          WHERE device_id='plant-node-02'",
     )
     .bind(now.timestamp_millis())
     .execute(db.pool())
@@ -428,23 +438,27 @@ async fn restart_mid_command() {
             )
             .await;
         assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-        body["command_id"].as_str().unwrap().to_owned()
-        // The edge is dropped here: ingress and pipeline are aborted mid-flight,
-        // which is the crash the invariant is about.
+        let command_id = body["command_id"].as_str().unwrap().to_owned();
+
+        // Wait for the command to actually reach the broker **before** killing
+        // the edge. The invariant is about a crash *after* publication — a
+        // crash before it is the ordinary "publish failed" path and is already
+        // covered. Matched on the command id, not merely on the topic: this
+        // broker is shared with the other test binaries.
+        let wanted = command_id.clone();
+        let first = watcher
+            .next_matching(support::RECEIVE_TIMEOUT, move |m| {
+                m.topic.ends_with("/commands/water")
+                    && m.json()["data"]["command_id"] == serde_json::json!(wanted)
+            })
+            .await
+            .expect("the command reached the broker before the crash");
+        assert!(!first.retain, "and it was not retained");
+        command_id
+        // The edge is dropped here: ingress and pipeline are aborted with the
+        // command on the wire and no result recorded, which is the crash the
+        // invariant is about.
     };
-    // Matched on the command id, not merely on the topic: this broker is shared
-    // with the other test binaries, and a stray message from one of them would
-    // otherwise satisfy or exhaust the wait.
-    let wanted = command_id.clone();
-    let first = watcher
-        .next_matching(support::RECEIVE_TIMEOUT, move |m| {
-            m.topic.ends_with("/commands/water")
-                && m.json()["data"]["command_id"] == serde_json::json!(wanted)
-        })
-        .await
-        .expect("the command reached the broker before the crash");
-    assert_eq!(first.json()["data"]["command_id"], command_id);
-    assert!(!first.retain, "and it was not retained");
 
     // A new process on the same durable state.
     let edge = Edge::start_on(&broker, db.clone()).await;
@@ -462,7 +476,7 @@ async fn restart_mid_command() {
     let result = serde_json::json!({
         "v": 1, "kind": "command.result",
         "message_id": uuid::Uuid::now_v7(),
-        "device_id": "plant-node-01",
+        "device_id": "plant-node-02",
         "data": {
             "command_id": command_id,
             "status": "completed",
@@ -477,15 +491,15 @@ async fn restart_mid_command() {
     });
     let device = support::Subscriber::connect(
         &broker,
-        &format!("plant-node-01-m6-{}", uuid::Uuid::new_v4()),
-        "plant-node-01",
-        &broker.device_password("plant-node-01"),
-        "rhizo/v1/devices/plant-node-01/commands/water",
+        &format!("plant-node-02-m6-{}", uuid::Uuid::new_v4()),
+        "plant-node-02",
+        &broker.device_password("plant-node-02"),
+        "rhizo/v1/devices/plant-node-02/commands/water",
     )
     .await;
     support::publish(
         &device.client(),
-        "rhizo/v1/devices/plant-node-01/commands/result",
+        "rhizo/v1/devices/plant-node-02/commands/result",
         &result.to_string(),
         false,
     )
@@ -589,17 +603,17 @@ async fn safety_001_duplicate_command_single_actuation() {
     // work the command's terminal status is supposed to do.
     let device = support::Subscriber::connect(
         &broker,
-        &format!("plant-node-01-dup-{}", uuid::Uuid::new_v4()),
-        "plant-node-01",
-        &broker.device_password("plant-node-01"),
-        "rhizo/v1/devices/plant-node-01/commands/water",
+        &format!("plant-node-02-dup-{}", uuid::Uuid::new_v4()),
+        "plant-node-02",
+        &broker.device_password("plant-node-02"),
+        "rhizo/v1/devices/plant-node-02/commands/water",
     )
     .await;
     for _ in 0..3 {
         let result = serde_json::json!({
             "v": 1, "kind": "command.result",
             "message_id": uuid::Uuid::now_v7(),
-            "device_id": "plant-node-01",
+            "device_id": "plant-node-02",
             "data": {
                 "command_id": command_id,
                 "status": "completed",
@@ -614,7 +628,7 @@ async fn safety_001_duplicate_command_single_actuation() {
         });
         support::publish(
             &device.client(),
-            "rhizo/v1/devices/plant-node-01/commands/result",
+            "rhizo/v1/devices/plant-node-02/commands/result",
             &result.to_string(),
             false,
         )
@@ -657,7 +671,7 @@ async fn pending_intent_survives_edge_restart() {
         sqlx::query(
             "UPDATE devices SET connectivity_mode='sleeping',power_mode='battery',\
              wake_interval_seconds=900,sleep_received_at=?,expected_wake_at=?,overdue_at=? \
-             WHERE device_id='plant-node-01'",
+             WHERE device_id='plant-node-02'",
         )
         .bind(now.timestamp_millis())
         .bind(now.timestamp_millis() + 900_000)
@@ -694,7 +708,7 @@ async fn pending_intent_survives_edge_restart() {
     );
     edge.clock.advance(chrono::Duration::minutes(15));
     let wake = edge.clock.now();
-    sqlx::query("UPDATE devices SET connectivity_mode='connected' WHERE device_id='plant-node-01'")
+    sqlx::query("UPDATE devices SET connectivity_mode='connected' WHERE device_id='plant-node-02'")
         .execute(db.pool())
         .await
         .unwrap();
@@ -768,7 +782,7 @@ async fn leak_during_sleep_refuses_at_delivery() {
     sqlx::query(
         "UPDATE devices SET connectivity_mode='sleeping',power_mode='battery',\
          wake_interval_seconds=900,sleep_received_at=?,expected_wake_at=?,overdue_at=? \
-         WHERE device_id='plant-node-01'",
+         WHERE device_id='plant-node-02'",
     )
     .bind(now.timestamp_millis())
     .bind(now.timestamp_millis() + 900_000)
@@ -789,7 +803,7 @@ async fn leak_during_sleep_refuses_at_delivery() {
     // The tray floods while the device is asleep.
     edge.clock.advance(chrono::Duration::minutes(15));
     let wake = edge.clock.now();
-    sqlx::query("UPDATE devices SET connectivity_mode='connected' WHERE device_id='plant-node-01'")
+    sqlx::query("UPDATE devices SET connectivity_mode='connected' WHERE device_id='plant-node-02'")
         .execute(edge.db.pool())
         .await
         .unwrap();
@@ -846,7 +860,7 @@ async fn a_full_cycle_waters_a_real_simulated_plant() {
     let edge = Edge::start(&broker).await;
     let device = support::SimulatedDevice::start(
         &broker,
-        "plant-node-01",
+        "plant-node-02",
         &["--sensors", "soil,tank,leak", "--time-scale", "60"],
     )
     .await;
@@ -866,19 +880,19 @@ async fn a_full_cycle_waters_a_real_simulated_plant() {
     // scaffolding around an inconvenience — it is the invariant, observed.
     assert!(
         eventually_async(Duration::from_secs(10), || async {
-            !edge_controller::control::reconcile::is_reconciling(&edge.db, "plant-node-01")
+            !edge_controller::control::reconcile::is_reconciling(&edge.db, "plant-node-02")
                 .await
                 .unwrap_or(true)
         })
         .await,
         "the device's replay must complete before any dose is issued; progress={:?} boot={:?}",
         sqlx::query_as::<_, (String, Option<i64>, i64)>(
-            "SELECT boot_id,through_device_seq,complete FROM replay_progress WHERE device_id='plant-node-01'"
+            "SELECT boot_id,through_device_seq,complete FROM replay_progress WHERE device_id='plant-node-02'"
         )
         .fetch_all(edge.db.pool())
         .await
         .unwrap(),
-        sqlx::query_scalar::<_, Option<String>>("SELECT boot_id FROM devices WHERE device_id='plant-node-01'")
+        sqlx::query_scalar::<_, Option<String>>("SELECT boot_id FROM devices WHERE device_id='plant-node-02'")
             .fetch_one(edge.db.pool())
             .await
             .unwrap()

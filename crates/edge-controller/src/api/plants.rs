@@ -9,7 +9,6 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use rhizo_domain::state::LockoutReason;
 use rhizo_storage::repo::{plant as plant_repo, query};
 use serde::Deserialize;
 
