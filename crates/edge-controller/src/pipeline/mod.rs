@@ -263,7 +263,7 @@ async fn process(
             // Published for a **duplicate** as readily as for a new row: a
             // duplicate is the device retrying a result whose acknowledgement
             // was lost, and staying silent would leave it retrying for ever.
-            publish_result_ack(client, &e.device_id, e.data.command_id).await?;
+            publish_result_ack(client, &e.device_id, e.data.command_id).await;
             dedup
         }
         Msg::Events(e) => {
@@ -371,15 +371,21 @@ fn log_device_transitions(
 
 /// Tells a device that one `command.result` is durably committed here.
 ///
-/// A failure to publish is not a failure of the message: the row is committed,
-/// and the device will retry the result until an acknowledgement reaches it.
-/// Returning an error would re-run the whole pipeline step against a
-/// transaction that has already landed.
+/// **Infallible on purpose.** It runs *after* the transaction has landed, so
+/// there is no failure here the caller could act on. Propagating one would send
+/// an already-committed message down `apply_classification` — quarantining a row
+/// the edge holds, and withholding its PUBACK so the broker redelivers it for
+/// ever. The failure would be strictly worse than the thing it reported.
+///
+/// A lost acknowledgement is the cheap failure this design is built around: the
+/// device still holds the result, retries it within
+/// `COMMAND_RESULT_RETRY_MS`, and is acknowledged next time. So every error is
+/// logged and swallowed, encoding included.
 async fn publish_result_ack(
     client: &rumqttc::AsyncClient,
     device: &rhizo_mqtt_contract::DeviceId,
     command_id: rhizo_mqtt_contract::CommandId,
-) -> Result<(), EdgeError> {
+) {
     let envelope = Envelope {
         v: 1,
         kind: rhizo_mqtt_contract::MessageKind::CommandResultAck,
@@ -391,9 +397,18 @@ async fn publish_result_ack(
         clock_synced: None,
         data: rhizo_mqtt_contract::payload::CommandResultAck { command_id },
     };
-    let payload = envelope
-        .to_json()
-        .map_err(|x| EdgeError::Decode(x.to_string()))?;
+    let payload = match envelope.to_json() {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::error!(
+                device = %device,
+                %command_id,
+                %error,
+                "could not encode a result acknowledgement; the device will retry the result"
+            );
+            return;
+        }
+    };
     if let Err(error) = client
         .publish(
             Topic::CommandResultAck(device.clone()).as_string(),
@@ -410,7 +425,6 @@ async fn publish_result_ack(
             "could not acknowledge a committed command result; the device will retry it"
         );
     }
-    Ok(())
 }
 
 async fn publish_edge_time(

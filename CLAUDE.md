@@ -45,6 +45,13 @@ Without `RHIZO_REQUIRE_BROKER` they print a loud skip and pass, so a fresh clone
 is green. **With** it — as CI sets — a missing broker is a failure, because a
 suite that can silently skip its own subject eventually proves nothing.
 
+**`Metrics::new()` is a process-wide singleton.** It caches in a `OnceLock`, so
+every caller in a test binary shares one set of gauges and counters. A test that
+sets a gauge and reads it back is racing every other test that touches it —
+`api::health` did, and failed about one full run in three. Take
+`api::health::gauge_lock()` before asserting on a shared metric, or assert on a
+delta rather than an absolute.
+
 **Never quote a bare workspace test total as evidence.** 46 tests are
 broker-gated, `cargo test` captures their skip messages, and they count as
 passed either way — so the workspace total is *identical* with the broker
@@ -702,6 +709,7 @@ because M7 had not started. Full write-up in
 | 7 exact device subscriptions | **8** — `commands/result/ack` added |
 | "1 092 passed" quoted as the headline evidence | A bare total is *identical* with the broker stopped: 46 tests skip silently and count as passed. Quote the environment and per-suite counts |
 | `edge-controller/integration` reported 20/20 | It was 18/20 against a broker carrying one leftover retained status; four assertions read `devices` without a `WHERE` clause. Scoped, and verified **against** the pollution rather than its absence |
+| `api::health`'s two readiness tests passed | They raced on `metrics.connection`, which is **process-global** (`Metrics::new` caches in a `OnceLock`), failing about one full run in three. Serialised on a mutex — a per-test registry would test something the binary does not do |
 
 Three things did **not** change:
 
