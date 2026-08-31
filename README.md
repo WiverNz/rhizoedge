@@ -6,7 +6,7 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M6 complete. M7 ready, and not started.**
+> **Status: M0 through M7 complete. M8 ready, and not started.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
@@ -15,7 +15,7 @@ cloud synchronisation.
 > registry and health model, the whole plant model — plants, bindings,
 > per-measurement thresholds, trends, manual-watering detection, species
 > presets, offline-policy authoring, and an explainable recommendation engine —
-> and, as of M6, **irrigation itself.**
+> as of M6 **irrigation itself**, and as of M7 the **optional cloud sink**.
 >
 > **M6 is the milestone where software moves water.** The safety gate, the
 > irrigation state machine, the command lifecycle, reconciliation of offline
@@ -25,10 +25,22 @@ cloud synchronisation.
 > (2026-08-31) then closed two durability defects the milestone had claimed but
 > not held — see [docs/reports/M6.md](docs/reports/M6.md).
 >
-> **M7 adds the optional cloud sink** and is still disabled by default; the
-> cloud can vanish for a week without changing a watering decision. Start at
-> [ROADMAP.md](ROADMAP.md); the next issue is
-> [M7-001](docs/issues/M7/001-add-cloud-api-and-postgres.md).
+> **M7 is the milestone that adds the cloud without letting it matter.** An
+> append-only PostgreSQL history behind an idempotent batch-ingest endpoint; a
+> durable edge outbox whose event is written in the same transaction as the
+> change it describes; and a drain that survives an outage of any length,
+> quarantines a poison event rather than wedging behind it, and prunes only
+> measurements when capped. It stays **disabled by default**, the cloud has no
+> route that can originate a command, and `rhizo-domain` cannot depend on the
+> cloud client — proven by test, not by review. A **post-M7 correction**
+> (2026-08-31) then aligned the emitted event catalogue with ADR-005 and gave
+> destructive changes the history they were not writing — see
+> [docs/reports/M7.md](docs/reports/M7.md).
+>
+> **M8 is next**, and adds no features: it makes the whole software system
+> reproducible and verifiable with one command, on any machine with Docker and
+> no hardware at all. Start at [ROADMAP.md](ROADMAP.md); the next issue is
+> [M8-001](docs/issues/M8/001-add-dockerfiles.md).
 >
 > To run it now, see [Running it locally](#running-it-locally).
 
@@ -339,7 +351,8 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
 | `edge-controller` | The control plane — the only component that decides while connected. Since M6 it owns the command lifecycle, reconciliation of replayed offline history, and the durable acknowledgement of every dose result |
 | `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; since M6 it waters autonomously while isolated, through the shared evaluator |
-| `cloud-api` | Idempotent event ingestion into PostgreSQL |
+| `rhizo-cloud-client` | The edge's typed HTTP client for the cloud: bounded requests, exhaustive retry classification, and `Retry-After` handling. Nothing else in the edge knows the cloud exists |
+| `cloud-api` | Implemented in M7. Idempotent event ingestion keyed by `(edge_id, event_id)` into an append-only PostgreSQL ledger, the projections rebuilt from it, and read-only history APIs. It can issue nothing |
 | `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
 
@@ -426,6 +439,20 @@ takes about half a minute. Nothing in the system reads a wall clock to decide
 anything, which is why accelerating time is honest rather than a shortcut
 ([time-model.md](docs/architecture/time-model.md) §8).
 
+Nothing above starts the cloud, and nothing above needs it. To watch history
+sync as well, bring up PostgreSQL and the cloud API and restart the edge with
+the sink switched on:
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d --wait postgres cloud-api
+RHIZO_EDGE__CLOUD__ENABLED=true RHIZO_EDGE__CLOUD__BASE_URL=http://localhost:8081 \
+  cargo run -p edge-controller
+```
+
+Stopping `cloud-api` again is the interesting half: events queue in the edge's
+outbox, every watering decision carries on unchanged, `/health/ready` stays
+**200**, and the backlog drains when the cloud returns.
+
 With both running, the edge is on `http://localhost:8080`:
 
 ```bash
@@ -505,7 +532,8 @@ Project-wide gate:
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-RHIZO_REQUIRE_BROKER=1 cargo test --workspace --all-features
+RHIZO_REQUIRE_BROKER=1 RHIZO_REQUIRE_POSTGRES=1 RHIZO_REQUIRE_CLOUD=1 \
+  cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
 cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
@@ -513,10 +541,18 @@ cargo sqlx prepare --workspace --check
 cargo run -p rhizo-docscheck
 ```
 
-`RHIZO_REQUIRE_BROKER=1` is how CI runs the suite. Without it the broker-backed
-tests print a loud skip and pass, so a fresh clone is green; with it, a missing
-Mosquitto is a failure — a suite that can silently skip its own subject
-eventually proves nothing.
+The three `RHIZO_REQUIRE_*` flags are how CI runs the suite. Without them the
+tests that need a broker, PostgreSQL, or a live cloud print a loud skip and
+pass, so a fresh clone is green; with them, a missing service is a failure — a
+suite that can silently skip its own subject eventually proves nothing.
+
+They also mean **a bare test total is not evidence**. Dozens of tests skip and
+still count as passed, so the workspace total is identical with the services
+stopped and with them running. Quote the environment and the per-suite counts,
+or the number says nothing.
+
+Each flag needs the address of the thing it requires: `RHIZO_TEST_BROKER`,
+`RHIZO_TEST_POSTGRES_URL`, `RHIZO_TEST_CLOUD_URL`.
 
 `cargo sqlx prepare --check` verifies the committed `.sqlx/` offline cache
 against the migrated schema. The cache is checked into version control on

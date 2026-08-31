@@ -225,6 +225,26 @@ async fn summarise(db: &EdgeDb, device_id: &str, boot_id: &str) -> Result<Summar
     })
 }
 
+/// One replayed autonomous dose that arrived without a plant to charge it to.
+///
+/// Decoded by `query_as!`, so SQLx checks every column name and type against the
+/// real schema at compile time. `Row::get` defers both to runtime, and the
+/// runtime here is a device coming back from isolation — the worst moment to
+/// discover a renamed column, because the panic lands in the middle of
+/// reconciliation and the doses stay unattributed.
+///
+/// `watering_event_id!` overrides the inferred nullability rather than papering
+/// over it: in SQLite a `TEXT PRIMARY KEY` is **not** implicitly `NOT NULL`, so
+/// SQLx correctly reads the schema as nullable. `started_at` carries no override
+/// because its `NOT NULL` is real, which is what makes the one override
+/// meaningful.
+struct UnattributedDose {
+    watering_event_id: String,
+    started_at: i64,
+    completed_at: Option<i64>,
+    delivered_ml: Option<f64>,
+}
+
 /// Charges *unattributed* replayed doses to the plants the device actuates.
 ///
 /// This is the **fallback**, not the primary path. A dose whose event named its
@@ -240,7 +260,6 @@ async fn attribute_autonomous_doses(
     device_id: &str,
     now: DateTime<Utc>,
 ) -> Result<usize, EdgeError> {
-    use sqlx::Row as _;
     let plants: Vec<String> =
         sqlx::query_scalar("SELECT plant_id FROM actuator_bindings WHERE device_id=?")
             .bind(device_id)
@@ -262,11 +281,13 @@ async fn attribute_autonomous_doses(
             "an autonomous dose cannot be attributed to one plant; charging every actuator-bound plant conservatively"
         );
     }
-    let unattributed = sqlx::query(
-        "SELECT watering_event_id,started_at,completed_at,delivered_ml FROM watering_events \
-         WHERE device_id=? AND origin='offline_autonomous' AND plant_id IS NULL",
+    let unattributed = sqlx::query_as!(
+        UnattributedDose,
+        r#"SELECT watering_event_id AS "watering_event_id!", started_at, completed_at, delivered_ml
+           FROM watering_events
+           WHERE device_id=? AND origin='offline_autonomous' AND plant_id IS NULL"#,
+        device_id
     )
-    .bind(device_id)
     .fetch_all(db.pool())
     .await
     .map_err(|e| EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string())))?;
@@ -281,11 +302,8 @@ async fn attribute_autonomous_doses(
         );
     }
     let mut written = 0;
-    for row in &unattributed {
-        let source: String = row.get("watering_event_id");
-        let started_at: i64 = row.get("started_at");
-        let completed_at: Option<i64> = row.get("completed_at");
-        let delivered_ml: Option<f64> = row.get("delivered_ml");
+    for dose in &unattributed {
+        let source = &dose.watering_event_id;
         // One transaction per replayed dose: the per-plant rows, the marker
         // that retires the unattributed row, and the cloud events that describe
         // them commit together or not at all. `persist_replay` deliberately did
@@ -301,9 +319,9 @@ async fn attribute_autonomous_doses(
             .bind(&id)
             .bind(plant_id)
             .bind(device_id)
-            .bind(started_at)
-            .bind(completed_at)
-            .bind(delivered_ml)
+            .bind(dose.started_at)
+            .bind(dose.completed_at)
+            .bind(dose.delivered_ml)
             .execute(&mut *tx)
             .await
             .map_err(|e| EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string())))?;
@@ -312,7 +330,7 @@ async fn attribute_autonomous_doses(
                 rhizo_storage::repo::outbox::emit(
                     &mut tx,
                     rhizo_storage::repo::outbox::EventKind::WATERING_OFFLINE_AUTONOMOUS,
-                    &serde_json::json!({"device_id":device_id,"plant_id":plant_id,"mode":"automatic","origin":"offline_autonomous","delivered_ml":delivered_ml,"status":"completed","attribution":"actuator_binding_fallback","source_watering_event_id":source,"occurred_at":completed_at.unwrap_or(started_at)}),
+                    &serde_json::json!({"device_id":device_id,"plant_id":plant_id,"mode":"automatic","origin":"offline_autonomous","delivered_ml":dose.delivered_ml,"status":"completed","attribution":"actuator_binding_fallback","source_watering_event_id":source,"occurred_at":dose.completed_at.unwrap_or(dose.started_at)}),
                     now.timestamp_millis(),
                 )
                 .await
@@ -323,7 +341,7 @@ async fn attribute_autonomous_doses(
         // hardware did; the per-plant rows are what the budget sums. Marking it
         // consumed keeps the attribution idempotent without deleting history.
         sqlx::query("UPDATE watering_events SET status='attributed' WHERE watering_event_id=?")
-            .bind(&source)
+            .bind(source)
             .execute(&mut *tx)
             .await
             .map_err(|e| {

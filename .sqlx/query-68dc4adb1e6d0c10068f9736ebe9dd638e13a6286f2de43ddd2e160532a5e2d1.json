@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT watering_event_id AS \"watering_event_id!\", started_at, completed_at, delivered_ml\n           FROM watering_events\n           WHERE device_id=? AND origin='offline_autonomous' AND plant_id IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "watering_event_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "watering_events",
+            "name": "watering_event_id"
+          }
+        }
+      },
+      {
+        "name": "started_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "watering_events",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "name": "completed_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "watering_events",
+            "name": "completed_at"
+          }
+        }
+      },
+      {
+        "name": "delivered_ml",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "watering_events",
+            "name": "delivered_ml"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "68dc4adb1e6d0c10068f9736ebe9dd638e13a6286f2de43ddd2e160532a5e2d1"
+}
