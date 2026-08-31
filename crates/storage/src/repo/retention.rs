@@ -30,16 +30,10 @@ pub async fn run_batch(db: &EdgeDb, now: i64, batch: u32) -> Result<Pruned, Stor
     .map_err(StorageError::from_sqlx)?
     .rows_affected();
 
-    let synced_before = now - 86_400_000;
-    let outbox = sqlx::query!(
-        "DELETE FROM pending_cloud_events WHERE event_id IN (SELECT event_id FROM pending_cloud_events WHERE status='synced' AND synced_at < ? ORDER BY synced_at LIMIT ?)",
-        synced_before,
-        limit
-    )
-    .execute(db.pool())
-    .await
-    .map_err(StorageError::from_sqlx)?
-    .rows_affected();
+    // F-070-29 lives in `outbox::prune_synced`, not here. The drain has to run
+    // the same cleanup before it measures the cap, and two copies of a deletion
+    // rule is how the two callers end up disagreeing about which rows exist.
+    let outbox = crate::repo::outbox::prune_synced(db, now, batch).await?;
 
     let samples_before = now - 90 * 86_400_000;
     let measurements = sqlx::query!(

@@ -46,6 +46,28 @@ pub async fn ready(State(state): State<ApiState>) -> (StatusCode, Json<impl Seri
     )
 }
 
+/// Serialises every test that touches a shared metric.
+///
+/// `Metrics::new()` is a process-wide singleton, so each gauge is **one value
+/// shared by every test in this binary** — not a fixture each test owns. Two
+/// tests that set one and read it back overwrite each other; the two readiness
+/// tests did, failing about one full workspace run in three.
+///
+/// A lock rather than a per-test registry, because the singleton is deliberate:
+/// metrics are a process-global surface and pretending otherwise in a test would
+/// be testing something the binary does not do.
+///
+/// **Anything that asserts on a shared gauge takes this lock, and so does
+/// anything that writes one a test asserts on.** A lock only one side takes is
+/// not a lock, which is why this lives at module scope rather than inside
+/// `tests` — where it was unreachable from the drain tests that write
+/// `pending_cloud_events` while the drain's own gauge test reads it.
+#[cfg(test)]
+pub(crate) fn gauge_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,23 +91,6 @@ mod tests {
             ),
         }
     }
-    /// Serialises the two readiness tests.
-    ///
-    /// `Metrics::new()` is a process-wide singleton, so `metrics.connection` is
-    /// **one gauge shared by every test in this binary** — not a fixture each
-    /// test owns. These two set it to different values and then read it back, so
-    /// run concurrently they overwrite each other and either can fail. Observed
-    /// as roughly one failure in three full workspace runs.
-    ///
-    /// A lock rather than a per-test registry, because the singleton is
-    /// deliberate: metrics are a process-global surface and pretending otherwise
-    /// in a test would be testing something the binary does not do. Anything
-    /// else that asserts on a shared gauge must take this lock too.
-    fn gauge_lock() -> &'static tokio::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-    }
-
     #[tokio::test]
     async fn subscribed_is_ready_and_cloud_is_not_a_check() {
         let _guard = gauge_lock().lock().await;

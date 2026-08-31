@@ -233,6 +233,73 @@ pub async fn quarantined(db: &EdgeDb, limit: u32) -> Result<Vec<RowData>, Storag
         })
         .collect())
 }
+/// How long a delivered event stays in the outbox before retention removes it.
+///
+/// PRD 070 F-070-29. The row has already reached the cloud, which is the durable
+/// copy; what is left here is a local receipt, kept for a day so an operator can
+/// still answer "did this actually sync?" after an overnight incident.
+pub const SYNCED_RETENTION_MS: i64 = 24 * 3_600_000;
+
+/// Deletes synced rows older than [`SYNCED_RETENTION_MS`], oldest first.
+///
+/// The **only** implementation of F-070-29. Both the hourly retention worker and
+/// the drain call it: the drain because it is what creates synced rows and must
+/// not compute the cap against a table full of rows that are already due for
+/// deletion, the worker because a cloud that is switched off leaves a drain that
+/// never runs. It is bounded and idempotent, so both calling it is harmless.
+///
+/// The boundary is `<=`, so a row synced exactly `SYNCED_RETENTION_MS` ago goes.
+/// "Pruned after 24 h" is a deadline, not a half-open interval, and a `<` here
+/// would leave the exact-boundary row alive until the next pass — reachable
+/// whenever the clock is injected rather than sampled, which is every test.
+///
+/// A `synced` row with a `NULL` `synced_at` is deleted regardless of age. It is
+/// unreachable through [`synced`], which is the only writer of that status, but
+/// if one ever existed the `<=` comparison would be false for ever and the row
+/// would be the one thing this module must not have: an unbounded class. Its
+/// status already says the cloud has it.
+pub async fn prune_synced(db: &EdgeDb, now: i64, limit: u32) -> Result<u64, StorageError> {
+    let before = now.saturating_sub(SYNCED_RETENTION_MS);
+    let limit = i64::from(limit);
+    // `query!` rather than `query`: the retention module delegates its outbox
+    // arm here, and its contract (M3-004) is that every retention statement is
+    // checked against the migrated schema at compile time.
+    let result = sqlx::query!(
+        "DELETE FROM pending_cloud_events WHERE event_id IN(SELECT event_id FROM pending_cloud_events WHERE status='synced' AND (synced_at IS NULL OR synced_at<=?) ORDER BY synced_at,event_id LIMIT ?)",
+        before,
+        limit
+    )
+    .execute(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(result.rows_affected())
+}
+
+/// Enforces `outbox_max_rows` by dropping the cheapest history, oldest first.
+///
+/// Three rules, and the order between them is the whole design:
+///
+/// 1. **Nothing high tier is ever deleted.** F-070-27, and the reason the tier
+///    column exists at all: the ledger of what the machine did to a living plant
+///    is not disposable, and a cap that could delete it would be a cap on
+///    honesty. Only `measurement.sample` is low tier.
+/// 2. **The cap is measured over unsynced rows** — `pending` *and*
+///    `quarantined`. Synced rows are [`prune_synced`]'s business and are on
+///    their way out anyway; counting them would prune live history to make room
+///    for receipts.
+/// 3. **Every row counted as pressure that is low tier is also prunable.** The
+///    prunable set and the counted set differ only by tier. An earlier version
+///    counted `status!='synced'` but deleted only `status='pending'`, which made
+///    low-tier *quarantined* rows pure pressure: they inflated the excess, so
+///    each one evicted an extra live pending row, and nothing could ever remove
+///    them — an unbounded class hiding inside the mechanism that exists to bound
+///    growth.
+///
+/// **The cap can therefore be exceeded, and that is correct.** Under pressure
+/// that is entirely high tier there is nothing this function is allowed to
+/// delete, and it deletes nothing rather than deleting something. Preservation
+/// wins over the cap; `the_cap_yields_to_preservation_under_high_tier_pressure`
+/// asserts it so nobody later "fixes" the cap into a data-loss bug.
 pub async fn prune_low(db: &EdgeDb) -> Result<u64, StorageError> {
     let max: i64 =
         sqlx::query_scalar("SELECT outbox_max_rows FROM cloud_sync_settings WHERE singleton=1")
@@ -245,16 +312,241 @@ pub async fn prune_low(db: &EdgeDb) -> Result<u64, StorageError> {
             .await
             .map_err(StorageError::from_sqlx)?;
     let excess = count.saturating_sub(max);
-    if excess == 0 {
+    if excess <= 0 {
         return Ok(0);
     }
-    let result=sqlx::query("DELETE FROM pending_cloud_events WHERE event_id IN(SELECT event_id FROM pending_cloud_events WHERE value_tier='low' AND status='pending' ORDER BY created_at,event_id LIMIT ?)").bind(excess).execute(db.pool()).await.map_err(StorageError::from_sqlx)?;
+    let result=sqlx::query("DELETE FROM pending_cloud_events WHERE event_id IN(SELECT event_id FROM pending_cloud_events WHERE value_tier='low' AND status!='synced' ORDER BY created_at,event_id LIMIT ?)").bind(excess).execute(db.pool()).await.map_err(StorageError::from_sqlx)?;
     Ok(result.rows_affected())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Inserts one outbox row in an exact state. The column list is spelled out
+    /// so a schema change breaks these tests loudly instead of shifting a
+    /// positional `VALUES` list into the wrong columns.
+    async fn row(
+        db: &EdgeDb,
+        id: &str,
+        tier: &str,
+        status: &str,
+        created_at: i64,
+        synced_at: Option<i64>,
+    ) {
+        sqlx::query(
+            "INSERT INTO pending_cloud_events(event_id,kind,value_tier,payload_json,status,attempts,next_attempt_at,created_at,synced_at) \
+             VALUES(?,'device.event',?,'{}',?,0,0,?,?)",
+        )
+        .bind(id)
+        .bind(tier)
+        .bind(status)
+        .bind(created_at)
+        .bind(synced_at)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn ids(db: &EdgeDb) -> Vec<String> {
+        sqlx::query_scalar("SELECT event_id FROM pending_cloud_events ORDER BY event_id")
+            .fetch_all(db.pool())
+            .await
+            .unwrap()
+    }
+
+    async fn fresh() -> EdgeDb {
+        let db = EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        db
+    }
+
+    /// **F-070-29.** The deadline is 24 h on `synced_at`, and the boundary row
+    /// goes: "pruned after 24 h" is a deadline, not a half-open interval.
+    #[tokio::test]
+    async fn synced_rows_are_retired_at_twenty_four_hours_and_not_before() {
+        let db = fresh().await;
+        let now = 100 * 86_400_000i64;
+        row(
+            &db,
+            "just-under",
+            "high",
+            "synced",
+            0,
+            Some(now - SYNCED_RETENTION_MS + 1),
+        )
+        .await;
+        row(
+            &db,
+            "exactly",
+            "high",
+            "synced",
+            0,
+            Some(now - SYNCED_RETENTION_MS),
+        )
+        .await;
+        row(
+            &db,
+            "well-over",
+            "high",
+            "synced",
+            0,
+            Some(now - SYNCED_RETENTION_MS - 1),
+        )
+        .await;
+
+        assert_eq!(prune_synced(&db, now, 500).await.unwrap(), 2);
+        assert_eq!(ids(&db).await, vec!["just-under".to_owned()]);
+    }
+
+    /// Retention retires *delivered* rows. A row still waiting to be delivered,
+    /// or quarantined for an operator to look at, is history the edge still
+    /// holds — age is not a reason to lose it, and only `status` says otherwise.
+    #[tokio::test]
+    async fn retention_never_removes_pending_or_quarantined_rows() {
+        let db = fresh().await;
+        let now = 100 * 86_400_000i64;
+        let ancient = now - 365 * 86_400_000;
+        row(&db, "pending-low", "low", "pending", ancient, None).await;
+        row(&db, "pending-high", "high", "pending", ancient, None).await;
+        row(&db, "quarantined-low", "low", "quarantined", ancient, None).await;
+        row(
+            &db,
+            "quarantined-high",
+            "high",
+            "quarantined",
+            ancient,
+            None,
+        )
+        .await;
+        // A quarantined row that carries a stale `synced_at` from an earlier
+        // life must not be caught either: the predicate is `status`, not age.
+        row(
+            &db,
+            "quarantined-stale",
+            "high",
+            "quarantined",
+            ancient,
+            Some(ancient),
+        )
+        .await;
+
+        assert_eq!(prune_synced(&db, now, 500).await.unwrap(), 0);
+        assert_eq!(ids(&db).await.len(), 5);
+    }
+
+    /// Tier decides what the *cap* may drop. It has nothing to say about
+    /// retention: a delivered measurement and a delivered watering event are
+    /// both receipts for something the cloud already has.
+    #[tokio::test]
+    async fn retention_retires_both_tiers_once_delivered() {
+        let db = fresh().await;
+        let now = 100 * 86_400_000i64;
+        let old = now - SYNCED_RETENTION_MS - 1;
+        row(&db, "low", "low", "synced", 0, Some(old)).await;
+        row(&db, "high", "high", "synced", 0, Some(old)).await;
+
+        assert_eq!(prune_synced(&db, now, 500).await.unwrap(), 2);
+        assert!(ids(&db).await.is_empty());
+    }
+
+    /// A `synced` row with no `synced_at` cannot age out of a `<=` comparison,
+    /// so it would live for ever — the one thing this module must not have.
+    /// Unreachable through `synced()`, deleted anyway if it ever appears.
+    #[tokio::test]
+    async fn a_synced_row_with_no_timestamp_is_not_an_unbounded_class() {
+        let db = fresh().await;
+        row(&db, "orphan", "high", "synced", 0, None).await;
+        assert_eq!(prune_synced(&db, 0, 500).await.unwrap(), 1);
+        assert!(ids(&db).await.is_empty());
+    }
+
+    /// Retention is bounded per pass so a backlog cannot stall the writer.
+    #[tokio::test]
+    async fn retention_is_bounded_per_pass_and_takes_the_oldest_first() {
+        let db = fresh().await;
+        let now = 100 * 86_400_000i64;
+        for i in 1..=5i64 {
+            row(
+                &db,
+                &format!("e{i}"),
+                "high",
+                "synced",
+                0,
+                Some(now - SYNCED_RETENTION_MS - i),
+            )
+            .await;
+        }
+        // Oldest first means the largest subtracted offset goes first.
+        assert_eq!(prune_synced(&db, now, 2).await.unwrap(), 2);
+        assert_eq!(
+            ids(&db).await,
+            vec!["e1".to_owned(), "e2".to_owned(), "e3".to_owned()]
+        );
+    }
+
+    /// **The defect this correction fixes.** A low-tier *quarantined* row used
+    /// to count as pressure while being un-prunable: it inflated the excess, so
+    /// each one evicted an extra live pending row, and nothing could ever remove
+    /// it. Counted and prunable are now the same set, differing only by tier.
+    #[tokio::test]
+    async fn low_tier_quarantined_rows_are_prunable_not_permanent_pressure() {
+        let db = fresh().await;
+        configure(&db, true, 2).await.unwrap();
+        row(&db, "q-oldest", "low", "quarantined", 1, None).await;
+        row(&db, "p-second", "low", "pending", 2, None).await;
+        row(&db, "p-third", "low", "pending", 3, None).await;
+        row(&db, "p-fourth", "low", "pending", 4, None).await;
+
+        // Four unsynced rows against a cap of two: two must go, oldest first,
+        // and the quarantined one is first in line rather than immortal.
+        assert_eq!(prune_low(&db).await.unwrap(), 2);
+        assert_eq!(
+            ids(&db).await,
+            vec!["p-fourth".to_owned(), "p-third".to_owned()]
+        );
+    }
+
+    /// **Preservation wins over the cap, and the cap loses.** Under pressure
+    /// that is entirely high tier there is nothing the cap is allowed to delete,
+    /// so the backlog exceeds `outbox_max_rows` and stays there. This is not a
+    /// leak to be tidied up later: the alternative is deleting the ledger of
+    /// what the machine did to a living plant in order to satisfy a number.
+    #[tokio::test]
+    async fn the_cap_yields_to_preservation_under_high_tier_pressure() {
+        let db = fresh().await;
+        configure(&db, true, 2).await.unwrap();
+        for i in 1..=10i64 {
+            row(&db, &format!("h{i:02}"), "high", "pending", i, None).await;
+        }
+        assert_eq!(prune_low(&db).await.unwrap(), 0);
+        let (pending, _) = counts(&db).await.unwrap();
+        assert_eq!(pending, 10, "the backlog is allowed to exceed the cap of 2");
+
+        // One low-tier row arriving does not make the high-tier ones eligible;
+        // it is the only thing that can go, and the cap is still exceeded after.
+        row(&db, "l01", "low", "pending", 0, None).await;
+        assert_eq!(prune_low(&db).await.unwrap(), 1);
+        let survivors = ids(&db).await;
+        assert_eq!(survivors.len(), 10);
+        assert!(survivors.iter().all(|id| id.starts_with('h')));
+    }
+
+    /// Synced rows are retention's business, not the cap's. Counting them as
+    /// pressure would evict live history to make room for delivered receipts.
+    #[tokio::test]
+    async fn the_cap_ignores_already_delivered_rows() {
+        let db = fresh().await;
+        configure(&db, true, 2).await.unwrap();
+        for i in 1..=5i64 {
+            row(&db, &format!("s{i}"), "low", "synced", i, Some(i)).await;
+        }
+        row(&db, "p1", "low", "pending", 10, None).await;
+        row(&db, "p2", "low", "pending", 11, None).await;
+
+        assert_eq!(prune_low(&db).await.unwrap(), 0);
+        assert_eq!(ids(&db).await.len(), 7);
+    }
+
     #[tokio::test]
     async fn prune_never_removes_high_tier_and_is_oldest_first() {
         let db = EdgeDb::in_memory().await.unwrap();

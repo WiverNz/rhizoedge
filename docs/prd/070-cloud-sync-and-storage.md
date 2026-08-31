@@ -199,6 +199,21 @@ command sequences are identical modulo ids and timestamps.
 Also safety-relevant: F-070-27's refusal to prune high-tier events. History is
 nice; the ledger of what the machine did to a living plant is not optional.
 
+**The cap therefore yields, and the outbox may exceed `outbox_max_rows`.** Under
+pressure that is entirely high tier there is nothing the cap is permitted to
+delete, so it deletes nothing. That is the requirement working, not failing: the
+alternative is discarding the ledger to satisfy a number. The bound that does
+apply to high-tier rows is delivery — they leave when the cloud comes back, and
+F-070-29 retires them 24 h later.
+
+The two mechanisms are distinct and must not be conflated. **Retention**
+(F-070-29) removes rows the cloud already has, by `synced_at` age, both tiers
+alike. **The cap** (F-070-27) removes rows the cloud does *not* have, by tier and
+age, and only low tier. Every row the cap counts as pressure that is low tier is
+also a row the cap may delete: a class that is counted but unprunable inflates
+the excess, evicting a live row for each one, while growing without bound
+itself.
+
 ## Observability
 
 Metrics:
@@ -248,6 +263,16 @@ the drained count.
 - [x] A deliberately rejected event is quarantined while the other 499 sync.
 - [x] Filling the outbox past the cap prunes measurements and preserves **every**
       watering event, command, and lockout.
+- [x] Pressure that is entirely high tier prunes **nothing** and is allowed to
+      exceed `outbox_max_rows`; preservation wins over the cap.
+- [x] A low-tier row that is `quarantined` rather than `pending` is prunable at
+      the cap, so it is neither permanent pressure nor an unbounded class.
+- [x] **F-070-29:** a row synced less than 24 h ago survives retention; one
+      synced at or beyond 24 h is removed; `pending` and `quarantined` rows are
+      never removed by retention at any age; both tiers are eligible once synced.
+- [x] The drain retires and caps **before** it selects, so a row counted in
+      `cloud_events_dropped_total` is never transmitted, and
+      `pending_cloud_events` reports the backlog the sweep left behind.
 - [x] `cloud-api reproject --edge-id home-01` reproduces byte-identical
       projection tables.
 - [x] `rhizo-domain`'s `Cargo.toml` contains no dependency on

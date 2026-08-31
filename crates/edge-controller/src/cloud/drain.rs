@@ -37,6 +37,69 @@ impl BatchSize {
     }
 }
 
+/// How many expired synced rows one drain pass retires.
+///
+/// The same bound the retention worker uses. A pass that deleted without a limit
+/// could hold the write lock long enough to stall the ingestion path, and the
+/// drain loop comes round every 250 ms, so a backlog drains in seconds anyway.
+const SYNCED_SWEEP_LIMIT: u32 = 500;
+
+/// Retires, caps, measures, and only then selects — in that order.
+///
+/// The order is the point, and getting it wrong is the defect this function was
+/// extracted to make testable. The drain used to select `ready()` rows *first*
+/// and prune afterwards, which produced two wrong answers from one mistake:
+///
+/// - **A dropped row was still transmitted.** A row selected into the batch
+///   could then be pruned, counted in `cloud_events_dropped_total`, and sent
+///   anyway from the stale batch — so the counter said the history was gone
+///   while the cloud received it, and the two disagreed for ever afterwards.
+/// - **The gauge described a backlog that no longer existed.** It was read
+///   before pruning, so `pending_cloud_events` reported the pressure that caused
+///   the prune rather than the backlog the prune left behind — exactly inverted
+///   from what an operator watching for recovery needs.
+///
+/// Sweeping before measuring also matters on its own: the cap is a statement
+/// about history still waiting to be delivered, and rows that are already
+/// delivered and past their retention are not that. Counting them would prune
+/// live low-tier history to make room for receipts.
+///
+/// Pruning stays independent of readiness and backoff. A prolonged outage can
+/// leave every row delayed past `next_attempt_at`, and that must bound growth
+/// less, not more.
+async fn sweep_and_select(
+    db: &rhizo_storage::EdgeDb,
+    metrics: &Metrics,
+    now: i64,
+    limit: u32,
+) -> Result<Vec<rhizo_storage::repo::outbox::RowData>, String> {
+    let retired = rhizo_storage::repo::outbox::prune_synced(db, now, SYNCED_SWEEP_LIMIT)
+        .await
+        .map_err(|e| e.to_string())?;
+    if retired > 0 {
+        // The same counter the hourly worker feeds. Which of the two removed a
+        // row is an implementation detail; "rows retention removed" is not.
+        metrics
+            .rows_pruned
+            .with_label_values(&["pending_cloud_events"])
+            .inc_by(retired);
+    }
+    let dropped = rhizo_storage::repo::outbox::prune_low(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    if dropped > 0 {
+        metrics.cloud_events_dropped.inc_by(dropped);
+        tracing::error!(dropped, "ALERT: cloud outbox cap pruned low-tier history");
+    }
+    let (pending, _) = rhizo_storage::repo::outbox::counts(db)
+        .await
+        .map_err(|e| e.to_string())?;
+    metrics.pending_cloud_events.set(pending);
+    rhizo_storage::repo::outbox::ready(db, now, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn run(
     db: rhizo_storage::EdgeDb,
     client: CloudClient,
@@ -52,23 +115,8 @@ pub async fn run(
             return Ok(());
         }
         let now = clock.now().timestamp_millis();
-        let rows = rhizo_storage::repo::outbox::ready(&db, now, size.get())
-            .await
-            .map_err(|e| e.to_string())?;
-        let (pending, _) = rhizo_storage::repo::outbox::counts(&db)
-            .await
-            .map_err(|e| e.to_string())?;
-        metrics.pending_cloud_events.set(pending);
         metrics.cloud_batch_size.set(i64::from(size.get()));
-        // Enforce the cap independently of readiness/backoff. A prolonged
-        // outage can leave every row delayed, but must not disable pruning.
-        let dropped = rhizo_storage::repo::outbox::prune_low(&db)
-            .await
-            .map_err(|e| e.to_string())?;
-        if dropped > 0 {
-            metrics.cloud_events_dropped.inc_by(dropped);
-            tracing::error!(dropped, "ALERT: cloud outbox cap pruned low-tier history")
-        }
+        let rows = sweep_and_select(&db, &metrics, now, size.get()).await?;
         if rows.is_empty() {
             tokio::select! {r=shutdown.changed()=>{if r.is_err()||*shutdown.borrow(){return Ok(())}},_=tokio::time::sleep(Duration::from_millis(250))=>{}}
             continue;
@@ -185,6 +233,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rhizo_storage::repo::outbox::EventKind;
     #[test]
     fn batch_size_halves_floors_and_recovers_gradually() {
         let mut b = BatchSize::new(500);
@@ -200,8 +249,178 @@ mod tests {
         b.success();
         assert_eq!(b.get(), 20);
     }
+    /// A database with the cloud enabled and a deliberately tiny cap.
+    async fn swept_db(max_rows: u64) -> rhizo_storage::EdgeDb {
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        rhizo_storage::repo::outbox::configure(&db, true, max_rows)
+            .await
+            .unwrap();
+        db
+    }
+
+    /// Writes one outbox row **through the production writer**.
+    ///
+    /// Not a hand-rolled `INSERT`: `emit_is_the_only_production_writer_of_the_outbox_table`
+    /// asserts that nothing outside `outbox.rs` inserts into this table, and a
+    /// test fixture that sidesteps the writer would both trip that check and
+    /// stop proving that real rows behave this way. Tier follows from the kind,
+    /// which is the only place tier is decided.
+    async fn emit_row(db: &rhizo_storage::EdgeDb, kind: EventKind, at: i64) -> String {
+        let mut tx = db.begin().await.unwrap();
+        let id = rhizo_storage::repo::outbox::emit(
+            &mut tx,
+            kind,
+            &serde_json::json!({"device_id": "node-01"}),
+            at,
+        )
+        .await
+        .unwrap()
+        .expect("the cloud is enabled in these tests");
+        tx.commit().await.unwrap();
+        id
+    }
+
+    /// `measurement.sample` is the only low-tier kind; everything else is high.
+    const LOW: EventKind = EventKind::MEASUREMENT_SAMPLE;
+    const HIGH: EventKind = EventKind::DEVICE_EVENT;
+
+    /// **The ordering defect.** The drain used to select `ready()` rows before
+    /// pruning, so a row could be counted in `cloud_events_dropped_total` and
+    /// then still be transmitted from the stale batch — the counter claiming the
+    /// history was dropped while the cloud received it.
+    ///
+    /// Asserted as a set relationship rather than a call order: whatever the
+    /// sweep dropped must not appear in what it returns, which stays true however
+    /// the function is later rearranged.
+    #[tokio::test]
+    async fn a_row_the_sweep_drops_is_never_in_the_batch_it_returns() {
+        // Shared, process-global metrics: `cloud_events_dropped` is one
+        // counter for the whole binary, so a delta is only meaningful while
+        // this lock is held. See `api::health::gauge_lock`.
+        let _guard = crate::api::health::gauge_lock().lock().await;
+        let db = swept_db(2).await;
+        let metrics = Metrics::new().unwrap();
+        let mut written = Vec::new();
+        for i in 1..=6i64 {
+            written.push(emit_row(&db, LOW, i).await);
+        }
+        let before = metrics.cloud_events_dropped.get();
+
+        let selected = sweep_and_select(&db, &metrics, 10_000, 500).await.unwrap();
+        let dropped = metrics.cloud_events_dropped.get() - before;
+        assert_eq!(dropped, 4, "six rows against a cap of two");
+
+        let ids: Vec<String> = selected.iter().map(|r| r.event_id.clone()).collect();
+        assert_eq!(
+            ids,
+            written[4..].to_vec(),
+            "the two newest survive; the four oldest were pruned"
+        );
+        // The invariant, stated as a set relationship rather than a call order,
+        // so it survives any later rearrangement of the function: nothing the
+        // sweep deleted may appear in the batch the sweep returned.
+        let surviving: Vec<String> =
+            sqlx::query_scalar("SELECT event_id FROM pending_cloud_events")
+                .fetch_all(db.pool())
+                .await
+                .unwrap();
+        for id in &ids {
+            assert!(
+                surviving.contains(id),
+                "{id} was selected for transmission but no longer exists"
+            );
+        }
+    }
+
+    /// The gauge must describe the backlog the sweep *left*, not the pressure
+    /// that caused it. Read before pruning it reported the opposite of what an
+    /// operator watching for recovery needs.
+    #[tokio::test]
+    async fn the_pending_gauge_reports_the_backlog_after_pruning_not_before() {
+        let db = swept_db(2).await;
+        let metrics = Metrics::new().unwrap();
+        let _guard = crate::api::health::gauge_lock().lock().await;
+        for i in 1..=6i64 {
+            emit_row(&db, LOW, i).await;
+        }
+        sweep_and_select(&db, &metrics, 10_000, 500).await.unwrap();
+        assert_eq!(
+            metrics.pending_cloud_events.get(),
+            2,
+            "six rows, cap two, four pruned — the gauge is the remainder"
+        );
+    }
+
+    /// Retention runs before the cap is measured. A table full of delivered
+    /// receipts past their 24 h must not look like pressure and evict live
+    /// low-tier history to make room for itself.
+    #[tokio::test]
+    async fn expired_synced_rows_are_retired_before_the_cap_is_measured() {
+        // Shared, process-global metrics: `cloud_events_dropped` is one
+        // counter for the whole binary, so a delta is only meaningful while
+        // this lock is held. See `api::health::gauge_lock`.
+        let _guard = crate::api::health::gauge_lock().lock().await;
+        let db = swept_db(2).await;
+        let metrics = Metrics::new().unwrap();
+        let now = 100 * 86_400_000i64;
+        let expired = now - rhizo_storage::repo::outbox::SYNCED_RETENTION_MS - 1;
+        for i in 1..=5i64 {
+            let id = emit_row(&db, LOW, i).await;
+            rhizo_storage::repo::outbox::synced(&db, &id, expired)
+                .await
+                .unwrap();
+        }
+        let live = [emit_row(&db, LOW, 10).await, emit_row(&db, LOW, 11).await];
+        let before = metrics.cloud_events_dropped.get();
+
+        let selected = sweep_and_select(&db, &metrics, now, 500).await.unwrap();
+
+        assert_eq!(
+            metrics.cloud_events_dropped.get() - before,
+            0,
+            "retiring receipts is not dropping history"
+        );
+        let ids: Vec<String> = selected.iter().map(|r| r.event_id.clone()).collect();
+        assert_eq!(ids, live.to_vec(), "both live rows survive");
+        let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(remaining, 2, "the five expired receipts are gone");
+    }
+
+    /// High-tier pressure alone exceeds the cap and is transmitted anyway.
+    /// Preservation wins over the cap, and the drain does not quietly narrow the
+    /// batch to compensate.
+    #[tokio::test]
+    async fn high_tier_pressure_exceeds_the_cap_and_is_still_selected() {
+        // Shared, process-global metrics: `cloud_events_dropped` is one
+        // counter for the whole binary, so a delta is only meaningful while
+        // this lock is held. See `api::health::gauge_lock`.
+        let _guard = crate::api::health::gauge_lock().lock().await;
+        let db = swept_db(2).await;
+        let metrics = Metrics::new().unwrap();
+        for i in 1..=6i64 {
+            emit_row(&db, HIGH, i).await;
+        }
+        let before = metrics.cloud_events_dropped.get();
+
+        let selected = sweep_and_select(&db, &metrics, 10_000, 500).await.unwrap();
+
+        assert_eq!(metrics.cloud_events_dropped.get() - before, 0);
+        assert_eq!(
+            selected.len(),
+            6,
+            "nothing is droppable, so nothing dropped"
+        );
+    }
+
     #[tokio::test]
     async fn safety_009_decisions_identical_with_cloud_down() {
+        // Drives `run`, which writes `pending_cloud_events`; the drain's gauge
+        // test reads it. See `api::health::gauge_lock`.
+        let _guard = crate::api::health::gauge_lock().lock().await;
         async fn scenario(cloud_available: bool) -> (Vec<String>, Vec<String>) {
             let api = crate::api::testsupport::TestApi::start().await;
             rhizo_storage::repo::outbox::configure(&api.db, true, 500_000)
@@ -267,6 +486,9 @@ mod tests {
     }
     #[tokio::test]
     async fn cloud_outage_retries_then_real_cloud_recovers_exactly_once() {
+        // Spawns `run`, which writes `pending_cloud_events` and can move
+        // `cloud_events_dropped`. See `api::health::gauge_lock`.
+        let _guard = crate::api::health::gauge_lock().lock().await;
         let cloud_url = match std::env::var("RHIZO_TEST_CLOUD_URL") {
             Ok(v) => v,
             Err(_) => {
