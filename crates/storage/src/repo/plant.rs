@@ -95,7 +95,7 @@ pub async fn create(db: &EdgeDb, plant: &NewPlant, now: i64) -> Result<PlantRow,
     .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    crate::repo::outbox::emit(&mut tx, "plant.created", &serde_json::json!({"plant_id":plant.plant_id,"name":plant.name,"species":plant.species,"profile_id":plant.profile_id,"pot_volume_ml":plant.pot_volume_ml,"soil_type":plant.soil_type}), now).await?;
+    crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::PLANT_CREATED, &serde_json::json!({"plant_id":plant.plant_id,"name":plant.name,"species":plant.species,"profile_id":plant.profile_id,"pot_volume_ml":plant.pot_volume_ml,"soil_type":plant.soil_type}), now).await?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     get(db, &plant.plant_id)
         .await?
@@ -168,7 +168,7 @@ pub async fn update(
     set!("pot_volume_ml", patch.pot_volume_ml);
     set!("soil_type", patch.soil_type.clone());
     set!("auto_watering_enabled", patch.auto_watering_enabled);
-    crate::repo::outbox::emit(&mut tx, "plant.updated", &serde_json::json!({"plant_id":plant_id,"patch":{"name":patch.name,"species":patch.species,"profile_id":patch.profile_id,"pot_volume_ml":patch.pot_volume_ml,"soil_type":patch.soil_type,"auto_watering_enabled":patch.auto_watering_enabled}}), now).await?;
+    crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::PLANT_UPDATED, &serde_json::json!({"operation":"update","plant_id":plant_id,"patch":{"name":patch.name,"species":patch.species,"profile_id":patch.profile_id,"pot_volume_ml":patch.pot_volume_ml,"soil_type":patch.soil_type,"auto_watering_enabled":patch.auto_watering_enabled}}), now).await?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     get(db, plant_id).await
 }
@@ -195,15 +195,38 @@ pub async fn record_applied_preset(
 }
 
 /// Soft-deletes a plant, leaving its watering history intact and attributed.
+///
+/// The deletion is announced with the canonical `plant.updated`, carrying
+/// `operation: "delete"` and the identity the plant had. ADR-005's catalogue has
+/// no `plant.deleted`, and a plant that simply stopped producing events would be
+/// indistinguishable in cloud history from one whose edge went quiet — the
+/// deletion is a fact, and a fact is what an event is for.
+///
+/// A second delete of the same plant changes no row and emits nothing.
 pub async fn delete(db: &EdgeDb, plant_id: &str, now: i64) -> Result<bool, StorageError> {
+    let mut tx = db.begin().await?;
+    let previous: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT name,species FROM plants WHERE plant_id=? AND deleted_at IS NULL")
+            .bind(plant_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+    let Some((name, species)) = previous else {
+        return Ok(false);
+    };
     let done =
         sqlx::query("UPDATE plants SET deleted_at=? WHERE plant_id=? AND deleted_at IS NULL")
             .bind(now)
             .bind(plant_id)
-            .execute(db.pool())
+            .execute(&mut *tx)
             .await
             .map_err(StorageError::from_sqlx)?;
-    Ok(done.rows_affected() == 1)
+    if done.rows_affected() != 1 {
+        return Ok(false);
+    }
+    crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::PLANT_UPDATED, &serde_json::json!({"operation":"delete","plant_id":plant_id,"name":name,"species":species,"deleted_at":now}), now).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------- dry duration
@@ -283,7 +306,7 @@ pub async fn record_state_transition(
     .map_err(StorageError::from_sqlx)?;
     crate::repo::outbox::emit(
         &mut tx,
-        "plant.state_changed",
+        crate::repo::outbox::EventKind::PLANT_STATE_CHANGED,
         &serde_json::json!({"plant_id":plant_id,"from":from,"to":to}),
         now,
     )
@@ -332,9 +355,9 @@ pub async fn record_plant_event(
     .map_err(StorageError::from_sqlx)?;
     if done.rows_affected() == 1 {
         let cloud_kind = match severity {
-            "critical" => "threshold.critical",
-            "warning" => "threshold.warning",
-            _ => "device.event",
+            "critical" => crate::repo::outbox::EventKind::THRESHOLD_CRITICAL,
+            "warning" => crate::repo::outbox::EventKind::THRESHOLD_WARNING,
+            _ => crate::repo::outbox::EventKind::DEVICE_EVENT,
         };
         crate::repo::outbox::emit(&mut tx, cloud_kind, &serde_json::json!({"plant_id":plant_id,"source_event_id":event_id,"kind":kind,"severity":severity,"detail":detail}), now).await?;
     }
@@ -630,7 +653,7 @@ pub async fn insert_detected_watering(
     .await
     .map_err(StorageError::from_sqlx)?;
     if done.rows_affected() == 1 {
-        crate::repo::outbox::emit(&mut tx, "watering.detected", &serde_json::json!({"watering_event_id":id,"plant_id":plant_id,"device_id":device_id,"completed_at":at,"delivered_ml":estimated_ml,"detail":detail}), at).await?;
+        crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::WATERING_DETECTED, &serde_json::json!({"watering_event_id":id,"plant_id":plant_id,"device_id":device_id,"completed_at":at,"delivered_ml":estimated_ml,"detail":detail}), at).await?;
     }
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(done.rows_affected() == 1)
@@ -764,6 +787,48 @@ mod tests {
             pot_volume_ml: Some(2_500.0),
             soil_type: Some("aroid mix".to_owned()),
         }
+    }
+
+    /// A soft delete is a real state change, and ADR-005's catalogue has no
+    /// `plant.deleted` to spend on it. The canonical `plant.updated` carries it,
+    /// with the operation named and the identity the plant had — a plant that
+    /// merely stopped producing events would be indistinguishable in cloud
+    /// history from one whose edge went quiet.
+    #[tokio::test]
+    async fn deleting_a_plant_emits_plant_updated_once_and_never_for_a_second_delete() {
+        let db = db().await;
+        crate::repo::outbox::configure(&db, true, 500_000)
+            .await
+            .unwrap();
+        create(&db, &new_plant("monstera-01"), 1_000).await.unwrap();
+        sqlx::query("DELETE FROM pending_cloud_events")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        assert!(delete(&db, "monstera-01", 2_000).await.unwrap());
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT kind,payload_json FROM pending_cloud_events ORDER BY created_at,event_id",
+        )
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "plant.updated");
+        let payload: serde_json::Value = serde_json::from_str(&rows[0].1).unwrap();
+        assert_eq!(payload["operation"], "delete");
+        assert_eq!(payload["plant_id"], "monstera-01");
+        assert_eq!(payload["name"], "Monstera");
+        assert_eq!(payload["deleted_at"], 2_000);
+
+        // Already gone: no row changes, so no event is invented.
+        assert!(!delete(&db, "monstera-01", 3_000).await.unwrap());
+        assert!(!delete(&db, "absent", 3_000).await.unwrap());
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]

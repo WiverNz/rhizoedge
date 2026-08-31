@@ -47,10 +47,31 @@ rows forever.
 - [x] With `cloud.enabled = false`, no outbox rows are written.
 - [x] A rolled-back change emits no event.
 
+## Post-M7 correction — 2026-08-31
+
+These criteria were ticked before they were all true. The audit recorded in
+[docs/reports/M7.md](../../reports/M7.md) §Post-M7 correction found three gaps
+against "every documented event kind is emitted":
+
+- the edge emitted `device.capabilities_changed` for ADR-005's
+  `device.capabilities`, which the cloud does not recognise;
+- `delete_sensor_binding`, `delete_actuator_binding`,
+  `delete_measurement_policy`, `delete_offline_policy`, `plant::delete`, and
+  `materialize_preset` changed durable state and emitted nothing;
+- `history.gap`, `watering.offline_autonomous`, and `device.policy_applied` had
+  no reachable emitter at all, because `persist_replay` never touched the outbox.
+
+All are fixed. `emit` now takes a typed `EventKind` whose only constructors are
+the 25 catalogue constants, and both the edge's and the cloud's catalogues are
+checked against ADR-005's own fenced block. The criteria below are true as
+written; what changed is the evidence behind them.
+
 ## Verification
 
 ```bash
 cargo test -p edge-controller outbox::emit
+cargo test -p rhizo-storage --lib outbox
+cargo test -p cloud-api --lib known_kinds_match_adr_005
 ```
 
 ## Tests required

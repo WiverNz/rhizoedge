@@ -283,6 +283,15 @@ async fn attribute_autonomous_doses(
     let mut written = 0;
     for row in &unattributed {
         let source: String = row.get("watering_event_id");
+        let started_at: i64 = row.get("started_at");
+        let completed_at: Option<i64> = row.get("completed_at");
+        let delivered_ml: Option<f64> = row.get("delivered_ml");
+        // One transaction per replayed dose: the per-plant rows, the marker
+        // that retires the unattributed row, and the cloud events that describe
+        // them commit together or not at all. `persist_replay` deliberately did
+        // not emit for this dose — it had no plant to name — so this is the only
+        // place its `watering.offline_autonomous` can truthfully be written.
+        let mut tx = db.begin().await.map_err(EdgeError::Storage)?;
         for plant_id in &plants {
             let id = format!("{source}:{plant_id}");
             let done = sqlx::query(
@@ -292,26 +301,38 @@ async fn attribute_autonomous_doses(
             .bind(&id)
             .bind(plant_id)
             .bind(device_id)
-            .bind(row.get::<i64, _>("started_at"))
-            .bind(row.get::<Option<i64>, _>("completed_at"))
-            .bind(row.get::<Option<f64>, _>("delivered_ml"))
-            .execute(db.pool())
+            .bind(started_at)
+            .bind(completed_at)
+            .bind(delivered_ml)
+            .execute(&mut *tx)
             .await
             .map_err(|e| EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string())))?;
-            written += usize::try_from(done.rows_affected()).unwrap_or(0);
+            if done.rows_affected() == 1 {
+                written += 1;
+                rhizo_storage::repo::outbox::emit(
+                    &mut tx,
+                    rhizo_storage::repo::outbox::EventKind::WATERING_OFFLINE_AUTONOMOUS,
+                    &serde_json::json!({"device_id":device_id,"plant_id":plant_id,"mode":"automatic","origin":"offline_autonomous","delivered_ml":delivered_ml,"status":"completed","attribution":"actuator_binding_fallback","source_watering_event_id":source,"occurred_at":completed_at.unwrap_or(started_at)}),
+                    now.timestamp_millis(),
+                )
+                .await
+                .map_err(EdgeError::Storage)?;
+            }
         }
         // The unattributed row stays as the device-level record of what the
         // hardware did; the per-plant rows are what the budget sums. Marking it
         // consumed keeps the attribution idempotent without deleting history.
         sqlx::query("UPDATE watering_events SET status='attributed' WHERE watering_event_id=?")
             .bind(&source)
-            .execute(db.pool())
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string()))
             })?;
+        tx.commit().await.map_err(|e| {
+            EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string()))
+        })?;
     }
-    let _ = now;
     Ok(written)
 }
 
@@ -500,6 +521,183 @@ mod reconcile {
             .execute(api.db.pool())
             .await
             .unwrap();
+    }
+
+    /// Replayed offline history has to *leave* the edge, not merely survive on
+    /// it. Until the post-M7 correction none of it did: `persist_replay` wrote
+    /// device events, gap markers, and autonomous doses without ever touching
+    /// the outbox, so an isolated device's history was invisible in the cloud.
+    async fn enable_cloud(api: &TestApi) {
+        rhizo_storage::repo::outbox::configure(&api.db, true, 500_000)
+            .await
+            .unwrap();
+    }
+
+    async fn outbox_kinds(api: &TestApi) -> Vec<String> {
+        sqlx::query_scalar("SELECT kind FROM pending_cloud_events ORDER BY created_at,event_id")
+            .fetch_all(api.db.pool())
+            .await
+            .unwrap()
+    }
+
+    async fn outbox_payloads(api: &TestApi, kind: &str) -> Vec<serde_json::Value> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT payload_json FROM pending_cloud_events WHERE kind=? ORDER BY created_at,event_id",
+        )
+        .bind(kind)
+        .fetch_all(api.db.pool())
+        .await
+        .unwrap();
+        rows.iter()
+            .map(|r| serde_json::from_str(r).unwrap())
+            .collect()
+    }
+
+    /// A dose that named its own plant is emitted from the transaction that
+    /// committed it, and a reconnect that replays the same `event_id` emits
+    /// nothing further — the edge deduplicates on the device's id, and a second
+    /// outbox row would carry a second `event_id` past the cloud's idempotency.
+    #[tokio::test]
+    async fn a_named_replayed_dose_reaches_the_cloud_outbox_exactly_once() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+        enable_cloud(&api).await;
+
+        let batch = replay_named(boot_a(), &[0], true, 30.0, Some("monstera-01"));
+        persist(&api, &batch).await;
+        let doses = outbox_payloads(&api, "watering.offline_autonomous").await;
+        assert_eq!(doses.len(), 1);
+        assert_eq!(doses[0]["plant_id"], "monstera-01");
+        assert_eq!(doses[0]["origin"], "offline_autonomous");
+        assert_eq!(doses[0]["status"], "completed");
+        assert_eq!(doses[0]["delivered_ml"], 30.0);
+
+        // The same events again, under a fresh transport message id.
+        persist(&api, &batch).await;
+        assert_eq!(
+            outbox_payloads(&api, "watering.offline_autonomous")
+                .await
+                .len(),
+            1
+        );
+    }
+
+    /// A dose the device could not name is emitted where its plant is actually
+    /// decided — the fallback attribution — and not before. Emitting it at
+    /// replay time would have meant an event with no plant, which the cloud
+    /// cannot project and would quarantine.
+    #[tokio::test]
+    async fn a_fallback_attributed_dose_is_emitted_by_reconciliation() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+        enable_cloud(&api).await;
+
+        persist(&api, &replay(boot_a(), &[0], true, 25.0)).await;
+        let doses = outbox_payloads(&api, "watering.offline_autonomous").await;
+        assert_eq!(doses.len(), 1, "the fallback path emits exactly once");
+        assert_eq!(doses[0]["plant_id"], "monstera-01");
+        assert_eq!(doses[0]["attribution"], "actuator_binding_fallback");
+
+        // Reconciling again attributes nothing new, so it announces nothing new.
+        complete(
+            &api.db,
+            "plant-node-01",
+            &boot_a().to_string(),
+            api.clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outbox_payloads(&api, "watering.offline_autonomous")
+                .await
+                .len(),
+            1
+        );
+    }
+
+    /// A gap marker and a policy activation are catalogue kinds of their own.
+    /// Every other replayed device event is a `device.event` — a device-side
+    /// lockout is not the plant lockout ADR-005's `lockout.set` describes.
+    #[tokio::test]
+    async fn replayed_gaps_and_policy_activations_carry_their_own_catalogue_kinds() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        boot(&api, boot_a()).await;
+        enable_cloud(&api).await;
+
+        let batch = serde_json::json!({
+            "v": 1,
+            "kind": "device.events",
+            "message_id": uuid::Uuid::now_v7(),
+            "device_id": "plant-node-01",
+            "boot_id": boot_a().to_string(),
+            "data": {
+                "replay": true,
+                "complete": true,
+                "events": [
+                    {
+                        "event_id": uuid::Uuid::from_u128(0x51),
+                        "device_seq": 0,
+                        "tier": "audit",
+                        "kind": "history.gap",
+                        "monotonic_ms": 1_000,
+                        "detail": {
+                            "detail_type": "gap",
+                            "from_seq": 1,
+                            "to_seq": 4,
+                            "lost_count": 4,
+                            "lost_tier": "routine",
+                        },
+                    },
+                    {
+                        "event_id": uuid::Uuid::from_u128(0x52),
+                        "device_seq": 1,
+                        "tier": "audit",
+                        "kind": "policy.activated",
+                        "monotonic_ms": 2_000,
+                        "detail": { "detail_type": "policy_activated", "policy_version": 7 },
+                    },
+                    {
+                        "event_id": uuid::Uuid::from_u128(0x53),
+                        "device_seq": 2,
+                        "tier": "audit",
+                        "kind": "lockout.set",
+                        "monotonic_ms": 3_000,
+                        "detail": { "detail_type": "lockout", "reason": "leak_detected" },
+                    },
+                ],
+            },
+        });
+        persist(&api, &batch).await;
+
+        let kinds = outbox_kinds(&api).await;
+        assert_eq!(
+            kinds.iter().filter(|k| *k == "history.gap").count(),
+            1,
+            "kinds were {kinds:?}"
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| *k == "device.policy_applied")
+                .count(),
+            1,
+            "kinds were {kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter(|k| *k == "device.event").count(),
+            1,
+            "a device-side lockout stays a device.event; kinds were {kinds:?}"
+        );
+        assert!(
+            !kinds.iter().any(|k| k == "lockout.set"),
+            "a device lockout must not masquerade as a plant lockout"
+        );
     }
 
     /// **SAFETY-016's hold.** While a replay is incomplete the plant is held in

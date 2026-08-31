@@ -118,7 +118,8 @@ pub async fn delete(
     State(state): State<ApiState>,
     Path((id, kind)): Path<(String, String)>,
 ) -> Response {
-    match binding_repo::delete_measurement_policy(&state.db, &id, &kind).await {
+    let now = state.clock.now().timestamp_millis();
+    match binding_repo::delete_measurement_policy(&state.db, &id, &kind, now).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => error(StatusCode::NOT_FOUND, "policy_not_found", "unknown policy"),
         Err(_) => storage_error(),

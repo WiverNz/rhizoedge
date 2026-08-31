@@ -24,6 +24,7 @@ has not started.**
 | M6 | 24 issues, **DONE** — report in [docs/reports/M6.md](docs/reports/M6.md) |
 | M7 | 15 issues, **DONE** — report in [docs/reports/M7.md](docs/reports/M7.md) |
 | Post-M6 correction | ✅ done (2026-08-31) — durable `command.result.ack`, offline-dose attribution by name, and the M6 report's test-count evidence; see [docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections and §13 below |
+| Post-M7 correction | ✅ done (2026-08-31) — `device.capabilities` (not `…_changed`), events for destructive changes, replayed history forwarded, and one type-checked catalogue; see [docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction and §14 below |
 | M8-001 | ⬜ **next** — add production Dockerfiles |
 
 **This section goes stale fastest. Verify it before trusting it:**
@@ -318,6 +319,33 @@ That topic is a *child* of `commands/result` and a distinct exact topic from it,
 so subscribing to the acknowledgement still does not deliver the device its own
 results — which is the whole property the exact form exists to guarantee, and is
 asserted rather than assumed.
+
+**A cloud event kind is a value of a type, not a string.**
+`rhizo_storage::repo::outbox::emit` takes `EventKind`, whose only constructors
+are the 25 ADR-005 constants, so an undocumented kind is a compile error rather
+than a row the cloud quarantines. Two tests read the fenced catalogue block out
+of `docs/adr/005-…md` itself — one in `storage`, one in `cloud-api` — because
+the two programs cannot share the constants and the ADR is what they both answer
+to. `every_catalogue_kind_has_an_edge_emitter` scans the sources for each
+constant, so **naming it through an aliased import hides it from the scan**; spell
+it `EventKind::NAME`. `fertilisation.applied` is the one kind with no emitter, by
+declaration, in `EventKind::WITHOUT_EDGE_EMITTER`.
+
+**A delete emits the same kind an upsert does, with `operation: "delete"`.**
+The catalogue is closed: a `plant.binding_removed` invented at the edge reaches
+the cloud as an unknown kind, is ledgered, rejected for projection, and
+quarantined — silently, because a quarantined event is a row and not an alert.
+The delete payload therefore carries the prior row's identity and state, read
+inside the same transaction *before* the delete, and is written only when a row
+actually changed. `plant::delete` is a soft delete and emits `plant.updated`.
+
+**An unattributed autonomous dose is emitted by reconciliation, not by replay.**
+The cloud projects `watering.offline_autonomous` against a plant, and a dose from
+a device predating `detail.plant_id` has none at replay time. `persist_replay`
+emits only for a dose that named a plant this edge knows; `control::reconcile`'s
+fallback attribution emits the rest, from the transaction that decides the
+answer. A replayed device-side `lockout.set` stays a `device.event` — ADR-005's
+`lockout.set` is the *plant* lockout, with a plant-shaped payload.
 
 **There is one migration, and pre-release it keeps absorbing schema changes.**
 `0001_initial.sql` is the whole schema; `canonical_baseline_contains_the_final_schema`
@@ -742,3 +770,35 @@ Three things did **not** change:
 - **Every existing payload, retention rule, QoS, command TTL, and `edge.time`.**
   Both changes are additive within v1, and a device implementing the old rules
   still interoperates.
+
+---
+
+## 14. The 2026-08-31 post-M7 correction
+
+An audit of the cloud event catalogue against
+[ADR-005](docs/adr/005-cloud-event-model-and-idempotency.md), which is canonical
+and was **not** amended. M7 was not reopened as a milestone — the treatment M0,
+M4, and M6 each got — because M8 has not started. Full write-up in
+[docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction.
+
+| Was | Is now |
+|---|---|
+| The edge emitted `device.capabilities_changed` | `device.capabilities`, the ADR name. The cloud only ever recognised the ADR name, so every capability change was headed for the ledger and then quarantined |
+| `emit` took a `&str` kind | It takes `EventKind`, a newtype with 25 constructors. An undocumented kind does not compile |
+| Deleting a binding, a policy, an offline policy, or a plant emitted nothing | The canonical kind for the thing that changed, with `operation: "delete"` and the prior state, in the same transaction, only when a row changed |
+| `materialize_preset` wrote policy rows silently | One `plant.policy_changed` per row plus a `plant.updated`, in its existing transaction |
+| Replayed offline history never left the edge | `history.gap`, `device.policy_applied`, and `watering.offline_autonomous` are emitted from the replay transaction, once per newly committed `event_id` |
+| Two hand-maintained kind lists, never compared | Both checked against the same fenced block in ADR-005, plus a source scan proving every kind has an emitter and `emit` is the only writer of `pending_cloud_events` |
+
+Four things did **not** change:
+
+- **The ADR-005 catalogue.** No kind was added, removed, or renamed. Every
+  emission added uses a kind the ADR already defined.
+- **The wire protocol, the safety gate, and every irrigation decision.** This
+  pass touches what the edge *tells the cloud*, and the cloud is still incapable
+  of originating a command or influencing a dose.
+- **The edge's own `device_events.kind` vocabulary.** It still contains
+  `capabilities_changed`, which is local to the edge and a different thing from
+  the cloud kind. Renaming it would have been a second bug.
+- **`clean_session` and telemetry loss semantics.** Untouched, for the reasons in
+  §13.

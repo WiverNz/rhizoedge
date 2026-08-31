@@ -198,7 +198,8 @@ pub async fn delete_sensor(
     {
         return refused(&e);
     }
-    match binding_repo::delete_sensor_binding(&state.db, &binding_id).await {
+    let now = state.clock.now().timestamp_millis();
+    match binding_repo::delete_sensor_binding(&state.db, &binding_id, now).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => error(
             StatusCode::NOT_FOUND,
@@ -307,7 +308,8 @@ pub async fn put_actuator(
 }
 
 pub async fn delete_actuator(State(state): State<ApiState>, Path(id): Path<String>) -> Response {
-    match binding_repo::delete_actuator_binding(&state.db, &id).await {
+    let now = state.clock.now().timestamp_millis();
+    match binding_repo::delete_actuator_binding(&state.db, &id, now).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => error(
             StatusCode::NOT_FOUND,

@@ -217,9 +217,9 @@ pub async fn issue(
     // written here purely so history survives a later sync (M7). It shares the
     // transaction because a command the cloud never hears about is a hole in the
     // ledger, not a retryable failure.
-    crate::repo::outbox::emit(&mut tx,"command.issued",&serde_json::json!({"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"kind":command.kind,"requested_ml":command.requested_ml,"mode":command.mode,"issued_at":command.issued_at}),now).await?;
+    crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::COMMAND_ISSUED,&serde_json::json!({"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"kind":command.kind,"requested_ml":command.requested_ml,"mode":command.mode,"issued_at":command.issued_at}),now).await?;
     if command.kind == "water" {
-        crate::repo::outbox::emit(&mut tx,"watering.started",&serde_json::json!({"watering_event_id":command.command_id,"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"requested_ml":command.requested_ml,"mode":command.mode,"started_at":command.issued_at}),now).await?;
+        crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::WATERING_STARTED,&serde_json::json!({"watering_event_id":command.command_id,"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"requested_ml":command.requested_ml,"mode":command.mode,"started_at":command.issued_at}),now).await?;
     }
 
     tx.commit().await.map_err(StorageError::from_sqlx)
@@ -326,14 +326,14 @@ pub async fn settle(
         .execute(&mut *tx)
         .await
         .map_err(StorageError::from_sqlx)?;
-        crate::repo::outbox::emit(&mut tx,"watering.completed",&serde_json::json!({"watering_event_id":event.watering_event_id,"command_id":command_id,"device_id":event.device_id,"plant_id":event.plant_id,"mode":event.mode,"started_at":event.started_at,"completed_at":event.completed_at,"requested_ml":event.requested_ml,"delivered_ml":event.delivered_ml}),now).await?;
+        crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::WATERING_COMPLETED,&serde_json::json!({"watering_event_id":event.watering_event_id,"command_id":command_id,"device_id":event.device_id,"plant_id":event.plant_id,"mode":event.mode,"started_at":event.started_at,"completed_at":event.completed_at,"requested_ml":event.requested_ml,"delivered_ml":event.delivered_ml}),now).await?;
     }
 
     if let Some((plant_id, state)) = next_state {
         put_state_in_tx(&mut tx, plant_id, state, now).await?;
     }
 
-    crate::repo::outbox::emit(&mut tx,"command.settled",&serde_json::json!({"command_id":command_id,"status":status,"reason":reason,"occurred_at":now}),now).await?;
+    crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::COMMAND_SETTLED,&serde_json::json!({"command_id":command_id,"status":status,"reason":reason,"occurred_at":now}),now).await?;
 
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(true)
@@ -416,9 +416,9 @@ pub async fn set_lockout(
     .await
     .map_err(StorageError::from_sqlx)?;
     let kind = if reason.is_some() {
-        "lockout.set"
+        crate::repo::outbox::EventKind::LOCKOUT_SET
     } else {
-        "lockout.cleared"
+        crate::repo::outbox::EventKind::LOCKOUT_CLEARED
     };
     crate::repo::outbox::emit(&mut tx, kind, &serde_json::json!({"plant_id":plant_id,"reason":reason,"since":since,"hold_until":hold_until,"cleared_by":cleared_by}), now).await?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;

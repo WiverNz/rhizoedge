@@ -215,35 +215,45 @@ async fn ingest_batch(
     Ok(results)
 }
 
+/// The ADR-005 V1 event catalogue, in the ADR's order.
+///
+/// The cloud cannot share the edge's `EventKind` constants — `cloud-api` does
+/// not depend on `rhizo-storage`, and making it do so would point the dependency
+/// arrow the wrong way. What keeps the two lists identical is that each is
+/// checked against ADR-005 itself: `known_kinds_match_adr_005` here and
+/// `catalogue_matches_adr_005` in the storage crate read the same fenced block
+/// out of the same document. The ADR is the canonical catalogue; these arrays
+/// are two views of it that cannot drift without a test failing.
+const KNOWN_EVENT_KINDS: &[&str] = &[
+    "measurement.sample",
+    "device.status",
+    "device.event",
+    "device.config_applied",
+    "device.capabilities",
+    "device.policy_applied",
+    "device.isolated",
+    "device.reconciled",
+    "history.gap",
+    "plant.created",
+    "plant.updated",
+    "plant.state_changed",
+    "plant.binding_changed",
+    "plant.policy_changed",
+    "watering.started",
+    "watering.completed",
+    "watering.detected",
+    "watering.offline_autonomous",
+    "command.issued",
+    "command.settled",
+    "lockout.set",
+    "lockout.cleared",
+    "threshold.warning",
+    "threshold.critical",
+    "fertilisation.applied",
+];
+
 fn known_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "measurement.sample"
-            | "device.status"
-            | "device.event"
-            | "device.config_applied"
-            | "device.capabilities"
-            | "device.policy_applied"
-            | "device.isolated"
-            | "device.reconciled"
-            | "history.gap"
-            | "plant.created"
-            | "plant.updated"
-            | "plant.state_changed"
-            | "plant.binding_changed"
-            | "plant.policy_changed"
-            | "watering.started"
-            | "watering.completed"
-            | "watering.detected"
-            | "watering.offline_autonomous"
-            | "command.issued"
-            | "command.settled"
-            | "lockout.set"
-            | "lockout.cleared"
-            | "threshold.warning"
-            | "threshold.critical"
-            | "fertilisation.applied"
-    )
+    KNOWN_EVENT_KINDS.contains(&kind)
 }
 
 async fn project(
@@ -306,11 +316,15 @@ async fn project_watering(
         .as_deref()
         .or_else(|| text(&e.payload, "plant_id"))
         .ok_or("plant_id is required")?;
-    let completed = if e.kind == "watering.completed" {
-        Some(e.occurred_at)
-    } else {
-        None
-    };
+    // `watering.started` is the only one of these four that describes water
+    // still in flight. A detected dose and a replayed autonomous dose are both
+    // reports of water already in the pot, so projecting them as perpetually
+    // "started" would leave cloud history unable to say anything was delivered.
+    let completed = matches!(
+        e.kind.as_str(),
+        "watering.completed" | "watering.detected" | "watering.offline_autonomous"
+    )
+    .then_some(e.occurred_at);
     sqlx::query("INSERT INTO watering_events(edge_id,watering_event_id,plant_id,mode,origin,started_at,completed_at,requested_ml,delivered_ml,status,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(edge_id,watering_event_id) DO UPDATE SET completed_at=COALESCE(watering_events.completed_at,excluded.completed_at),delivered_ml=COALESCE(excluded.delivered_ml,watering_events.delivered_ml),status=CASE WHEN excluded.completed_at IS NOT NULL THEN excluded.status ELSE watering_events.status END,payload=watering_events.payload||excluded.payload")
         .bind(edge).bind(id).bind(plant).bind(text(&e.payload,"mode").unwrap_or("automatic")).bind(text(&e.payload,"origin").unwrap_or("edge_command"))
         .bind(e.payload.get("started_at").and_then(Value::as_str).and_then(|v|DateTime::parse_from_rfc3339(v).ok()).map(|v|v.with_timezone(&Utc)).unwrap_or(e.occurred_at))
@@ -593,6 +607,53 @@ mod tests {
         assert!(known_kind("measurement.sample"));
         assert!(known_kind("watering.offline_autonomous"));
         assert!(!known_kind("future.event"));
+    }
+
+    /// ADR-005 is canonical; this array is a view of it, not a second opinion.
+    ///
+    /// The edge's catalogue is checked against the same fenced block, so the two
+    /// programs cannot drift apart without one of the two tests failing. The
+    /// concrete drift this guards against was real: the edge emitted
+    /// `device.capabilities_changed` for the ADR's `device.capabilities`, and
+    /// nothing on either side said so.
+    #[test]
+    fn known_kinds_match_adr_005() {
+        let adr = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/adr/005-cloud-event-model-and-idempotency.md"),
+        )
+        .expect("ADR-005 is readable from the cloud-api crate");
+        let block = adr
+            .split("Event kinds in V1:")
+            .nth(1)
+            .and_then(|rest| rest.split("```").nth(1))
+            .expect("ADR-005 still carries a fenced V1 event-kind block");
+        let documented: Vec<&str> = block
+            .split_whitespace()
+            .filter(|token| {
+                token.contains('.')
+                    && token
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c == b'.' || c == b'_')
+            })
+            .collect();
+        assert_eq!(documented, KNOWN_EVENT_KINDS.to_vec());
+    }
+
+    /// A near miss is not a kind. Recognising one would silently reinstate the
+    /// mismatch by making both spellings work.
+    #[test]
+    fn near_miss_kinds_are_not_known() {
+        for kind in [
+            "device.capabilities_changed",
+            "device.capability",
+            "plant.binding_removed",
+            "plant.deleted",
+            "watering.autonomous",
+            "Device.Capabilities",
+        ] {
+            assert!(!known_kind(kind), "{kind} must not be a known kind");
+        }
     }
     #[tokio::test]
     async fn postgres_ingest_idempotency_ordering_unknown_and_reprojection() {

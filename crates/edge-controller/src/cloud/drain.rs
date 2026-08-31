@@ -295,7 +295,7 @@ mod tests {
         let mut tx = db.begin().await.unwrap();
         let id = rhizo_storage::repo::outbox::emit(
             &mut tx,
-            "device.event",
+            rhizo_storage::repo::outbox::EventKind::DEVICE_EVENT,
             &serde_json::json!({"device_id":"node-01","severity":"info"}),
             clock.now().timestamp_millis(),
         )

@@ -377,6 +377,66 @@ mod tests {
         );
     }
 
+    /// ADR-005 names the kind `device.capabilities`. The edge emitted
+    /// `device.capabilities_changed`, which the cloud does not recognise — every
+    /// capability change would have been ledgered and then rejected for
+    /// projection, silently, because a rejected event is quarantined at the edge
+    /// rather than raised. This asserts the wire name, not a Rust constant.
+    #[tokio::test]
+    async fn a_capability_change_emits_the_adr_005_kind() {
+        use rhizo_mqtt_contract::payload::DeviceStatus;
+        let db = rhizo_storage::EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        rhizo_storage::repo::outbox::configure(&db, true, 500_000)
+            .await
+            .unwrap();
+        let first: rhizo_mqtt_contract::Envelope<DeviceStatus> =
+            rhizo_mqtt_contract::Envelope::from_json(include_bytes!(
+                "../../../../test/fixtures/protocol/valid/status-with-capabilities.json"
+            ))
+            .unwrap();
+        rhizo_storage::repo::ingest::persist_status(&db, &first, 1_000)
+            .await
+            .unwrap();
+
+        // A reboot that comes back declaring fewer sensors. Only a reboot can
+        // change capabilities, which is why the boot id has to move too.
+        let mut second = first.clone();
+        second.message_id = rhizo_mqtt_contract::MessageId::from_uuid(uuid::Uuid::new_v4());
+        second.sequence = Some(second.sequence.unwrap() + 1);
+        second.boot_id = Some(rhizo_mqtt_contract::BootId::from_uuid(uuid::Uuid::new_v4()));
+        second.data.capabilities.sensors.pop();
+        rhizo_storage::repo::ingest::persist_status(&db, &second, 2_000)
+            .await
+            .unwrap();
+
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT kind FROM pending_cloud_events ORDER BY created_at,event_id",
+        )
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+        assert!(
+            kinds.iter().any(|k| k == "device.capabilities"),
+            "kinds were {kinds:?}"
+        );
+        assert!(
+            !kinds.iter().any(|k| k == "device.capabilities_changed"),
+            "the pre-correction name must not survive; kinds were {kinds:?}"
+        );
+        // The edge's own device-event vocabulary is a different, local one and
+        // is deliberately untouched by the rename.
+        let local: Vec<String> =
+            sqlx::query_scalar("SELECT kind FROM device_events ORDER BY occurred_at,kind")
+                .fetch_all(db.pool())
+                .await
+                .unwrap();
+        assert!(
+            local.iter().any(|k| k == "capabilities_changed"),
+            "device_events were {local:?}"
+        );
+    }
+
     /// An always-on device never carries a wake instant, whatever else is in the
     /// row -- the second negative control for the same field.
     #[tokio::test]

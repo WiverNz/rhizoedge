@@ -194,8 +194,13 @@ pub async fn persist_telemetry(
             );
             object.insert("origin".into(), serde_json::Value::String("live".into()));
         }
-        crate::repo::outbox::emit(&mut tx, "measurement.sample", &cloud_payload, received_at)
-            .await?;
+        crate::repo::outbox::emit(
+            &mut tx,
+            crate::repo::outbox::EventKind::MEASUREMENT_SAMPLE,
+            &cloud_payload,
+            received_at,
+        )
+        .await?;
         if valid {
             accepted += 1
         } else {
@@ -500,7 +505,13 @@ pub async fn persist_replay(
         };
         let occurred_at = event.device_time_ms.map_or(at, |v| v.0);
         let device_seq = event.device_seq as i64;
-        sqlx::query!(
+        // Whether this replayed event is *new* history is the same question as
+        // whether it owes the cloud an event. A reconnect resends the same
+        // `event_id`s, and the edge deduplicates on them; emitting for a row
+        // that was already there would put the same fact in the outbox twice
+        // under two different `event_id`s, which is precisely the duplication
+        // ADR-005's idempotency key exists to prevent.
+        let is_new_history = sqlx::query!(
             "INSERT INTO device_events(event_id,device_id,kind,severity,detail_json,occurred_at,received_at,boot_id,device_seq,origin) VALUES(?,?,?,?,?,?,?,?,?,'offline_replay') ON CONFLICT(event_id) DO NOTHING",
             eid,
             dev,
@@ -514,7 +525,10 @@ pub async fn persist_replay(
         )
         .execute(&mut *tx)
         .await
-        .map_err(StorageError::from_sqlx)?;
+        .map_err(StorageError::from_sqlx)?
+        .rows_affected()
+            == 1;
+        let mut autonomous: Option<(Option<String>, f64, i64)> = None;
         if let EventDetail::Gap {
             from_seq,
             to_seq,
@@ -595,6 +609,13 @@ pub async fn persist_replay(
             .execute(&mut *tx)
             .await
             .map_err(StorageError::from_sqlx)?;
+            autonomous = Some((named, delivered, happened_at));
+        }
+        if is_new_history {
+            emit_replayed_event(
+                &mut tx, &dev, &boot, event, &eid, &kind, severity, autonomous, at,
+            )
+            .await?;
         }
     }
     let through = contiguous_in_tx(&mut tx, &dev, &boot).await?;
@@ -605,6 +626,61 @@ pub async fn persist_replay(
         through_device_seq: through,
         sender_reports_complete: e.data.complete,
     })
+}
+
+/// Forwards one newly committed replayed device event to the cloud outbox.
+///
+/// Replayed offline history is exactly what ADR-005's idempotency key was
+/// designed to make safe to forward, and until this existed none of it left the
+/// edge: an isolated device's gap markers and autonomous doses were durable
+/// locally and invisible in cloud history.
+///
+/// The mapping is deliberately narrow. `history.gap`, `watering.offline_autonomous`
+/// and `policy.activated` have canonical catalogue kinds of their own; every
+/// other device event — including a device-side `lockout.set` — becomes
+/// `device.event`. A device lockout is not the plant lockout ADR-005's
+/// `lockout.set` describes, and giving it that kind would put a device-shaped
+/// payload where the cloud expects a plant-shaped one.
+#[allow(clippy::too_many_arguments)]
+async fn emit_replayed_event(
+    tx: &mut Transaction<'_, Sqlite>,
+    device: &str,
+    boot: &str,
+    event: &rhizo_mqtt_contract::payload::BufferedEvent,
+    event_id: &str,
+    kind: &str,
+    severity: &str,
+    autonomous: Option<(Option<String>, f64, i64)>,
+    at: i64,
+) -> Result<(), StorageError> {
+    match (&event.kind, autonomous) {
+        // A dose the edge could not attribute is *not* emitted here. The cloud
+        // projects a watering event against a plant, and this dose has no plant
+        // yet — `control::reconcile` is where the fallback attribution happens,
+        // and that is where its event is emitted, from the transaction that
+        // decides the answer.
+        (EventKind::WateringOfflineAutonomous, Some((None, _, _))) => Ok(()),
+        (EventKind::WateringOfflineAutonomous, Some((Some(plant), delivered, happened_at))) => {
+            crate::repo::outbox::emit(tx, crate::repo::outbox::EventKind::WATERING_OFFLINE_AUTONOMOUS, &serde_json::json!({"watering_event_id":event_id,"device_id":device,"plant_id":plant,"mode":"automatic","origin":"offline_autonomous","delivered_ml":delivered,"status":"completed","occurred_at":happened_at,"boot_id":boot}), at)
+                .await
+                .map(|_| ())
+        }
+        (EventKind::HistoryGap, _) => {
+            crate::repo::outbox::emit(tx, crate::repo::outbox::EventKind::HISTORY_GAP, &serde_json::json!({"device_id":device,"boot_id":boot,"event_id":event_id,"severity":severity,"detail":event.detail}), at)
+                .await
+                .map(|_| ())
+        }
+        (EventKind::PolicyActivated, _) => {
+            crate::repo::outbox::emit(tx, crate::repo::outbox::EventKind::DEVICE_POLICY_APPLIED, &serde_json::json!({"device_id":device,"boot_id":boot,"event_id":event_id,"severity":severity,"detail":event.detail}), at)
+                .await
+                .map(|_| ())
+        }
+        _ => {
+            crate::repo::outbox::emit(tx, crate::repo::outbox::EventKind::DEVICE_EVENT, &serde_json::json!({"device_id":device,"boot_id":boot,"event_id":event_id,"kind":kind,"severity":severity,"origin":"offline_replay","detail":event.detail}), at)
+                .await
+                .map(|_| ())
+        }
+    }
 }
 
 async fn update_replay_progress(
@@ -961,11 +1037,11 @@ pub async fn persist_status_with_transitions(
             transitions.push(transition);
         }
     }
-    crate::repo::outbox::emit(&mut tx, "device.status", &serde_json::json!({"device_id":dev,"status":status,"firmware_version":firmware,"protocol_version":protocol,"boot_id":boot,"sequence":seq,"last_seen_at":last_seen,"connectivity_mode":connectivity,"power_mode":power_mode}), at).await?;
+    crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::DEVICE_STATUS, &serde_json::json!({"device_id":dev,"status":status,"firmware_version":firmware,"protocol_version":protocol,"boot_id":boot,"sequence":seq,"last_seen_at":last_seen,"connectivity_mode":connectivity,"power_mode":power_mode}), at).await?;
     if applied.is_some() {
         crate::repo::outbox::emit(
             &mut tx,
-            "device.config_applied",
+            crate::repo::outbox::EventKind::DEVICE_CONFIG_APPLIED,
             &serde_json::json!({"device_id":dev,"applied_config_version":applied}),
             at,
         )
@@ -975,9 +1051,15 @@ pub async fn persist_status_with_transitions(
         .iter()
         .any(|transition| transition.kind == "capabilities_changed")
     {
+        // ADR-005 names this kind `device.capabilities`. The edge briefly
+        // emitted `device.capabilities_changed`, which the cloud does not
+        // recognise: every capability change would have been preserved in the
+        // ledger and rejected for projection. The *edge* device-event kind is
+        // still `capabilities_changed` — that is a different vocabulary, local
+        // to `device_events`, and it is deliberately unchanged.
         crate::repo::outbox::emit(
             &mut tx,
-            "device.capabilities_changed",
+            crate::repo::outbox::EventKind::DEVICE_CAPABILITIES,
             &serde_json::json!({"device_id":dev,"capabilities":e.data.capabilities}),
             at,
         )
@@ -985,9 +1067,9 @@ pub async fn persist_status_with_transitions(
     }
     for transition in &transitions {
         let cloud_kind = match transition.kind.as_str() {
-            "device_isolated" => "device.isolated",
-            "device_reconciled" => "device.reconciled",
-            _ => "device.event",
+            "device_isolated" => crate::repo::outbox::EventKind::DEVICE_ISOLATED,
+            "device_reconciled" => crate::repo::outbox::EventKind::DEVICE_RECONCILED,
+            _ => crate::repo::outbox::EventKind::DEVICE_EVENT,
         };
         crate::repo::outbox::emit(&mut tx, cloud_kind, &serde_json::json!({"device_id":dev,"kind":transition.kind,"severity":transition.severity,"detail":transition.detail}), at).await?;
     }
