@@ -268,14 +268,14 @@ CREATE TABLE irrigation_state (
     wait_until             INTEGER,
     active_command_id      TEXT REFERENCES commands(command_id),
     updated_at             INTEGER NOT NULL,
-    -- Added by 0002 (M6): the readings recovery and no-delivery detection
-    -- compare against, taken at the *start* of a cycle rather than before each
-    -- dose, so two unresponsive doses look like two.
+    -- The readings recovery and no-delivery detection compare against, taken at
+    -- the *start* of a cycle rather than before each dose, so two unresponsive
+    -- doses look like two.
     pre_dose_vwc           REAL,
     pre_dose_grams         REAL
 );
 
--- Command intents (added by 0002, M6 / ADR-018 §3) ---------------------------
+-- Command intents (M6 / ADR-018 §3) ------------------------------------------
 --
 -- A dose an operator asked for while a battery device was asleep. **An intent is
 -- not a command**, and the nullable `command_id` is where that is visible: no
@@ -414,15 +414,15 @@ never edited after being applied anywhere. Migrations run automatically at
 startup before any other subsystem — a controller that cannot migrate must not
 serve traffic or make decisions.
 
-Two files exist at the time of writing. `0001_initial.sql` is the canonical
-pre-release baseline that M5 squashed into
-(`versioning-policy.md` §4 permits that while no release exists), and
-`0002_irrigation_control.sql` is M6's additive change: `command_intents`, the
-pre-dose baselines above, and the lockout audit fields
-(`plants.lockout_cleared_by`, `lockout_cleared_at`, `lockout_until`). M6 chose a
-new migration rather than another squash so an existing development database
-upgrades in place — which also means the automatic pre-migration backup is
-exercised by a real version change rather than only by a fresh create.
+**One file exists: `0001_initial.sql`**, the canonical pre-release baseline,
+holding the whole schema through M6. While no release exists it may keep
+absorbing development-only schema changes (`versioning-policy.md` §4); after the
+first deployment it and every later migration are immutable.
+
+With a single migration the automatic pre-migration backup in
+`storage::migrate::run` has no version change to fire on, so it is reached only
+on a fresh create, where it is skipped because the file is absent or empty. The
+path stays for the next real migration.
 
 ## Alternatives considered
 

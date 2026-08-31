@@ -215,6 +215,19 @@ Both SQLite and PostgreSQL use forward-only numbered migrations
   databases. Once the first release or deployment exists, `0001_initial.sql`
   and every applied migration are **immutable**. A mistake is then corrected by
   a new migration.
+
+  A squash **must** preserve the schema the sequence produced, column order
+  included — `ALTER TABLE ADD COLUMN` appends, so columns a later migration
+  added belong at the end of the squashed `CREATE TABLE`. Verify by building a
+  database from the old sequence and one from the squashed file and comparing
+  `sqlite_master`, `PRAGMA table_info`, `PRAGMA index_list`, and
+  `PRAGMA foreign_key_list`; a diff of the SQL text proves nothing.
+
+  A developer database predating a squash **is recreated, not upgraded**.
+  `sqlx` refuses it with `migration N was previously applied but is missing in
+  the resolved migrations` and changes nothing, which is the outcome to want:
+  the local schema is one command away, and silently accepting the mismatch
+  would leave a machine whose migration table disagrees with its tables.
 - Migrations must be **additive where possible**. Dropping a column requires a
   deliberate two-step: stop writing it in release N, drop it in release N+1.
 - The edge takes an automatic backup when the schema version changes

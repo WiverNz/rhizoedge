@@ -1,7 +1,12 @@
 -- Canonical pre-release baseline for the Rhizo Edge SQLite schema.
--- This incorporates the complete schema developed through M5. Once the first
--- release or deployment exists, this file is immutable; all later schema
--- changes require a new forward-only numbered migration.
+-- This is the complete schema through M6. Once the first release or deployment
+-- exists, this file is immutable; all later schema changes require a new
+-- forward-only numbered migration.
+--
+-- Column order here is asserted by
+-- `storage::migrate::tests::canonical_baseline_contains_the_final_schema`.
+-- Nothing reads a row positionally, so a change is not a correctness bug — but
+-- it is schema churn, and the test is where that conversation happens.
 
 CREATE TABLE devices (
     device_id TEXT PRIMARY KEY, name TEXT, firmware_version TEXT, boot_id TEXT,
@@ -24,7 +29,16 @@ CREATE TABLE plants (
     name TEXT NOT NULL, species TEXT, pot_volume_ml REAL, soil_type TEXT,
     auto_watering_enabled INTEGER NOT NULL DEFAULT 0, lockout_reason TEXT,
     lockout_since INTEGER, created_at INTEGER NOT NULL, deleted_at INTEGER,
-    applied_preset_id TEXT, applied_catalogue_version INTEGER
+    applied_preset_id TEXT, applied_catalogue_version INTEGER,
+    -- Who cleared a lockout, and when. An explicit reset is an operator action
+    -- and the record of it is what makes SAFETY-003's "explicit" half auditable.
+    lockout_cleared_by TEXT, lockout_cleared_at INTEGER,
+    -- A lockout held for a fixed period regardless of whether its condition
+    -- still holds. F-060-51's forward clock step is the only writer:
+    -- `Uncertain` is otherwise auto-clearing, and a clock step must hold the
+    -- plant for one cooldown even though the inputs look fine the instant
+    -- afterwards.
+    lockout_until INTEGER
 );
 CREATE TABLE processed_messages (message_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, kind TEXT NOT NULL, received_at INTEGER NOT NULL);
 CREATE INDEX idx_processed_received ON processed_messages(received_at);
@@ -62,7 +76,46 @@ CREATE UNIQUE INDEX uq_binding_control ON sensor_bindings(plant_id) WHERE role='
 CREATE TABLE actuator_bindings (plant_id TEXT PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE, device_id TEXT NOT NULL, actuator_id TEXT NOT NULL, kind TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE measurement_policies (plant_id TEXT NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE, kind TEXT NOT NULL, target_min REAL, target_max REAL, warning_low REAL, warning_high REAL, critical_low REAL, critical_high REAL, stale_after_ms INTEGER NOT NULL, hysteresis REAL, confirm_duration_ms INTEGER, updated_at INTEGER NOT NULL, PRIMARY KEY(plant_id,kind));
 CREATE TABLE offline_policies (plant_id TEXT PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE, policy_version INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, policy_json TEXT NOT NULL, published_at INTEGER, applied_version INTEGER, applied_at INTEGER, updated_at INTEGER NOT NULL);
-CREATE TABLE irrigation_state (plant_id TEXT PRIMARY KEY REFERENCES plants(plant_id), state TEXT NOT NULL, state_since INTEGER NOT NULL, doses_this_cycle INTEGER NOT NULL DEFAULT 0, cycle_started_at INTEGER, last_cycle_completed_at INTEGER, wait_until INTEGER, active_command_id TEXT REFERENCES commands(command_id), updated_at INTEGER NOT NULL);
+-- `pre_dose_vwc` and `pre_dose_grams` are the readings taken immediately before
+-- the current cycle's first dose: recovery is judged against these (F-060-32),
+-- and so is no-delivery detection (F-060-33), which needs a weight baseline as
+-- well as a moisture one.
+CREATE TABLE irrigation_state (plant_id TEXT PRIMARY KEY REFERENCES plants(plant_id), state TEXT NOT NULL, state_since INTEGER NOT NULL, doses_this_cycle INTEGER NOT NULL DEFAULT 0, cycle_started_at INTEGER, last_cycle_completed_at INTEGER, wait_until INTEGER, active_command_id TEXT REFERENCES commands(command_id), updated_at INTEGER NOT NULL, pre_dose_vwc REAL, pre_dose_grams REAL);
+
+-- A dose an operator asked for while the device was asleep.
+--
+-- `commands` deliberately has **no** matching column. An intent is not a command: no
+-- `command_id` exists until delivery, so there is still exactly one
+-- persist-before-publish moment per command and a delivery retry still reuses
+-- the id allocated at that moment (SAFETY-001, SAFETY-010).
+--
+-- `command_id` is nullable and stays NULL until the wake that mints the real
+-- command, which is the shape a reviewer checks this was implemented correctly.
+-- `intent_expires_at` is the **edge's** clock and never reaches a device; the
+-- wire TTL is unchanged at 120 s and is what the device validates (SAFETY-002).
+CREATE TABLE command_intents (
+    intent_id TEXT PRIMARY KEY,
+    plant_id TEXT NOT NULL REFERENCES plants(plant_id),
+    device_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    requested_ml REAL NOT NULL,
+    mode TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    intent_expires_at INTEGER NOT NULL,
+    expected_delivery_after INTEGER,
+    state TEXT NOT NULL,
+    command_id TEXT REFERENCES commands(command_id),
+    refusal_reason TEXT,
+    settled_at INTEGER,
+    updated_at INTEGER NOT NULL
+);
+
+-- At most one open water intent per plant. The rolling cap would bound the total
+-- anyway, but arriving at the cap by accident is not a design (ADR-018 §3).
+CREATE UNIQUE INDEX uq_open_water_intent
+    ON command_intents(plant_id)
+    WHERE state = 'pending_for_device_wake' AND kind = 'water';
+CREATE INDEX idx_intents_open ON command_intents(state, intent_expires_at);
 CREATE TABLE pending_cloud_events (event_id TEXT PRIMARY KEY, kind TEXT NOT NULL, value_tier TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, synced_at INTEGER);
 CREATE INDEX idx_outbox_ready ON pending_cloud_events(status,next_attempt_at);
 

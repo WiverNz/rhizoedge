@@ -250,10 +250,10 @@ POST /api/v1/devices/{id}/commands/calibrate
 Uses `commands`, `watering_events`, and `irrigation_state` from
 [ADR-004](../adr/004-sqlite-edge-persistence-model.md).
 
-**One migration, `0002_irrigation_control.sql`, and it adds no column to
-`commands`.** What is new is the durable intent a sleeping device's dose waits
-in, the pre-dose baselines recovery and no-delivery detection compare against,
-and the lockout audit fields SAFETY-003 needs:
+**M6's schema change adds no column to `commands`.** What it adds is the durable
+intent a sleeping device's dose waits in, the pre-dose baselines recovery and
+no-delivery detection compare against, and the lockout audit fields SAFETY-003
+needs:
 
 ```text
 command_intents   intent_id, plant_id, device_id, kind, requested_ml, mode,

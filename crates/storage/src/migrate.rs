@@ -65,22 +65,30 @@ mod tests {
         assert_eq!(tables, 1);
     }
 
-    /// The canonical pre-release baseline, plus every forward-only migration
-    /// applied after it.
+    /// The canonical pre-release baseline holds the **whole** schema.
     ///
-    /// `0001_initial.sql` was squashed while no release existed
-    /// (`versioning-policy.md` §4). M6 is additive and arrives as
-    /// `0002_irrigation_control.sql` rather than by editing the baseline, so an
-    /// existing development database upgrades in place — and the backup path in
-    /// [`run`] is exercised by a real version change rather than only by a fresh
-    /// create.
+    /// **The single-migration assertion is deliberate.** It fails the moment
+    /// someone adds a file, which is the right moment to ask whether the first
+    /// release has happened: if it has, the new file is correct and this number
+    /// goes up; if it has not, the change may still belong in the baseline
+    /// (`versioning-policy.md` §4). Either way the decision gets made rather
+    /// than defaulted into.
+    ///
+    /// The rest pins the schema itself — the table set, the index set, the
+    /// column order of every table, the partial-index predicates, and the
+    /// cascade count — so an edit to the baseline has to be deliberate too.
+    ///
+    /// Note that with one migration, [`run`]'s pre-migration backup has no
+    /// version change to fire on: it is reached only on a fresh create, where it
+    /// is skipped because the file is absent or empty. The path stays for the
+    /// next real migration and is currently uncovered.
     #[tokio::test]
     async fn canonical_baseline_contains_the_final_schema() {
         use sqlx::Row as _;
 
-        assert_eq!(MIGRATOR.iter().count(), 2);
+        assert_eq!(MIGRATOR.iter().count(), 1);
         let versions: Vec<i64> = MIGRATOR.iter().map(|m| m.version).collect();
-        assert_eq!(versions, [1, 2]);
+        assert_eq!(versions, [1]);
         let db = EdgeDb::in_memory().await.unwrap();
         db.migrate().await.unwrap();
 

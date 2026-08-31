@@ -151,9 +151,8 @@ crates/                ten implemented/building workspace crates:
                        mqtt-contract, policy, domain, storage, telemetry,
                        cloud-client, testkit, edge-controller, device-simulator,
                        cloud-api
-migrations/edge/       0001_initial.sql (the M5 pre-release baseline) and
-                       0002_irrigation_control.sql (M6: command intents, the
-                       pre-dose baselines, the lockout audit fields)
+migrations/edge/       0001_initial.sql — the only migration, and the canonical
+                       pre-release baseline holding the whole schema through M6
 crates/domain/data/    presets.v1.json — the embedded species catalogue,
                        compiled in with include_str! (M5-017). Twenty-two
                        curated entries; every value carries its provenance,
@@ -318,6 +317,14 @@ That topic is a *child* of `commands/result` and a distinct exact topic from it,
 so subscribing to the acknowledgement still does not deliver the device its own
 results — which is the whole property the exact form exists to guarantee, and is
 asserted rather than assumed.
+
+**There is one migration, and pre-release it keeps absorbing schema changes.**
+`0001_initial.sql` is the whole schema; `canonical_baseline_contains_the_final_schema`
+asserts that it is the only one, which fails the moment a file is added — on
+purpose, because that is when to ask whether the first release has happened. If
+`sqlx migrate run` says `migration N was previously applied but is missing in the
+resolved migrations`, your `data/edge.sqlite` is older than the current baseline:
+delete and re-create it (`local-development.md` §9). Nothing is corrupted.
 
 **A `history.gap` marker is sealed when it is first sent.** It accumulates
 mutably while unsent — range widened, count raised — and

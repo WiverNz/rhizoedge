@@ -357,6 +357,30 @@ instead of connecting, and fails with `set DATABASE_URL to use query macros
 online, or run cargo sqlx prepare to update the query cache` if it is missing or
 stale. One file per checked query is the expected shape.
 
+### If migrations fail with "previously applied but is missing"
+
+```text
+error: migration 2 was previously applied but is missing in the resolved migrations
+```
+
+Your `data/edge.sqlite` is older than the current baseline: its
+`_sqlx_migrations` table records a migration that no longer exists, because
+pre-release migrations are squashed into `0001_initial.sql`
+([versioning-policy.md](../protocol/versioning-policy.md) §4).
+
+Nothing is corrupted — `sqlx` refused and changed nothing. **Recreate it:**
+
+```bash
+rm -f data/edge.sqlite data/edge.sqlite-wal data/edge.sqlite-shm
+export DATABASE_URL="sqlite://data/edge.sqlite"
+sqlx database create
+sqlx migrate run --source migrations/edge      # expect: Applied 1/migrate initial
+```
+
+There is nothing to preserve: local databases hold sample data from simulator
+runs. This applies only before the first deployment; after that migrations are
+immutable and the situation cannot arise.
+
 ---
 
 ## 10. Logs
