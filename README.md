@@ -607,6 +607,20 @@ Stated plainly, because they are decisions rather than oversights:
   losing one fails safe. Only ledger data — dose results and offline history —
   is delivered with an end-to-end guarantee.
 
-## Licence
+## License
 
-Not yet selected.
+Rhizo Edge is **source-visible, not open source**. The repository is public so
+that the code and its design documents can be read, reviewed, and evaluated.
+
+Publication grants no licence to use the software. Copyright © 2026 WiverNz;
+all rights reserved. Without prior written permission you may not use,
+copy, modify, distribute, sublicense, sell, create derivative works from, or
+incorporate this code — or any part of it — into another product or project.
+Commercial and non-commercial use alike require that permission, and enquiries
+are welcome.
+
+Rights granted by GitHub's Terms of Service for viewing and forking through
+GitHub are unaffected, and third-party dependencies remain governed by their own
+licences.
+
+Full terms: [LICENSE](LICENSE).

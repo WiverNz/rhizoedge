@@ -26,7 +26,10 @@ exclude = ["firmware", "ui"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+# Proprietary and source-visible; see the root LICENSE. `publish = false`
+# below keeps this off crates.io, and this is an SPDX LicenseRef rather than a
+# permissive expression so no consumer reads the workspace metadata as a grant.
+license = "LicenseRef-Rhizo-Edge-Proprietary"
 rust-version = "1.98.0"
 repository = "https://github.com/wivernz/rhizoedge"
 publish = false

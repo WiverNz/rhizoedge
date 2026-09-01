@@ -1,0 +1,117 @@
+Rhizo Edge Proprietary License
+==============================
+
+Copyright © 2026 WiverNz. All rights reserved.
+
+Rhizo Edge is source-visible software. It is **not** open source, and it is not
+released under any OSI-approved or Free Software licence.
+
+1. Purpose of publication
+
+   In this licence, "the Materials" means the source code of Rhizo Edge together
+   with the design documents, architecture decision records, product requirement
+   documents, protocol specifications, issue files, and other written material in
+   this repository.
+
+   The source code of Rhizo Edge is published so that it may be read, reviewed,
+   and evaluated — for technical review, portfolio and professional assessment,
+   academic study, and discussion with prospective partners, employers, and
+   investors. Publication is for transparency only. It is not a grant of rights.
+
+2. Permitted use
+
+   Subject to the terms below, you may:
+
+   a. view, read, and study the source code;
+   b. quote short excerpts for the purpose of review, commentary, reporting,
+      teaching, or academic citation, with attribution to Rhizo Edge and its
+      copyright holder.
+
+3. Reserved rights
+
+   Except as stated in Section 2, and except as provided in Sections 5 and 6, no
+   licence or right of any kind is granted, expressly or by implication,
+   estoppel, or otherwise. In particular, you may **not**, without the prior
+   written permission of the copyright holder:
+
+   a. use the software or any part of it, for any purpose, whether commercial or
+      non-commercial, including running it in production, in a business, or as
+      part of a service;
+   b. copy or reproduce the software or any part of it;
+   c. modify, adapt, or translate the software, or create derivative works of
+      it;
+   d. distribute, publish, transmit, lend, lease, rent, sell, or otherwise
+      transfer the software or any part of it, in source or compiled form;
+   e. sublicense the software or grant any rights in it to a third party;
+   f. incorporate the software, any part of it, or any derivative of it into
+      another product, project, service, or codebase, whether proprietary or
+      open source;
+   g. use the software, or any part of it, to train, fine-tune, or evaluate a
+      machine-learning model whose outputs are made available to third parties;
+   h. remove, obscure, or alter any copyright, licence, or attribution notice.
+
+   These restrictions apply to the Materials as a whole: the written material in
+   this repository is covered on the same terms as the source code.
+
+4. Requesting permission
+
+   Permission for any use beyond Section 2 may be granted, and must be obtained
+   in advance and in writing from the copyright holder. Enquiries — including
+   commercial licensing, evaluation deployments, partnership, and research use —
+   are welcome and should be directed to the copyright holder through the
+   repository's GitHub page at https://github.com/wivernz/rhizoedge.
+
+   A permission is valid only if given in writing, and extends only to the
+   scope, party, and period it states.
+
+5. GitHub Terms of Service
+
+   Nothing in this licence restricts or purports to restrict any right you are
+   granted by the GitHub Terms of Service by virtue of this repository being
+   public — including viewing the repository and forking it within GitHub. Those
+   rights operate as GitHub's terms provide. This licence governs everything
+   beyond them, and a fork made under GitHub's terms carries this licence with
+   it and grants no additional right to use, modify, or redistribute the code.
+
+6. Third-party components
+
+   Rhizo Edge depends on third-party software that it does not own and does not
+   relicense. Each such component remains governed solely by its own licence,
+   granted by its own copyright holder, and nothing in this licence adds to or
+   detracts from those terms. This licence applies only to the original material
+   of Rhizo Edge.
+
+7. No trademark licence
+
+   This licence grants no right to use the names "Rhizo Edge", "Rhizo", or
+   "WiverNz", or any associated logo or wordmark, other than as required for
+   accurate attribution under Section 2.
+
+8. No warranty
+
+   THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+   FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+   Rhizo Edge controls irrigation hardware and can cause, or fail to prevent,
+   physical consequences including water damage and plant loss. It is provided
+   for evaluation, and it is not certified for any safety-critical purpose.
+
+9. Limitation of liability
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE COPYRIGHT HOLDER
+   SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM
+   THE MATERIALS OR THEIR USE, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+   OTHERWISE.
+
+10. Termination
+
+   Any use of the software outside the permissions granted here terminates the
+   permissions in Section 2 automatically, and any written permission granted
+   under Section 4 may be revoked by written notice.
+
+11. Reservation
+
+   All rights not expressly granted are reserved by the copyright holder. The
+   copyright holder may release all or part of Rhizo Edge under different terms
+   at any time; until that is done in writing, these terms apply.
