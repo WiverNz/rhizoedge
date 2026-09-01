@@ -677,6 +677,48 @@ Stated plainly, because they are decisions rather than oversights:
   losing one fails safe. Only ledger data — dose results and offline history —
   is delivered with an end-to-end guarantee.
 
+## What comes after V1
+
+Planned, specified, and **not built** — each has an ADR, a PRD, and issue-level
+scope in [ROADMAP.md](ROADMAP.md), and none of them changes a safety rule.
+
+**M14 — Field readiness architecture.** Documentation only, deliberately: the
+route to greenhouse and field mapped honestly, with no speculative
+implementation. Zones and multi-depth sensing, the v2 protocol a constrained
+radio would need, weather as a recommendation input and never a gate input, and
+solar power planned as a power source rather than a control architecture.
+[PRD 140](docs/prd/140-field-readiness.md)
+
+**M15 — Per-plant adaptive water model.** Static species thresholds cannot know
+your pot. This learns how *one specific* plant, pot, substrate, and probe
+actually behaves — a drying rate and a dose response — and answers questions the
+current rules cannot: when will this plant be dry, and what does a millilitre do
+here. Deterministic weighted least squares over a handful of observations, **not
+machine learning**: replayable, explainable in a sentence, and bounded by
+SAFETY-022 so it may only ever ask for *less* water than you configured, never
+more. Cold start behaves exactly like today.
+[ADR-019](docs/adr/019-per-plant-adaptive-water-model.md) ·
+[PRD 150](docs/prd/150-per-plant-adaptive-water-model.md)
+
+**M16 — Verified watering.** Today "the pump ran for eight seconds" is the only
+evidence a plant was watered, and a blocked tube, a lost prime, or a tube that
+fell out of the pot all produce a perfectly successful result. This adds a
+physical witness — a load cell under the reservoir, measuring volume by
+subtraction, chosen over a flow meter because a dosing pump runs below where
+cheap flow meters are accurate — plus an outcome vocabulary in which **unknown
+is a real answer** and is never quietly rounded to zero, and a no-flow condition
+caught on the *first* dose instead of the third.
+[ADR-020](docs/adr/020-verified-watering-and-delivery-evidence.md) ·
+[PRD 160](docs/prd/160-verified-watering.md)
+
+The two are independent: M15 asks *how much water should this plant get*, M16
+asks *did it actually get it*. Neither depends on the other, though M16 first
+makes M15 learn from measured volumes rather than calculated ones.
+
+Not planned, and not accidentally omitted: machine learning, N/P/K inference
+from EC, cloud-originated commands, and any override, force, or bypass on a
+watering path. ROADMAP.md §7 keeps the full list.
+
 ## License
 
 Rhizo Edge is **source-visible, not open source**. The repository is public so
