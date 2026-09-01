@@ -57,6 +57,74 @@ The first target is indoor houseplants. The architecture is deliberately shaped
 so greenhouse and field deployments are an extension of the same system rather
 than a rewrite.
 
+## Not one box per plant
+
+Rhizo is **not** a one-device-per-plant system. Sensing and actuation are
+independent capabilities, declared by the device and bound per plant, so one
+node can serve several plants and one plant can draw on several nodes.
+
+- A plant may have a **dedicated soil probe**, or share a multi-channel node
+  with the pots beside it.
+- **Ambient sensors are shared.** One temperature, humidity, and light node is
+  bound to every plant it describes — each with its own thresholds, because the
+  same reading is "fine" for a succulent and "critical" for a fern.
+- A plant may have **no actuator at all**: a first-class configuration with
+  alerts, trends, and recommendations, not a degraded one (SAFETY-018).
+- Watering may come from a **separate node** holding the pump, wherever the
+  tubing actually runs.
+- A single node may **do both** — sense its pot and water it.
+
+Bindings, not wiring, decide which measurement serves which plant, so adding a
+pump node or moving a probe is an API call rather than a rebuild.
+
+### Device profiles
+
+Three names for how the same components are deployed. They are **deployment
+profiles, not separate products**: one firmware, one Edge Controller, one wire
+protocol, and a device's behaviour follows the capabilities it declares.
+
+| Profile | What it is | Built from |
+|---|---|---|
+| **Rhizo Sense** | Sensor-oriented node — soil, ambient, light, weight; no actuator | `esp32-node` declaring sensors only |
+| **Rhizo Water** | Actuation node — a pump, plus the tank and leak sensing its own safety gate requires | `esp32-node` declaring an actuator |
+| **Rhizo Hub** | The Edge Controller — bindings, thresholds, the safety gate, SQLite, the local API | `edge-controller` beside Mosquitto |
+
+A Rhizo Water node is never *only* an actuator. The device-side gate reads leak
+and tank state from **its own** sensors and refuses the dose when either is
+unknown ([MQTT protocol v1](docs/protocol/mqtt-v1.md) §5.8 steps 6–8), so a pump
+and the sensing that can veto it stay on one board.
+
+### Deployment shapes
+
+```text
+── monitoring only ───────────────────────────────────────────────
+   Plant A ◄─ soil_moisture ──── Sense node
+           ◄─ ambient ────────── Ambient node
+           no actuator bound: alerts, trends, recommendations
+
+── separate Sense + Water ────────────────────────────────────────
+   Plant B ◄─ soil_moisture ──── Sense node
+           ◄─ ambient ────────── Ambient node
+           ─► dose ───────────── Water node   pump · tank · leak
+
+── combined Sense + Water ────────────────────────────────────────
+   Plant C ◄─ soil_moisture ──┬─ Sense+Water node
+           ─► dose ───────────┘
+           ◄─ ambient ────────── Ambient node
+
+── shared ambient sensor ─────────────────────────────────────────
+   Ambient node ─► Plant A · Plant B · Plant C
+                   one node, three bindings, three sets of thresholds
+```
+
+Every arrow is a **binding** held by the Hub, which decides every dose while
+connected. Devices are never wired to each other, and no device is tied to a
+plant by construction.
+
+Details: [ADR-016](docs/adr/016-plant-binding-and-policy-model.md) ·
+[ADR-017](docs/adr/017-extensible-measurement-model.md) ·
+[deployment model](docs/architecture/deployment-model.md)
+
 ## Three principles
 
 **Edge-first.** While connected, the Edge Controller owns high-level irrigation
@@ -286,7 +354,9 @@ an installation. The picker and the review step are M12.
 Most plants in a real home will never have one. A plant with no actuator is a
 **first-class, fully supported** configuration — telemetry, history, trends,
 thresholds, warnings, critical alerts, recommendations, and UI visibility — that
-simply has no actuation path. It is not a plant with a missing part.
+simply has no actuation path. It is not a plant with a missing part. And when a
+plant does have one, the pump need not sit on the plant's own node — see
+[Not one box per plant](#not-one-box-per-plant).
 
 Supported shapes, all equally normal:
 
@@ -301,11 +371,11 @@ monitoring + offline autonomous watering
 ## Architecture
 
 ```text
-  ESP32 Plant Node (Rust)              Device Simulator (Rust)
+  ESP32 Device Node (Rust)             Device Simulator (Rust)
   ┌──────────────────────────┐         ┌──────────────────────────┐
-  │ sensors: soil · ambient  │         │ same MQTT protocol       │
-  │   light · tank · leak …  │         │ shared evaluator (M6+)   │
-  │ pump (optional)          │         │ virtual time · faults    │
+  │ declares capabilities:   │         │ same MQTT protocol       │
+  │  sensors[] · actuators[] │         │ shared evaluator (M6+)   │
+  │ Sense · Water · or both  │         │ virtual time · faults    │
   │ offline policy + budget  │         │ offline policy + budget  │
   │ HARD SAFETY LIMITS       │         │ HARD SAFETY LIMITS       │
   └────────────┬─────────────┘         └────────────┬─────────────┘
@@ -349,11 +419,11 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 | `rhizo-policy` | `no_std` offline-policy state and decision contract, and the one offline evaluator (M6-019) shared by simulator, firmware, and any required edge use |
 | `rhizo-domain` | Pure plants, bindings, per-measurement policies, trends, detection, thresholds, the species preset catalogue, the recommendation engine, and — since M6 — the irrigation state machine and the safety gate |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
-| `edge-controller` | The control plane — the only component that decides while connected. Since M6 it owns the command lifecycle, reconciliation of replayed offline history, and the durable acknowledgement of every dose result |
+| `edge-controller` | Deployed as the **Rhizo Hub**. The control plane — the only component that decides while connected. Since M6 it owns the command lifecycle, reconciliation of replayed offline history, and the durable acknowledgement of every dose result |
 | `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; since M6 it waters autonomously while isolated, through the shared evaluator |
 | `rhizo-cloud-client` | The edge's typed HTTP client for the cloud: bounded requests, exhaustive retry classification, and `Retry-After` handling. Nothing else in the edge knows the cloud exists |
 | `cloud-api` | Implemented in M7. Idempotent event ingestion keyed by `(edge_id, event_id)` into an append-only PostgreSQL ledger, the projections rebuilt from it, and read-only history APIs. It can issue nothing |
-| `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller |
+| `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller. One codebase, deployed as **Rhizo Sense**, **Rhizo Water**, or both, according to the capabilities it declares |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
 
 ## Development strategy: simulator before hardware
