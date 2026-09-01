@@ -60,6 +60,7 @@ normalised out of the project plan.
 | [dependency-graph.md](architecture/dependency-graph.md) | Milestone and issue execution order |
 | [connectivity-modes.md](architecture/connectivity-modes.md) | Cloud offline, site offline, device isolated — and what each degrades |
 | [offline-autonomy.md](architecture/offline-autonomy.md) | The offline policy model, evaluation, buffering, reconciliation |
+| [operational-history.md](architecture/operational-history.md) | Which operational facts are durably recorded, and which future metrics are derivable from them |
 
 ## Architecture Decision Records
 
