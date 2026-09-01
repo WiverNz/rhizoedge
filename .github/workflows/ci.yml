@@ -193,7 +193,6 @@ jobs:
   #   no_std contract build    M1-011  cargo build -p rhizo-mqtt-contract
   #                                      --no-default-features
   #                                      --target thumbv7em-none-eabi
-  #   end-to-end               M8-014
   #   firmware                 M9-002
   #   UI                       M12
   #   release                  M13

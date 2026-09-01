@@ -1,7 +1,11 @@
-target
+target/
 .git
 .env
-data
+data/
 *.state.json
 *.sqlite
 *.sqlite-*
+deploy/mosquitto/passwd
+.agents/
+.codex/
+deploy/artifacts/

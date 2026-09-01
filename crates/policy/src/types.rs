@@ -60,6 +60,8 @@ pub struct OfflineInputs {
 /// Refusal for every offline gate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RefuseReason {
+    /// No policy was ever provisioned; absence is not permission.
+    NoValidPolicy,
     PolicyDisabled,
     PolicyInvalid,
     NoActuator,

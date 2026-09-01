@@ -117,6 +117,8 @@ impl Edge {
                 metrics,
                 clock: clock.clone(),
                 commander: commander.clone(),
+                edge_id: "test-edge".to_owned(),
+                time_scale: 1.0,
             },
             vec![],
         );

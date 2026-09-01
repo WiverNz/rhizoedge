@@ -2,7 +2,7 @@
 #![allow(missing_docs)]
 use super::{
     ApiState, bindings, device_config, devices, health, intents, measurement_policies,
-    offline_policy, plants, presets, profiles, recommendation, sync, watering,
+    offline_policy, overview, plants, presets, profiles, recommendation, sync, watering,
 };
 use axum::{
     Router,
@@ -24,6 +24,7 @@ pub fn router(state: ApiState, origins: Vec<String>) -> Router {
             "/metrics",
             get(|| async { rhizo_telemetry::render_prometheus() }),
         )
+        .route("/api/v1/overview", get(overview::get))
         .route("/api/v1/devices", get(devices::list))
         .route(
             "/api/v1/devices/{id}",
@@ -294,6 +295,8 @@ mod tests {
                     std::sync::Arc::new(crate::control::transport::RecordingTransport::new()),
                     metrics,
                 ),
+                edge_id: "test-edge".to_owned(),
+                time_scale: 1.0,
             },
             origins,
         )

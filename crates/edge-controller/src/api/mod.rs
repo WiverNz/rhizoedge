@@ -6,6 +6,7 @@ pub mod health;
 pub mod intents;
 pub mod measurement_policies;
 pub mod offline_policy;
+pub mod overview;
 pub mod plants;
 pub mod presets;
 pub mod profiles;
@@ -37,4 +38,8 @@ pub struct ApiState {
     /// its own MQTT client would be a second actuation path, and SAFETY-003 and
     /// SAFETY-004 would hold only for one of them.
     pub commander: crate::control::command::Commander,
+    /// Stable edge identity reported by the composite overview.
+    pub edge_id: String,
+    /// Logical seconds per real second, shared with the simulator in M8.
+    pub time_scale: f64,
 }

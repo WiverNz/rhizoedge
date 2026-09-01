@@ -1,0 +1,112 @@
+services:
+  mosquitto:
+    restart: "no"
+
+  edge-controller:
+    restart: "no"
+    environment:
+      RHIZO_E2E_FAULTS: "1"
+      RHIZO_E2E_CLOUD_BATCH_SIZE: "10"
+      RHIZO_EDGE__TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_EDGE__CONTROL__TICK_INTERVAL_SECONDS: "30"
+      RHIZO_EDGE__CONTROL__COMMAND_TTL_SECONDS: "600"
+      RHIZO_EDGE__CLOUD__REQUEST_TIMEOUT_SECONDS: "10"
+
+  device-simulator:
+    restart: "no"
+    environment:
+      RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_SIMULATOR__CONTROL_BIND: 0.0.0.0:9090
+    command:
+      - >-
+        exec /usr/local/bin/device-simulator
+        --device-id "sim-$${HOSTNAME}"
+        --username rhizo-edge
+        --password "$${RHIZO_EDGE__MQTT__PASSWORD}"
+        --broker mqtt://mosquitto:1883
+        --telemetry-interval 300
+        --time-scale "$${RHIZO_TIME_SCALE}"
+        --state-file "/var/lib/rhizo/sim-$${HOSTNAME}.state.json"
+        --allow-remote-control-api
+        --log-format json
+
+  postgres:
+    restart: "no"
+
+  cloud-api:
+    restart: "no"
+
+  scenario-runner:
+    build:
+      context: ..
+      dockerfile: deploy/scenario-runner.Dockerfile
+    restart: "no"
+    # The runner controls sibling containers through the Docker socket. It is
+    # test-only infrastructure; production service images remain non-root.
+    user: "0:0"
+    env_file:
+      - path: ../.env
+        required: false
+    depends_on:
+      edge-controller:
+        condition: service_healthy
+      device-simulator:
+        condition: service_healthy
+      cloud-api:
+        condition: service_healthy
+    environment:
+      RHIZO_SCENARIO__EDGE_URL: http://edge-controller:8080
+      RHIZO_SCENARIO__CLOUD_URL: http://cloud-api:8081
+      RHIZO_SCENARIO__SIMULATOR_URL: http://device-simulator:9090
+      RHIZO_SCENARIO__POSTGRES_URL: postgres://rhizo:rhizo@postgres:5432/rhizo
+      RHIZO_SCENARIO__EDGE_DB: /var/lib/rhizo-edge/edge.sqlite
+      RHIZO_SCENARIO__TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_SCENARIO__MQTT_HOST: mosquitto
+      RHIZO_SCENARIO__SEED: ${RHIZO_SCENARIO_SEED:-159}
+      RHIZO_SCENARIO__ARTIFACTS: /artifacts
+    volumes:
+      - edge-data:/var/lib/rhizo-edge
+      - device-simulator-state:/var/lib/rhizo-simulator
+      - ./artifacts:/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [rhizo]
+
+  battery-simulator:
+    profiles: ["battery"]
+    build:
+      context: ..
+      dockerfile: deploy/device-simulator.Dockerfile
+    restart: "no"
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      edge-controller:
+        condition: service_healthy
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec /usr/local/bin/device-simulator
+        --device-id battery-node-01
+        --username rhizo-edge
+        --password "$${RHIZO_EDGE__MQTT__PASSWORD}"
+        --broker mqtt://mosquitto:1883
+        --power-mode battery
+        --wake-interval-seconds 900
+        --telemetry-interval 900
+        --time-scale "$${RHIZO_TIME_SCALE}"
+        --state-file /var/lib/rhizo/battery-node-01.state.json
+        --log-format json
+    volumes:
+      - device-simulator-state:/var/lib/rhizo
+    networks: [rhizo]
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 2s

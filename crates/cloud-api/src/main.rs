@@ -58,7 +58,38 @@ async fn run() -> anyhow::Result<()> {
     });
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     tracing::info!(bind=%cli.bind,"cloud API ready");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("graceful shutdown complete");
     pool.close().await;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+        match terminate {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    result = tokio::signal::ctrl_c() => {
+                        if let Err(error) = result {
+                            tracing::error!(%error, "failed to listen for shutdown signal");
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, "failed to listen for SIGTERM");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(%error, "failed to listen for shutdown signal");
+    }
+    tracing::info!("graceful shutdown requested");
 }

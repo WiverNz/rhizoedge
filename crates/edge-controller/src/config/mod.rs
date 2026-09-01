@@ -113,6 +113,7 @@ const SECRET_KEY_MARKERS: [&str; 3] = ["password", "token", "secret"];
 /// edge API, so its reachability is the whole access control story).
 pub const DEFAULTS_TOML: &str = r#"
 edge_id = "home-01"
+time_scale = 1.0
 
 [mqtt]
 broker_url = "mqtt://localhost:1883"
@@ -154,6 +155,9 @@ pub struct EdgeConfig {
     /// Changing it orphans this edge's history in the cloud, so it is treated
     /// as permanent once a deployment exists.
     pub edge_id: String,
+    /// Logical seconds elapsed per real second. Production uses 1.0; M8 uses
+    /// an accelerated value shared with the simulator.
+    pub time_scale: f64,
     /// Broker connection settings.
     pub mqtt: MqttConfig,
     /// Local persistence settings.
@@ -517,6 +521,12 @@ fn to_config_error(err: figment::Error) -> ConfigError {
 /// is reserved for configuration that could not do the right thing.
 fn validate(c: &EdgeConfig) -> Result<(), ConfigError> {
     validate_identifier("edge_id", &c.edge_id)?;
+    if !c.time_scale.is_finite() || c.time_scale <= 0.0 {
+        return Err(ConfigError::invalid(
+            "time_scale",
+            "must be a finite number greater than zero",
+        ));
+    }
 
     validate_broker_url(&c.mqtt.broker_url)?;
     if c.mqtt.client_id.trim().is_empty() {

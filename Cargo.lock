@@ -1789,6 +1789,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rhizo-scenarios"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "device-simulator",
+ "reqwest",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "rhizo-storage"
 version = "0.1.0"
 dependencies = [

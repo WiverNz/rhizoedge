@@ -22,6 +22,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod api;
+pub mod clock;
 pub mod cloud;
 pub mod config;
 pub mod control;

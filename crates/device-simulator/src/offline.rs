@@ -64,6 +64,17 @@ impl Device {
         let Some(plant_id) = self.policy_plants().into_iter().next() else {
             // No activated policy is not permission (SAFETY-013). It is the
             // documented behaviour of an unprovisioned device: a data logger.
+            // Preserve one audit event per change of refusal, exactly like the
+            // evaluator path below, so reconnect makes the refusal observable.
+            if self.note_offline_refusal(Some(RefuseReason::NoValidPolicy)) {
+                self.record_event(
+                    EventTier::Audit,
+                    EventKind::OfflineRefused,
+                    EventDetail::Refused {
+                        reason: "no_valid_policy".to_owned(),
+                    },
+                );
+            }
             return Vec::new();
         };
         let Some(seam) = self.offline_seam(&plant_id, elapsed_ms) else {
@@ -156,6 +167,7 @@ impl Device {
 #[must_use]
 pub const fn refuse_reason_name(reason: RefuseReason) -> &'static str {
     match reason {
+        RefuseReason::NoValidPolicy => "no_valid_policy",
         RefuseReason::PolicyDisabled => "policy_disabled",
         RefuseReason::PolicyInvalid => "policy_invalid",
         RefuseReason::NoActuator => "no_actuator",

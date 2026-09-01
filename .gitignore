@@ -51,3 +51,13 @@ CLAUDE.local.md
 
 # Machine-specific Codex notes — never shared
 AGENTS.override.md
+
+# Scenario-suite failure diagnostics. The runner bind-mounts this directory
+# and dumps observable state (SQLite tables, MQTT traffic, container logs)
+# here when a scenario fails; CI uploads it with actions/upload-artifact. The
+# dumps are generated output and machine-specific, but the *directory* is
+# tracked: Docker creates a missing bind-mount source owned by root, and the
+# runner is UID 10001, so an untracked directory would make the failure path
+# itself fail to write — the one moment the diagnostics matter.
+/deploy/artifacts/*
+!/deploy/artifacts/.gitkeep

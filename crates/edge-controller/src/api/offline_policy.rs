@@ -2,8 +2,8 @@
 //!
 //! Authoring derives a candidate from the plant's own bindings and measurement
 //! policies and validates it with the shared validator — the same rules the
-//! device will apply. Publishing is **not** here: M6-013 owns it, and M5
-//! publishes nothing.
+//! device will apply. The assembled Edge publishes the resulting per-device
+//! policy set retained after each successful authoring or activation change.
 //!
 //! `enabled` defaults to `false`, and enabling is a separate call. Creating a
 //! policy is not the same act as authorising a device to water unsupervised.
@@ -15,11 +15,73 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rhizo_domain::offline_policy::{AuthoringInputs, author, missing_safety_bindings};
+use rhizo_mqtt_contract::payload::{OfflinePolicy, OfflinePolicySet};
+use rhizo_mqtt_contract::{DeviceId, Envelope, MessageId, MessageKind, Topic};
 use rhizo_storage::repo::binding as binding_repo;
+use sqlx::Row as _;
 
 use super::ApiState;
 use super::support::{error, error_with, storage_error, timestamp};
 use crate::plant;
+
+async fn publish_for_plant(state: &ApiState, plant_id: &str, now: i64) -> Result<(), ()> {
+    let device_id: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM actuator_bindings WHERE plant_id=?")
+            .bind(plant_id)
+            .fetch_optional(state.db.pool())
+            .await
+            .map_err(|_| ())?;
+    let Some(device_id) = device_id else {
+        return Ok(());
+    };
+    let rows = sqlx::query(
+        "SELECT p.plant_id,p.policy_json FROM offline_policies p JOIN actuator_bindings a ON a.plant_id=p.plant_id WHERE a.device_id=? ORDER BY p.plant_id",
+    )
+    .bind(&device_id)
+    .fetch_all(state.db.pool())
+    .await
+    .map_err(|_| ())?;
+    let mut policies = Vec::with_capacity(rows.len());
+    let mut plants = Vec::with_capacity(rows.len());
+    for row in rows {
+        let document: String = row.get("policy_json");
+        policies.push(serde_json::from_str::<OfflinePolicy>(&document).map_err(|_| ())?);
+        plants.push(row.get::<String, _>("plant_id"));
+    }
+    let device = DeviceId::parse(&device_id).map_err(|_| ())?;
+    let payload = Envelope {
+        v: rhizo_mqtt_contract::PROTOCOL_VERSION,
+        kind: MessageKind::DevicePolicy,
+        message_id: MessageId::from_uuid(uuid::Uuid::now_v7()),
+        device_id: device.clone(),
+        boot_id: None,
+        sequence: None,
+        device_time_ms: None,
+        clock_synced: None,
+        data: OfflinePolicySet { policies },
+    }
+    .to_json()
+    .map_err(|_| ())?;
+    state
+        .commander
+        .transport()
+        .publish(
+            Topic::Policy(device).as_string(),
+            payload.into_bytes(),
+            true,
+        )
+        .await
+        .map_err(|_| ())?;
+    for plant in plants {
+        sqlx::query("UPDATE offline_policies SET published_at=? WHERE plant_id=?")
+            .bind(now)
+            .bind(plant)
+            .execute(state.db.pool())
+            .await
+            .map_err(|_| ())?;
+    }
+    Ok(())
+}
 
 fn row_json(row: &binding_repo::OfflinePolicyRow) -> serde_json::Value {
     serde_json::json!({
@@ -90,6 +152,13 @@ pub async fn put(State(state): State<ApiState>, Path(id): Path<String>) -> Respo
     {
         return storage_error();
     }
+    if publish_for_plant(&state, &id, now).await.is_err() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "policy_publish_failed",
+            "the policy was stored but could not be published to the device",
+        );
+    }
     let missing: Vec<String> = missing_safety_bindings(&bindings)
         .iter()
         .map(|k| k.as_str().to_owned())
@@ -155,6 +224,13 @@ async fn set_enabled(state: &ApiState, plant_id: &str, enabled: bool) -> Respons
     {
         return storage_error();
     }
+    if publish_for_plant(state, plant_id, now).await.is_err() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "policy_publish_failed",
+            "the policy was stored but could not be published to the device",
+        );
+    }
     match binding_repo::offline_policy(&state.db, plant_id).await {
         Ok(Some(row)) => Json(row_json(&row)).into_response(),
         Ok(None) | Err(_) => storage_error(),
@@ -173,6 +249,8 @@ pub async fn disable(State(state): State<ApiState>, Path(id): Path<String>) -> R
 mod tests {
     use super::super::testsupport::TestApi;
     use axum::http::StatusCode;
+    use rhizo_mqtt_contract::Envelope;
+    use rhizo_mqtt_contract::payload::OfflinePolicySet;
 
     async fn configured(with_actuator: bool) -> TestApi {
         let api = TestApi::start().await;
@@ -434,10 +512,10 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
     }
 
-    /// M5 publishes nothing: the policy is authored and stored, and the
-    /// publication columns stay empty until M6-013.
+    /// The assembled Edge publishes the authored policy retained; authoring is
+    /// still not authorisation because the document is explicitly disabled.
     #[tokio::test]
-    async fn authoring_publishes_nothing() {
+    async fn authoring_publishes_a_disabled_policy_retained() {
         let api = configured(true).await;
         let (_, authored) = api
             .json(
@@ -446,7 +524,14 @@ mod tests {
                 serde_json::json!({}),
             )
             .await;
-        assert_eq!(authored["published_at"], serde_json::Value::Null);
+        assert!(authored["published_at"].is_string());
         assert_eq!(authored["applied_version"], serde_json::Value::Null);
+        let published = api.transport.published();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].topic, "rhizo/v1/devices/plant-node-01/policy");
+        assert!(published[0].retain);
+        let envelope = Envelope::<OfflinePolicySet>::from_json(&published[0].payload).unwrap();
+        assert_eq!(envelope.data.policies.len(), 1);
+        assert!(!envelope.data.policies[0].enabled);
     }
 }

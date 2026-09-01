@@ -73,12 +73,17 @@ async fn start() -> Result<(), String> {
     let (tx, rx) = tokio::sync::mpsc::channel(128);
     #[allow(
         clippy::disallowed_methods,
-        reason = "the binary is the host-clock adapter injected into domain Clock"
+        reason = "the binary anchors the host-clock adapter once at startup"
     )]
-    fn host_now() -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc::now()
-    }
-    let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(rhizo_domain::SystemClock::new(host_now));
+    let base_utc = chrono::Utc::now();
+    let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(
+        edge_controller::clock::AcceleratedClock::new(base_utc, c.time_scale),
+    );
+    tracing::info!(
+        time_scale = c.time_scale,
+        variable = "RHIZO_TIME_SCALE",
+        "edge logical clock configured"
+    );
     // The M6 commander. Unlike M5's evaluation pass it holds a transport, so the
     // control plane can move water — and every path from a decision to the wire
     // goes through it, which persists before it publishes.
@@ -168,7 +173,10 @@ async fn start() -> Result<(), String> {
             commander.clone(),
             clock.clone(),
             metrics.clone(),
-            std::time::Duration::from_secs(c.control.tick_interval_seconds),
+            std::time::Duration::from_secs_f64(
+                (c.control.tick_interval_seconds as f64 / c.time_scale).max(0.01),
+            ),
+            c.time_scale,
             supervisor.shutdown_receiver(),
         ),
     );
@@ -191,6 +199,8 @@ async fn start() -> Result<(), String> {
         metrics: metrics.clone(),
         clock: clock.clone(),
         commander: commander.clone(),
+        edge_id: c.edge_id.clone(),
+        time_scale: c.time_scale,
     };
     let mut shutdown = supervisor.shutdown_receiver();
     supervisor.spawn("api", async move {

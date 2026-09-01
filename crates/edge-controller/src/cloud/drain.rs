@@ -107,7 +107,11 @@ pub async fn run(
     metrics: Metrics,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), String> {
-    let mut size = BatchSize::new(500);
+    let initial_batch = std::env::var("RHIZO_E2E_CLOUD_BATCH_SIZE")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .map_or(500, |value| value.clamp(10, 500));
+    let mut size = BatchSize::new(initial_batch);
     let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(300));
     let mut outage = false;
     loop {

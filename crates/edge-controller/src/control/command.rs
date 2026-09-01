@@ -196,6 +196,22 @@ impl Commander {
 
         match self.publish_with_retry(&topic, payload).await {
             Ok(()) => {
+                // M8's process-boundary crash hook. It is inert unless the
+                // test-only Compose overlay opts in *and* the runner plants a
+                // one-shot marker in the edge data directory.
+                if std::env::var("RHIZO_E2E_FAULTS").as_deref() == Ok("1") {
+                    let marker =
+                        std::path::Path::new("/var/lib/rhizo/fault-exit-after-command-publish");
+                    if marker.exists() {
+                        let _ = std::fs::remove_file(marker);
+                        // The publish future confirms enqueueing to rumqttc's
+                        // event loop, not broker receipt. Give that loop one
+                        // scheduling quantum to put the QoS packet on the
+                        // socket, then crash before the result is consumed.
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        std::process::exit(86);
+                    }
+                }
                 command_repo::mark_published(
                     &self.db,
                     &command_id,
@@ -357,8 +373,8 @@ impl Commander {
     /// Applies a `command.result`, settling the command and its consequences.
     ///
     /// One transaction covers the status change, the optional `watering_event`,
-    /// and the irrigation transition. Returns what happened so the caller can
-    /// log and count it.
+    /// and the irrigation transition. A device safety refusal is then mirrored
+    /// into the plant's audited lockout fields before this method returns.
     pub async fn apply_result(&self, result: &CommandResult) -> Result<Settled, EdgeError> {
         let now = self.clock.now();
         let now_ms = now.timestamp_millis();
@@ -411,12 +427,39 @@ impl Commander {
             status,
             reason.as_deref(),
             watering.as_ref(),
-            next.as_ref().map(|(id, state)| (id.as_str(), state)),
+            next.as_ref().map(|(id, _, state)| (id.as_str(), state)),
             now_ms,
         )
         .await?;
         if !applied {
             return Ok(Settled::AlreadyTerminal);
+        }
+        if result.status == CommandStatus::Rejected
+            && result.reason == Some(rhizo_mqtt_contract::payload::RejectReason::ClockUnsynced)
+            && let Some(plant_id) = row.plant_id.as_deref()
+        {
+            command_repo::set_lockout(
+                &self.db,
+                plant_id,
+                Some("clock_unsynced"),
+                Some(now_ms),
+                None,
+                None,
+                now_ms,
+            )
+            .await?;
+        }
+        if let Some((plant_id, previous, state)) = &next
+            && previous != &state.state
+        {
+            crate::plant::record_irrigation_transition(
+                &self.db,
+                plant_id,
+                rhizo_domain::irrigation::types::state_from_str(previous),
+                rhizo_domain::irrigation::types::state_from_str(&state.state),
+                now_ms,
+            )
+            .await?;
         }
 
         self.metrics
@@ -565,13 +608,14 @@ async fn next_state_for(
     plant_id: Option<&str>,
     result: &CommandResult,
     now_ms: i64,
-) -> Result<Option<(String, command_repo::IrrigationStateRow)>, EdgeError> {
+) -> Result<Option<(String, String, command_repo::IrrigationStateRow)>, EdgeError> {
     let Some(plant_id) = plant_id else {
         return Ok(None);
     };
     let mut state = command_repo::irrigation_state(db, plant_id)
         .await?
         .unwrap_or_default();
+    let previous = state.state.clone();
     state.state_since = now_ms;
     state.active_command_id = None;
     match result.status {
@@ -590,13 +634,18 @@ async fn next_state_for(
         // `Recheck`. The first delivered nothing and the other two delivered an
         // unknown amount, which the budget has already been charged for.
         CommandStatus::Rejected
+            if result.reason == Some(rhizo_mqtt_contract::payload::RejectReason::ClockUnsynced) =>
+        {
+            state.state = "locked".to_owned();
+        }
+        CommandStatus::Rejected
         | CommandStatus::Interrupted
         | CommandStatus::Failed
         | CommandStatus::Unknown => {
             state.state = "recheck".to_owned();
         }
     }
-    Ok(Some((plant_id.to_owned(), state)))
+    Ok(Some((plant_id.to_owned(), previous, state)))
 }
 
 /// The plant's configured absorption window, in milliseconds.
@@ -1188,6 +1237,32 @@ mod command {
                     .await
                     .unwrap(),
                 0.0
+            );
+        }
+
+        #[tokio::test]
+        async fn clock_unsynced_refusal_sets_the_specific_plant_lockout() {
+            let api = TestApi::start().await;
+            let command_id = issue(&api).await;
+            let mut result = water_result(&command_id, CommandStatus::Rejected, None);
+            result.reason = Some(RejectReason::ClockUnsynced);
+
+            api.commander.apply_result(&result).await.unwrap();
+
+            assert_eq!(
+                command_repo::lockout(&api.db, "monstera-01")
+                    .await
+                    .unwrap()
+                    .map(|row| row.0),
+                Some("clock_unsynced".to_owned())
+            );
+            assert_eq!(
+                command_repo::irrigation_state(&api.db, "monstera-01")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                "locked"
             );
         }
 

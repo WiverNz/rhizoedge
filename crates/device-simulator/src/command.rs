@@ -399,6 +399,12 @@ impl Device {
         );
         let publications = self.start_pump(command.command_id, run_ms, effective_ml);
 
+        if self.faults().is_enabled("disconnect-mid-dose") {
+            self.disable_fault("disconnect-mid-dose");
+            self.enable_fault(crate::cli::Fault::Disconnect { seconds: 600 });
+            return Vec::new();
+        }
+
         // `restart-mid-dose` kills the device here: **after** the in-flight
         // record reached the store, and with the pump energised. Killing it
         // before the write would leave no record and exercise nothing; killing

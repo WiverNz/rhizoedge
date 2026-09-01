@@ -40,8 +40,8 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
     let mut connection = Connection::new(&cli, Arc::clone(&device))?;
 
     // The control API runs beside the device, not inside it: a scenario test
-    // injects a fault while the run loop keeps ticking. Loopback only, and
-    // disabled outright by `--no-control-api`.
+    // injects a fault while the run loop keeps ticking. Loopback by default;
+    // M8's isolated Compose network opts into a remote bind explicitly.
     let control_state =
         crate::control::ControlState::new(Arc::clone(&device), Arc::new(cli.clone()));
     let restarted = Arc::clone(&control_state.restarted);

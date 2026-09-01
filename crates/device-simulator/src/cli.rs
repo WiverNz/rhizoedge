@@ -288,6 +288,8 @@ pub enum Fault {
         /// Probability in `0.0..=1.0`.
         rate: f64,
     },
+    /// Omit soil moisture while continuing every other telemetry stream.
+    StaleSoil,
     /// Repeat one bit-identical reading forever.
     StuckSensor,
     /// Report `clock_synced: false` regardless of synchronisation.
@@ -307,6 +309,8 @@ pub enum Fault {
     PumpStuckOn,
     /// Terminate the process during actuation, after the state write.
     RestartMidDose,
+    /// Drop the broker socket after accepting a dose, before its result.
+    DisconnectMidDose,
     /// Full restart with a fresh `boot_id`.
     Restart,
     /// Terminate during policy activation at the named step.
@@ -336,6 +340,7 @@ impl Fault {
             Self::Duplicate { .. } => "duplicate",
             Self::Reorder { .. } => "reorder",
             Self::InvalidSoil { .. } => "invalid-soil",
+            Self::StaleSoil => "stale-soil",
             Self::StuckSensor => "stuck-sensor",
             Self::ClockUnsync => "clock-unsync",
             Self::ClockSkew { .. } => "clock-skew",
@@ -344,6 +349,7 @@ impl Fault {
             Self::PumpNoDelivery => "pump-no-delivery",
             Self::PumpStuckOn => "pump-stuck-on",
             Self::RestartMidDose => "restart-mid-dose",
+            Self::DisconnectMidDose => "disconnect-mid-dose",
             Self::Restart => "restart",
             Self::PolicyInterrupt { .. } => "policy-interrupt",
             Self::MissWake { .. } => "miss-wake",
@@ -352,11 +358,12 @@ impl Fault {
     }
 
     /// Every fault specification in the catalogue, for help text and tests.
-    pub const NAMES: [&'static str; 16] = [
+    pub const NAMES: [&'static str; 18] = [
         "disconnect:<sec>",
         "duplicate:<rate>",
         "reorder:<rate>",
         "invalid-soil:<rate>",
+        "stale-soil",
         "stuck-sensor",
         "clock-unsync",
         "clock-skew:<sec>",
@@ -365,6 +372,7 @@ impl Fault {
         "pump-no-delivery",
         "pump-stuck-on",
         "restart-mid-dose",
+        "disconnect-mid-dose",
         "restart",
         "policy-interrupt:<step>",
         "miss-wake:<n>",
@@ -379,6 +387,7 @@ impl fmt::Display for Fault {
             Self::Duplicate { rate } => write!(f, "duplicate:{rate}"),
             Self::Reorder { rate } => write!(f, "reorder:{rate}"),
             Self::InvalidSoil { rate } => write!(f, "invalid-soil:{rate}"),
+            Self::StaleSoil => f.write_str("stale-soil"),
             Self::ClockSkew { seconds } => write!(f, "clock-skew:{seconds}"),
             Self::PolicyInterrupt { step } => write!(f, "policy-interrupt:{step}"),
             Self::MissWake { count } => write!(f, "miss-wake:{count}"),
@@ -425,6 +434,7 @@ impl FromStr for Fault {
             "invalid-soil" => Ok(Self::InvalidSoil {
                 rate: rate(s, name, arg)?,
             }),
+            "stale-soil" => Ok(Self::StaleSoil),
             "stuck-sensor" => Ok(Self::StuckSensor),
             "clock-unsync" => Ok(Self::ClockUnsync),
             "clock-skew" => Ok(Self::ClockSkew {
@@ -435,6 +445,7 @@ impl FromStr for Fault {
             "pump-no-delivery" => Ok(Self::PumpNoDelivery),
             "pump-stuck-on" => Ok(Self::PumpStuckOn),
             "restart-mid-dose" => Ok(Self::RestartMidDose),
+            "disconnect-mid-dose" => Ok(Self::DisconnectMidDose),
             "restart" => Ok(Self::Restart),
             "policy-interrupt" => Ok(Self::PolicyInterrupt {
                 step: need(name, arg)?.parse()?,
@@ -614,7 +625,8 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub state_file: Option<PathBuf>,
 
-    /// Bind address for the simulator-only control API. Must be loopback.
+    /// Bind address for the simulator-only control API. Must be loopback unless
+    /// the explicit E2E-only remote-control flag is also present.
     #[arg(
         long,
         value_name = "IP:PORT",
@@ -622,6 +634,11 @@ pub struct Cli {
         default_value = "127.0.0.1:9090"
     )]
     pub control_bind: SocketAddr,
+
+    /// Permit the control API on a non-loopback address for the isolated M8
+    /// Compose network. This is never enabled in the base topology.
+    #[arg(long)]
+    pub allow_remote_control_api: bool,
 
     /// Override only the control API port (backwards-compatible launch option).
     #[arg(long, value_name = "PORT")]
@@ -747,7 +764,7 @@ impl Cli {
     ///
     /// Returns the first violated constraint.
     pub fn validate(&self) -> Result<(), CliError> {
-        if !self.resolved_control_bind().ip().is_loopback() {
+        if !self.resolved_control_bind().ip().is_loopback() && !self.allow_remote_control_api {
             return Err(CliError::ControlBindMustBeLoopback(
                 self.resolved_control_bind(),
             ));
@@ -866,6 +883,19 @@ mod tests {
             cli.validate(),
             Err(CliError::ControlBindMustBeLoopback(_))
         ));
+    }
+
+    #[test]
+    fn the_e2e_flag_explicitly_allows_a_compose_network_bind() {
+        let cli = parse(&[
+            "--device-id",
+            "plant-node-01",
+            "--control-bind",
+            "0.0.0.0:9090",
+            "--allow-remote-control-api",
+        ])
+        .unwrap();
+        assert!(cli.validate().is_ok());
     }
 
     #[test]

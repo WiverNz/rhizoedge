@@ -212,10 +212,11 @@ impl AcceleratedClock {
 
 /// The longest virtual interval applied to the models in one step.
 ///
-/// One virtual second: fine enough that a dose, an absorption curve, and an
-/// overshoot decay all evolve as they would in real time, coarse enough that
-/// even a very large scale costs a bounded number of steps per tick.
-pub const MAX_VIRTUAL_STEP_MS: u64 = 1_000;
+/// Ten virtual seconds: finer than the shortest configured sampling or control
+/// interval, while keeping accelerated offline autonomy from performing six
+/// hundred durable state writes per real second. Pump completion still uses
+/// the exact elapsed duration and the physical model integrates each step.
+pub const MAX_VIRTUAL_STEP_MS: u64 = 10_000;
 
 #[cfg(test)]
 mod accelerated_clock_tests {
@@ -291,7 +292,7 @@ mod accelerated_clock_tests {
     #[test]
     fn a_large_interval_is_split_into_bounded_steps() {
         let steps = AcceleratedClock::steps(60_000);
-        assert_eq!(steps.len(), 60);
+        assert_eq!(steps.len(), 6);
         assert!(steps.iter().all(|s| *s <= MAX_VIRTUAL_STEP_MS));
         assert_eq!(steps.iter().sum::<u64>(), 60_000, "nothing is lost");
     }
@@ -308,9 +309,9 @@ mod accelerated_clock_tests {
 
     #[test]
     fn an_odd_interval_keeps_its_remainder() {
-        let steps = AcceleratedClock::steps(2_500);
-        assert_eq!(steps, vec![1_000, 1_000, 500]);
-        assert_eq!(steps.iter().sum::<u64>(), 2_500);
+        let steps = AcceleratedClock::steps(25_000);
+        assert_eq!(steps, vec![10_000, 10_000, 5_000]);
+        assert_eq!(steps.iter().sum::<u64>(), 25_000);
     }
 }
 

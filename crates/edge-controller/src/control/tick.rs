@@ -384,6 +384,13 @@ pub async fn irrigation_pass(
         let Some(loaded) = plant::load(db, &row.plant_id).await? else {
             continue;
         };
+        // Recommendation-only plants belong to the M5 evaluation pass. Running
+        // the actuation state machine for an opted-out plant can turn a valid
+        // WaterRecommended result into a safety lockout despite there being no
+        // automatic actuation path to gate.
+        if !loaded.plant.auto_watering_enabled {
+            continue;
+        }
         let analysis = plant::analyse(db, &loaded, now).await?;
         let pass = crate::control::irrigation::run_pass(
             commander,
@@ -414,6 +421,7 @@ pub async fn run_control(
     clock: Arc<dyn Clock>,
     metrics: Metrics,
     interval: StdDuration,
+    time_scale: f64,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let mut ticker = tokio::time::interval(interval);
@@ -425,7 +433,7 @@ pub async fn run_control(
             changed = shutdown.changed() => if changed.is_err() || *shutdown.borrow() { return Ok(()); },
             _ = ticker.tick() => {
                 let now = clock.now();
-                if let Some(step) = detector.observe(now, std::time::Instant::now())
+                if let Some(step) = detector.observe_at_rate(now, std::time::Instant::now(), time_scale)
                     && let Err(error) = crate::control::clock_step_response(&commander, step, now).await
                 {
                     tracing::error!(%error, "could not record a clock step");

@@ -129,6 +129,13 @@ fn drying_cycle(inputs: &IrrigationInputs<'_>) -> IrrigationDecision {
 
     let reasons = dry_reasons(inputs, vwc);
 
+    // Confirmation is an observable state, not merely a predicate. Persist it
+    // for one pass before any command can be issued so the assembled system
+    // follows the normative Normal → Drying → DryConfirmed → DoseIssued path.
+    if effective_state(inputs) != IrrigationState::DryConfirmed {
+        return IrrigationDecision::Idle;
+    }
+
     // `auto_watering_enabled` defaults to `false`, and a plant may sit here
     // indefinitely. Telling a person is the whole answer.
     if !inputs.auto_watering_enabled || !inputs.automation.connected_enabled {
@@ -448,8 +455,8 @@ mod machine {
         let inputs = scene.inputs();
         assert_eq!(inputs.dry_duration, Duration::minutes(45));
         let decision = evaluate(inputs);
-        // Automation is off in the default scene, so the answer is advice.
-        assert!(matches!(decision, IrrigationDecision::Recommend { .. }));
+        // Confirmation is persisted before the following pass emits advice.
+        assert_eq!(decision, IrrigationDecision::Idle);
         assert_eq!(
             next_state(&scene.inputs(), &decision),
             IrrigationState::DryConfirmed

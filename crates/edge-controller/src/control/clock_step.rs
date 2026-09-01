@@ -106,9 +106,24 @@ impl Detector {
     /// The reference is advanced whether or not a step was found, so one jump is
     /// reported once rather than on every tick afterwards.
     pub fn observe(&mut self, wall: DateTime<Utc>, monotonic: Instant) -> Option<Step> {
+        self.observe_at_rate(wall, monotonic, 1.0)
+    }
+
+    /// Observes a clock whose intentional wall-time rate may be accelerated.
+    /// Test acceleration is not a wall-clock step and must not trigger the
+    /// conservative anomaly response on every control tick.
+    pub fn observe_at_rate(
+        &mut self,
+        wall: DateTime<Utc>,
+        monotonic: Instant,
+        rate: f64,
+    ) -> Option<Step> {
         let elapsed_monotonic =
             Duration::from_std(monotonic.saturating_duration_since(self.monotonic))
                 .unwrap_or_else(|_| Duration::zero());
+        let elapsed_monotonic = Duration::milliseconds(
+            (elapsed_monotonic.num_milliseconds() as f64 * rate).round() as i64,
+        );
         let elapsed_wall = wall.signed_duration_since(self.wall);
         self.wall = wall;
         self.monotonic = monotonic;

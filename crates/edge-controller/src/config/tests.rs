@@ -65,12 +65,31 @@ fn defaults() -> EdgeConfig {
 fn defaults_load_with_no_file_and_no_environment() {
     let c = defaults();
     assert_eq!(c.edge_id, "home-01");
+    assert_eq!(c.time_scale, 1.0);
     assert_eq!(c.mqtt.broker_url, "mqtt://localhost:1883");
     assert_eq!(c.mqtt.username, "rhizo-edge");
     assert_eq!(c.control.tick_interval_seconds, 30);
     assert_eq!(c.control.command_ttl_seconds, 120);
     assert_eq!(c.log.level, "info");
     assert_eq!(c.log.format, "json");
+}
+
+#[test]
+fn time_scale_is_typed_and_must_be_positive() {
+    let c = load_from_env(
+        &CliOverrides::default(),
+        env(&[("RHIZO_EDGE__TIME_SCALE", "600")]),
+    )
+    .unwrap()
+    .config;
+    assert_eq!(c.time_scale, 600.0);
+
+    let error = load_from_env(
+        &CliOverrides::default(),
+        env(&[("RHIZO_EDGE__TIME_SCALE", "0")]),
+    )
+    .unwrap_err();
+    assert_eq!(error.key(), "time_scale");
 }
 
 #[test]

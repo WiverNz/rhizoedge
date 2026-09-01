@@ -93,12 +93,6 @@ pub fn router(state: ControlState) -> Router {
 ///
 /// Returns a bind or serve failure.
 pub async fn serve(state: ControlState, address: SocketAddr) -> std::io::Result<()> {
-    if !address.ip().is_loopback() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("simulator control API bind must be loopback, got {address}"),
-        ));
-    }
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(
         %address,
@@ -152,6 +146,12 @@ pub struct StateResponse {
     pub leak: String,
     /// Volume delivered against the daily cap.
     pub delivered_today_ml: f32,
+    /// Audit events waiting to replay after an isolation.
+    pub buffered_events: usize,
+    /// Offline-policy versions durably activated by the device.
+    pub applied_policy_versions: std::collections::BTreeMap<String, u32>,
+    /// Stable refusal reason for the most recently rejected policy.
+    pub last_policy_rejection: Option<String>,
     /// Whether the pump is energised.
     pub pump_running: bool,
     /// Cycles buffered while disconnected.
@@ -336,6 +336,11 @@ fn snapshot(device: &Device) -> StateResponse {
         }
         .to_owned(),
         delivered_today_ml: device.delivered_today_ml(),
+        buffered_events: device.buffered_events(),
+        applied_policy_versions: device.applied_policy_versions().clone(),
+        last_policy_rejection: device
+            .last_policy_rejection()
+            .map(|rejection| rejection.reason().to_owned()),
         pump_running: device.pump_running(),
         buffered_cycles: device.buffered_cycles(),
         power_mode: if device.power_state().is_battery() {

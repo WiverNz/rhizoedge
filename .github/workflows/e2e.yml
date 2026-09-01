@@ -1,0 +1,83 @@
+name: End-to-end
+
+on:
+  push:
+    paths:
+      - "crates/**"
+      - "deploy/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "deploy/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/e2e.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable Docker layer cache
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate throwaway credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          secret="$(head -c 24 /dev/urandom | base64 | tr -d '=+/')"
+          sed -i "s|^MQTT_PASSWORD=.*|MQTT_PASSWORD=${secret}|" .env
+          sed -i "s|^RHIZO_EDGE__MQTT__PASSWORD=.*|RHIZO_EDGE__MQTT__PASSWORD=${secret}|" .env
+          ./scripts/gen-mosquitto-passwd.sh
+
+      - name: Build full topology with cached layers
+        uses: docker/bake-action@v6
+        with:
+          files: |
+            deploy/docker-compose.yml
+            deploy/docker-compose.test.yml
+          load: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+
+      - name: Run complete scenario suite once
+        run: >-
+          docker compose
+          -f deploy/docker-compose.yml
+          -f deploy/docker-compose.test.yml
+          up --abort-on-container-exit --exit-code-from scenario-runner
+
+      - name: Capture service logs on failure
+        if: failure()
+        run: >-
+          docker compose
+          -f deploy/docker-compose.yml
+          -f deploy/docker-compose.test.yml
+          logs --no-color > deploy/artifacts/compose.log
+
+      - name: Upload observable-state diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhizo-e2e-failure
+          path: deploy/artifacts/
+          if-no-files-found: error
+
+      - name: Tear down
+        if: always()
+        run: >-
+          docker compose
+          -f deploy/docker-compose.yml
+          -f deploy/docker-compose.test.yml
+          down --volumes --remove-orphans

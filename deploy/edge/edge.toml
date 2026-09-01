@@ -19,6 +19,9 @@
 # Stable identity for this edge; the cloud partition key. Changing it after a
 # deployment exists orphans that deployment's history.
 edge_id = "home-01"
+# Logical seconds per real second. Production remains real time; the M8 test
+# overlay sets this and the simulator from one RHIZO_TIME_SCALE value.
+time_scale = 1.0
 
 [mqtt]
 broker_url = "mqtt://localhost:1883"

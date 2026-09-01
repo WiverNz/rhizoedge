@@ -17,6 +17,7 @@ members = [
     "crates/edge-controller",
     "crates/device-simulator",
     "crates/cloud-api",
+    "crates/scenarios",
     "tools/docscheck",
     "tools/rhizo-devctl",
 ]

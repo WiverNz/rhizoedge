@@ -30,7 +30,7 @@ committed.
 ```bash
 cp .env.example .env               # replace every change-me-* placeholder
 ./scripts/gen-mosquitto-passwd.sh  # generates deploy/mosquitto/passwd
-docker compose -f deploy/docker-compose.yml up -d mosquitto
+docker compose -f deploy/docker-compose.yml up --build -d
 ```
 
 `gen-mosquitto-passwd.sh` creates one broker account per entry in `DEVICE_IDS`
@@ -53,7 +53,19 @@ and wrong-password connections are refused, a device can use its own
 device's. Configuring an ACL and enforcing one are different things, and a
 typo in the pattern leaves a broker that starts cleanly and protects nothing.
 
-Then run the edge against it:
+The base Compose file starts the complete software topology: Mosquitto, the
+device simulator, Edge Controller, cloud API, and PostgreSQL. Startup is health
+gated, and SQLite, simulator state, broker state, and PostgreSQL use named
+volumes. A normal `down` preserves them; the explicit reset is:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v
+```
+
+This removes all Rhizo Compose volumes and is destructive. The next `up
+--build -d` recreates both databases from their migrations.
+
+To run the edge on the host against the broker instead:
 
 ```bash
 RHIZO_EDGE__MQTT__BROKER_URL=mqtt://localhost:1883 \
@@ -61,11 +73,8 @@ RHIZO_EDGE__LOG__FORMAT=compact \
 cargo run -p edge-controller
 ```
 
-**As of M0 that is the whole topology.** The simulator, the edge's ingestion
-and API, the cloud API, and PostgreSQL arrive in M2, M3–M4, and M7; their
-Compose services are written out but commented in
-`deploy/docker-compose.yml`, each naming the issue that turns it on. Once M8
-completes the topology, `up --build` starts everything and:
+The complete topology exposes the edge on 8080, cloud API on 8081, and the
+development broker on 1883:
 
 ```bash
 curl -s localhost:8080/api/v1/overview | jq

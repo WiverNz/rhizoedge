@@ -192,7 +192,24 @@ impl Device {
 
     /// Builds a device around an already-loaded state store.
     #[must_use]
-    pub fn with_store(cli: &Cli, store: StateStore) -> Self {
+    pub fn with_store(cli: &Cli, mut store: StateStore) -> Self {
+        let invalid_policy = store
+            .state()
+            .policy_active
+            .as_ref()
+            .is_some_and(|policy| !policy.verify())
+            || store
+                .state()
+                .policy_staging
+                .as_ref()
+                .is_some_and(|policy| !policy.verify());
+        if invalid_policy {
+            let _ = store.mutate(|state| {
+                state.policy_active = None;
+                state.policy_staging = None;
+                state.applied_policy_versions.clear();
+            });
+        }
         let environment = Environment::from_cli(cli);
         let mut config = EffectiveConfig::from_cli(cli);
         // A restart resumes the configuration it was running, so a device that
@@ -266,6 +283,18 @@ impl Device {
                 EventTier::Audit,
                 EventKind::LockoutSet,
                 EventDetail::Lockout { reason },
+            );
+        }
+        if invalid_policy {
+            device.last_policy_rejection = Some(crate::policy::PolicyRejection::Malformed(
+                "persisted policy checksum mismatch",
+            ));
+            device.record_event(
+                EventTier::Audit,
+                EventKind::OfflineRefused,
+                EventDetail::Refused {
+                    reason: "policy_invalid".to_owned(),
+                },
             );
         }
         device
@@ -860,6 +889,11 @@ impl Device {
             },
         );
         let mut batch = batch;
+        if self.faults.is_enabled("stale-soil") {
+            batch
+                .samples
+                .retain(|sample| sample.kind != MeasurementKind::SoilMoisture);
+        }
         if invalid_soil_rate > 0.0 {
             self.spoil_soil_readings(&mut batch);
         }
@@ -1576,10 +1610,14 @@ impl Device {
             ..self.status_skeleton()
         };
         let now = self.monotonic.elapsed_ms();
-        let synced = self.time_sync.is_synced(now);
+        // Use the public trust decision, not the raw synchroniser state.  The
+        // `clock-unsync` fault deliberately makes an otherwise fresh clock
+        // untrustworthy, and the retained status is what lets the Edge enforce
+        // that fact before it sends a command.
+        let synced = self.clock_synced();
         // `device_time_ms` is present only while synchronised, which is also
         // what makes `message_id` a UUIDv7 rather than a v4 (protocol §4).
-        let wall = self.time_sync.synced_now_ms(now);
+        let wall = synced.then(|| self.time_sync.synced_now_ms(now)).flatten();
         self.last_status_ms = now;
         self.last_reported_sync = synced;
         self.identity.seal(topic, data, wall, synced)
@@ -1630,6 +1668,7 @@ pub fn decode_reason(error: &DecodeError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Fault;
     use crate::testutil::cli;
     use rhizo_mqtt_contract::payload::{PumpConfig, SensorConfig, TankConfig};
     use rhizo_mqtt_contract::{MessageId, UtcMillis};
@@ -2079,6 +2118,24 @@ mod tests {
             4,
             "and emits a UUIDv4 rather than claiming a time-ordered id"
         );
+    }
+
+    #[test]
+    fn clock_unsync_fault_is_visible_in_retained_status() {
+        let mut device = connected(&[]);
+        device.on_message(&time_topic(), &time_payload("plant-node-01", 1_000));
+        assert!(device.clock_synced());
+
+        device.enable_fault(Fault::ClockUnsync);
+        let status = decode(
+            &device
+                .status_publication(DeviceStatusValue::Online, None)
+                .expect("status serialises"),
+        );
+
+        assert_eq!(status.clock_synced, Some(false));
+        assert_eq!(status.device_time_ms, None);
+        assert_eq!(status.message_id.as_uuid().get_version_num(), 4);
     }
 
     #[test]

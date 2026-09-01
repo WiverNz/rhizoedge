@@ -89,6 +89,8 @@ mod tests {
                 std::sync::Arc::new(crate::control::transport::RecordingTransport::new()),
                 metrics,
             ),
+            edge_id: "test-edge".to_owned(),
+            time_scale: 1.0,
         }
     }
     #[tokio::test]

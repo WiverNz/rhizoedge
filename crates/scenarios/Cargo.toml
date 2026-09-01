@@ -1,0 +1,29 @@
+[package]
+name = "rhizo-scenarios"
+description = "Rhizo Edge assembled-system end-to-end scenario runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "scenario-runner"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+device-simulator = { path = "../device-simulator" }
+clap = { workspace = true }
+reqwest = { workspace = true }
+rumqttc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+
+[lints]
+workspace = true
