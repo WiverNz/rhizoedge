@@ -58,8 +58,22 @@ bug.
                         (docs only)              water model
 ```
 
-**M14 and M15 are siblings, not a chain.** Both depend only on M13, neither
-depends on the other, and either may be executed first.
+**M16 forks from M11, not from M13:**
+
+```text
+             M11 Real pump + safety hardware
+              │
+              ├──────────────► M12 ──► M13 ──┬─► M14
+              │                               └─► M15
+              └──────────────► M16 Verified Watering
+```
+
+**M14, M15, and M16 are siblings, not a chain.** None depends on another, and any
+order is valid. **M16 before M15 is the better order if both are built**: M15's
+dose-response estimator already carries a `verified` flag and weights unverified
+observations at half, so a model learning from measured deliveries learns from
+better data. Neither depends on the other, and M15 works with
+calibration-derived volumes alone and says so.
 
 ### Reading the two branches after M6
 
@@ -93,6 +107,7 @@ that order. M13 requires both branches.
 | M13 | M12, M11 | scales a working, hardware-verified, observable system |
 | M14 | M13 | verifies reservations against a mature codebase |
 | M15 | M13 | needs real probes, a pump that reports delivered volume, and months of one plant's history before any estimate means anything |
+| M16 | M11 | needs a real pump and the HIL bench; needs neither the UI, multi-plant scale, nor the adaptive model |
 
 ---
 
@@ -587,6 +602,36 @@ how the second one inherits the first one's decisions rather than re-making them
 
 **Nothing in M15 depends on M14**, and M14 does not depend on M15.
 
+### M16 — Verified watering
+
+```text
+M11-014 ──→ M16-001 (delivery outcome + evidence domain model)
+   ──→ M16-002 (attempt persistence + migration)
+   ──→ M16-003 (additive wire contract)
+   ──→ M16-004 (DeliveryWitness trait + fakes)
+   ──→ M16-005 (reservoir-scale witness — the one new part)
+   ──→ M16-006 (witness calibration + versioning)
+   ──→ M16-007 (device execution state machine)
+   ──→ M16-008 (unexpected + continued flow — SAFETY-024 device half)
+   ──→ M16-009 (simulator witness + delivery faults)
+   ──→ M16-010 (attempt reconciliation + unknown outcomes — SAFETY-023)
+   ──→ M16-011 (budget + lockouts — the only arithmetic change)
+   ──→ M16-012 (actuator maintenance state)
+   ──→ M16-013 (outcomes + explanation API)
+   ──→ M16-014 (observability)
+   ──→ M16-015 (HIL-8, and the constants it measures)
+                                          all ──→ M16-016 (verification)
+```
+
+**M16-001 through M16-003 need no hardware** and could in principle run any time
+after M6 — the domain model, the attempt tables, and the additive wire contract
+are all host-side. They are grouped here so the milestone lands as one reviewable
+capability rather than as three orphaned halves.
+
+**The two issues to review hardest** are M16-011, the only change to safety
+arithmetic in the milestone, and M16-008, the only new immediate physical
+response. Both sit late enough to be reviewed against everything before them.
+
 ---
 
 ## 2b. Issues added by the 2026-08-26 architecture pass
@@ -630,6 +675,9 @@ M14 007 Helm planning        008 future actuator model
 
 M15 003 drying segments ──► 004 drying rate  ┐  independent of each other,
     005 dose responses  ──► 006 dose response┘  sequenced to share one config
+
+M16 001 domain model ──► 002 persistence ──► 003 wire contract
+    (all three are host-side and need no hardware)
 ```
 
 ## 2c. Issues added by the 2026-08-28 battery/deep-sleep pass

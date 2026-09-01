@@ -27,6 +27,7 @@ has not started.**
 | Post-M7 correction | ✅ done (2026-08-31) — `device.capabilities` (not `…_changed`), events for destructive changes, replayed history forwarded, and one type-checked catalogue; see [docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction and §14 below |
 | M8-001 | ⬜ **next** — add production Dockerfiles |
 | M15 | 14 issues, **PLANNED** — per-plant adaptive water model, added 2026-09-01 as planning only; see §15 |
+| M16 | 16 issues, **PLANNED** — verified watering, added 2026-09-01 as planning only; see §16 |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -102,7 +103,7 @@ In this order. Do not skip to the issue file.
    acceptance criteria
 
 When a decision seems arbitrary, the reason is in an ADR
-(`docs/adr/`). Nineteen of them, each with Context / Decision / Alternatives /
+(`docs/adr/`). Twenty of them, each with Context / Decision / Alternatives /
 Consequences / Risks. Read the relevant one rather than re-deciding.
 
 The four newest are the ones most likely to surprise you if you learned this
@@ -139,13 +140,13 @@ docs/
 ├── Rhizo_Edge_*.md    historical source material (see §7)
 ├── architecture/      9 docs: overview, components, data flow, deployment,
 │                      safety invariants, failure model, time, config, deps
-├── adr/               ADR-001…019 — why each decision was made
-├── prd/               PRD 000…150 — one per milestone, 17 fixed sections
+├── adr/               ADR-001…020 — why each decision was made
+├── prd/               PRD 000…160 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
 ├── testing/           strategy, 80 scenarios, simulator, HIL, local dev
 ├── hardware/          home-node-hardware-guide.md — BOM, enclosure, wiring,
 │                      power, assembly order (practical, NOT normative)
-└── issues/M0…M15/     270 implementation issues
+└── issues/M0…M16/     286 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
 
@@ -631,7 +632,7 @@ it, so run it before finishing.
 
 ## 9. Safety invariants — the short version
 
-Twenty-two numbered invariants in
+Twenty-four numbered invariants in
 [docs/architecture/safety-invariants.md](docs/architecture/safety-invariants.md),
 each with named tests and an enforcement milestone. Most become enforced in M6.
 
@@ -861,3 +862,82 @@ whose entire job is to gate: below `Medium` the model proposes nothing and the
 static policy answers unchanged, which is the cold-start safety property.
 Merging them would either make the recommendation engine's confidence
 load-bearing or make the model's decorative.
+
+---
+
+## 16. The 2026-09-01 verified-watering planning pass
+
+**Planning only. No runtime code was written, and none is expected before M11
+completes.** Physical evidence that a dose was actually delivered became a
+planned milestone: [ADR-020](docs/adr/020-verified-watering-and-delivery-evidence.md),
+[PRD 160](docs/prd/160-verified-watering.md), and **16 issues** in
+`docs/issues/M16/`. **SAFETY-023** and **SAFETY-024** were appended; the first
+twenty-two are unchanged and were never renumbered.
+
+| Was | Is now |
+|---|---|
+| `delivered_ml := effective_ml`, an assumption from `run_ms × ml_per_second` | Six separately recorded doses: requested, authorised, commanded, effective, **estimated**, **measured** |
+| `completed` means four different things | A `DeliveryOutcome` taxonomy with delivered, faulted, and **unknown** families, and no `success: bool` anywhere |
+| No-delivery is caught after **two** unresponsive doses, from soil and weight | Caught on the **first** dose, from a witness, before a second dose is pumped |
+| Water moving with no command has no representation at all | `UnexpectedFlow` — a high-severity fault, distinct from a leak (SAFETY-024) |
+| 22 safety invariants | **24** — SAFETY-023 and SAFETY-024 appended |
+| 270 issues, 16 milestones | **286 issues, 17 milestones** |
+
+Five things did **not** change:
+
+- **The wire is additive within v1.** Two `MeasurementKind` variants, one
+  optional `delivery` object on `command.result`, two optional `actuator.state`
+  fields, three `RejectReason` variants, two device `EventKind` values. No new
+  topic, still eight exact device subscriptions, no retention or QoS change. A
+  pre-M16 fixture must decode **and** re-encode with no `delivery` key — that
+  round trip is what makes "additive" checked rather than intended.
+- **`budget::credited_ml` loosens nothing.** One rule is tightened: when both an
+  `estimated_ml` and a `measured_ml` exist, charge **`max`** of the two. A
+  low-reading witness therefore buys no budget, which closes the obvious attack
+  on the feature. `NoFlow` still charges the full `effective_ml` even though the
+  witness saw nothing move — deliberately wasteful, deliberately safe.
+- **Identity.** `command_id` is still the dedup key, the `commands` primary key,
+  and now the primary key of `watering_deliveries` — so a replayed result updates
+  one row and can never create a second attempt. Nothing added can cause a pump
+  to move.
+- **The gate, the run guard, and the watchdog.** The witness enters only as an
+  additional veto *after* the gate has passed, reads no gate step, satisfies no
+  gate step, and can only ever stop a pump **earlier**. The independent run guard
+  stays outermost.
+- **`no_delivery_detected`.** Unchanged, still two doses, still soil and weight.
+  It answers a different question on a different timescale, and where the two now
+  disagree is informative rather than contradictory.
+
+Three things to know before touching this area:
+
+**The V1 witness is a load cell under the reservoir, not a flow meter.** A
+peristaltic pump of this class moves on the order of 0.5 L/min — the simulator's
+default calibration works out at 0.49, and the real figure is TBD until M11-004
+measures it. Inexpensive turbine meters start at 1 L/min and small-bore ones at
+~0.3 L/min, so a flow meter would be read in its worst decade for every dose this
+system delivers. A scale measures
+volume by subtraction at 1 g = 1 ml, has no minimum flow rate, is the same part
+class `pot_weight` already uses, and sits outside the wetted path. PRD 110
+§Open questions 3 asked whether a flow meter was worth adding early; ADR-020 §4
+answers no, and the reasoning in the question is why. An inline meter stays a
+first-class **future** `DeliveryWitness` for greenhouse-scale flows.
+
+**`DeliveryEvidence` is already taken and is not renamed.**
+`irrigation::no_delivery::DeliveryEvidence` is *soil and pot-weight* response —
+the biological half. The new hydraulic type is
+`delivery::HydraulicEvidence`, and each names the other in its doc comment.
+Renaming a type inside the irrigation machine to make room for a new feature is
+cheap to write and expensive to review.
+
+**Unknown is never zero, and never `NoFlow`.** `NoFlow` is a *measured*
+condition requiring a working witness that saw nothing move; a silent device is
+not a witness. A dose whose outcome cannot be established charges the full
+`effective_ml`, holds the plant, and records `OutcomeUnknown` with a typed
+reason. That is SAFETY-023, and it is the invariant a tidier state machine would
+break first.
+
+**M16 depends on M11, not M13**, so it is a sibling of M14 and M15 rather than
+their successor. It is independent of M15 in both directions — M15's
+`DoseResponseObservation` already carries `verified` and weights unverified
+observations at half, so M16 improves it on arrival with no change to either
+design. If both are built, **M16 first** is the better order.

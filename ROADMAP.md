@@ -72,8 +72,9 @@ pin may move forward deliberately
 | M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, a supportable deployment, **release binary CI, the MSRV matrix, and the optional Grafana profile** | M12 | 17 | PLANNED |
 | M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field, **plus optional Helm packaging and the future actuator model** — **documentation only** | M13 | 10 | PLANNED |
 | M15 | Per-Plant Adaptive Water Model | A deterministic, explainable per-plant model of drying and dose response that may **narrow** a watering decision and never widen one | M13 | 14 | PLANNED |
+| M16 | Verified Watering | Physical evidence that a dose was actually delivered — a measuring witness, an explicit outcome taxonomy in which **unknown is an answer**, and a durable per-attempt audit trail | M11 | 16 | PLANNED |
 
-**Total: 270 issues.**
+**Total: 286 issues.**
 
 ### Status semantics
 
@@ -95,7 +96,9 @@ on physical hardware and on ADR-007's toolchain being executed on a real machine
 `PLANNED` and produces documentation only. **M15 is `PLANNED` because its
 estimators need what only a real deployment produces** — real probes, a pump that
 reports delivered volume, and months of one plant's history — not because
-anything about it is unspecified.
+anything about it is unspecified. **M16 is `PLANNED` because it needs one part
+that has not been bought** — a load cell under the reservoir — and the HIL bench
+M11 establishes.
 
 ---
 
@@ -690,6 +693,48 @@ volume.
 
 ---
 
+### M16 — Verified Watering · PLANNED
+
+**Objective.** Replace the assumption that a pump energised for a computed
+duration delivered a computed volume with **evidence** — and, where evidence is
+absent, with an honest statement that it is absent.
+
+**Deliverables.** `rhizo_domain::delivery`: an ordered `EvidenceLevel`, a
+`DeliveryOutcome` taxonomy with delivered, faulted, and **unknown** families, and
+no `success: bool` anywhere · the **six-dose ladder** — requested, authorised,
+commanded, effective, estimated, measured — each recorded separately so the
+safety gate's cost and the hardware's cost are different conversations · a
+`DeliveryWitness` abstraction whose V1 implementation is a **load cell under the
+reservoir**, not a flow meter, because at the fraction of a litre per minute a
+dosing pump of this class delivers, a turbine meter is read in its worst decade ·
+a device-side execution state machine that detects
+no-flow on the **first** dose, stops at target volume, and checks that flow
+stops after shutdown · unexpected and continued flow as a high-severity fault ·
+durable per-attempt audit keyed by the existing `command_id` · actuator
+maintenance state · an explanation surface where "verified 38.7 ml", "actuation
+confirmed but no witness fitted", and "unknown — the device restarted" are three
+different answers in the domain model · **HIL-8**, where blocking and
+disconnecting a tube become required gates.
+
+**Exit criteria.** A blocked tube produces `no_flow` on the first dose and is not
+retried. Continued flow after shutdown latches the actuator and locks every plant
+bound to it. A device lost mid-actuation produces `outcome_unknown`, charges the
+full `effective_ml`, and is **never** resolved to zero. A duplicate or replayed
+result updates one row and charges once. No witness input produces `NaN`, an
+infinity, or a charge below today's. **With no witness fitted, decisions are
+byte-identical to a captured pre-M16 baseline**, every pre-M16 protocol fixture
+decodes *and* re-encodes unchanged, and both bare-metal targets build. HIL-8's
+required gates all pass and are recorded.
+
+**Invariants.** Enforces **SAFETY-023** and **SAFETY-024**. Re-verifies
+SAFETY-001, SAFETY-006, SAFETY-007, SAFETY-010, SAFETY-012, and SAFETY-016
+against a system that now measures what it previously assumed.
+
+**PRD.** [160](docs/prd/160-verified-watering.md) ·
+**ADR.** [020](docs/adr/020-verified-watering-and-delivery-evidence.md)
+
+---
+
 ## 3. Milestone dependency graph
 
 ```text
@@ -731,9 +776,25 @@ M2  Simulator    M3  Ingestion + SQLite
         M14 Field readiness (docs only) M15 Per-plant adaptive water model
 ```
 
-**M14 and M15 are independent siblings of M13**, not a chain. M14 is
-documentation; M15 is code that needs M13's real history. Either may be executed
-first, and neither is a prerequisite of the other.
+**M16 Verified Watering forks earlier**, from M11:
+
+```text
+        M11 Real pump + safety hardware
+         │
+         ├──────────────► M12 Rust UI ──► M13 ──┬─► M14 Field readiness
+         │                                       └─► M15 Adaptive water model
+         └──────────────► M16 Verified Watering
+```
+
+**M14, M15, and M16 are independent of one another.** M14 is documentation; M15
+needs M13's accumulated history; M16 needs only M11's pump and bench. Any order
+is valid, and none is a prerequisite of another.
+
+**M16 before M15 is the better order if both are built.** M15's dose-response
+estimator already carries a `verified` flag and weights unverified observations
+at half, so a model learning from measured deliveries is learning from better
+data. Neither depends on the other, and M15 works — and says so — with
+calibration-derived volumes alone.
 
 Full detail, including issue-level ordering:
 [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
@@ -768,6 +829,8 @@ Full registry: [docs/architecture/safety-invariants.md](docs/architecture/safety
 | SAFETY-020 | Lost buffered history is reported as an explicit gap | Device + Edge | M9 | M8 |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | M8, M12 |
 | SAFETY-022 | A learned estimate may narrow a watering decision, never widen one | Edge domain | M15 | M15 |
+| SAFETY-023 | An unknown delivery outcome is never credited as zero | Edge | M16 | M16 |
+| SAFETY-024 | Water movement no command authorised is a fault | Device + Edge | M16 | M16 |
 
 Every invariant names at least one automated test in the registry. M6 and M7 are
 not complete until those tests exist and pass.

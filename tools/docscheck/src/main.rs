@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MILESTONES: usize = 16; // M0..M15
+const MILESTONES: usize = 17; // M0..M16
 const SAFETY_INVARIANTS: usize = 20; // SAFETY-001..020
 const REQUIRED_ADRS: usize = 17; // ADR-001..017
 

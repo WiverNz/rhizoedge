@@ -53,7 +53,7 @@ normalised out of the project plan.
 | [component-model.md](architecture/component-model.md) | Per-component responsibilities, interfaces, and prohibitions |
 | [data-flow.md](architecture/data-flow.md) | Ingestion, control, and cloud pipelines with transaction boundaries |
 | [deployment-model.md](architecture/deployment-model.md) | Dev, home, and future topologies; sizing and retention |
-| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…022** — rationale, enforcement, tests, milestone |
+| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…024** — rationale, enforcement, tests, milestone |
 | [failure-model.md](architecture/failure-model.md) | Every failure: detection, expected state, recovery, safety behaviour |
 | [time-model.md](architecture/time-model.md) | Clock authority, staleness, TTL, the rolling 24-hour window |
 | [configuration-model.md](architecture/configuration-model.md) | Five configuration layers and who may change what |
@@ -84,6 +84,7 @@ normalised out of the project plan.
 | [ADR-017](adr/017-extensible-measurement-model.md) | Typed measurement kinds; batched telemetry; narrow table |
 | [ADR-018](adr/018-battery-and-deep-sleep-device-mode.md) | Battery devices sleep; announced bounded wake windows; commands held as Edge-side intents |
 | [ADR-019](adr/019-per-plant-adaptive-water-model.md) | A per-plant learned water model that may narrow a dose and never widen one |
+| [ADR-020](adr/020-verified-watering-and-delivery-evidence.md) | Measured delivery evidence, an explicit outcome taxonomy, and a reservoir scale rather than a flow meter |
 
 ## Product requirements
 
@@ -107,6 +108,7 @@ One PRD per milestone.
 | [130](prd/130-multi-plant-home.md) | M13 | Multi-plant home system |
 | [140](prd/140-field-readiness.md) | M14 | Field readiness architecture |
 | [150](prd/150-per-plant-adaptive-water-model.md) | M15 | Per-plant adaptive water model |
+| [160](prd/160-verified-watering.md) | M16 | Verified watering |
 
 ## Protocol and interfaces
 
@@ -142,7 +144,7 @@ the board is a compile-time profile.
 
 ## Implementation issues
 
-270 issues across 16 milestones, each with context, scope, dependencies,
+286 issues across 17 milestones, each with context, scope, dependencies,
 acceptance criteria, and verification commands.
 
 | Milestone | Issues | Subject |
@@ -163,6 +165,7 @@ acceptance criteria, and verification commands.
 | [M13](issues/M13/) | 17 | Multi-plant home system |
 | [M14](issues/M14/) | 10 | Field readiness architecture |
 | [M15](issues/M15/) | 14 | Per-plant adaptive water model |
+| [M16](issues/M16/) | 16 | Verified watering |
 
 Issue numbering within a milestone is a valid execution order: every issue's
 dependencies have lower numbers in the same milestone, or belong to an earlier

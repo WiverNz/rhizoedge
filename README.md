@@ -138,8 +138,8 @@ watering input has no cloud-derived field.
 
 **Safety-first.** When any input is missing, stale, invalid, or contradictory,
 the answer is *do not water*, plus a visible lockout — never *water anyway*.
-Twenty-two numbered invariants
-([SAFETY-001…022](docs/architecture/safety-invariants.md)) state this precisely,
+Twenty-four numbered invariants
+([SAFETY-001…024](docs/architecture/safety-invariants.md)) state this precisely,
 each with named automated tests and the milestone where it becomes enforced.
 From M6 onward, `cargo test safety_` is the executable safety-invariant gate.
 

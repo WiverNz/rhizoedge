@@ -48,6 +48,8 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 | SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | ENFORCED |
 | SAFETY-022 | A learned estimate may narrow a watering decision, never widen one | Edge domain | M15 | PLANNED |
+| SAFETY-023 | An unknown delivery outcome is never credited as zero | Edge | M16 | PLANNED |
+| SAFETY-024 | Water movement no command authorised is a fault, not an observation | Device + Edge | M16 | PLANNED |
 
 **Fourteen invariants moved to `ENFORCED` on 2026-08-31**, when M6 landed the
 safety gate, the irrigation machine, the command lifecycle, the shared offline
@@ -1065,6 +1067,135 @@ a gate with two paths through it. One clamp, before everything, is what makes
 **Becomes enforced.** M15 — specifically M15-012, the only issue in that
 milestone permitted to change a volume that reaches a pump. Until then the model
 is inference only, and every mode below `adaptive` is inert by construction.
+
+---
+
+## SAFETY-023 — An unknown delivery outcome is never credited as zero
+
+**Statement.** An actuation whose outcome cannot be established credits the full
+`effective_ml` to the plant's rolling 24-hour budget, records
+`OutcomeUnknown` with a typed reason, and holds the plant under the existing
+reconciliation rules. No timeout, restart, reconnection, replay, TTL expiry, or
+reconciliation failure may resolve an unknown outcome to zero delivery, to
+`NoFlow`, or to any other measured condition.
+
+**Rationale.** The tidiest possible state machine is also the most dangerous one
+here. From the edge, a dose whose result never arrived is indistinguishable from
+a dose that never happened — and resolving it to "nothing was delivered" makes
+every diagram simpler while freeing the entire budget of a plant that may have
+just received a full dose and then lost power. The device kept pumping under its
+own limits; the edge simply stopped hearing about it.
+
+`NoFlow` is the specific confusion worth naming. It is a **measured** condition:
+it requires a working witness that observed nothing move. A silent device is not
+a witness, and treating silence as a measurement is how an uncertainty becomes a
+false certainty in the permissive direction.
+
+**Enforcing components.** Edge (`control::reconcile`, `repo::delivery`,
+`budget::credited_ml`). The device's contribution is the in-flight NVS record
+that lets it report `interrupted` on the next boot — evidence that narrows the
+unknown, never evidence that erases it.
+
+**Persisted state required.** Edge: `watering_deliveries.outcome`,
+`unknown_reason`, `reconciliation`, and `credited_ml`, written in the same
+transaction as the result's other effects. The charge is **stored**, not
+recomputed on read, so a later change to the rules cannot rewrite history.
+
+**Failure scenarios covered.** A device that loses power mid-dose; a network
+partition during actuation; an edge restart between actuation and result; a
+result lost before the edge commits; a command whose TTL expires with no result;
+a device replay whose buffer contains no result for the `command_id`; a witness
+whose baseline is lost across a reboot.
+
+**Conservative is not the same as accurate, and that is accepted.** Charging the
+full `effective_ml` for a dose that may have delivered nothing wastes budget, and
+that waste is the price of the invariant. PRD 160 §Open questions 6 records the
+case for trusting a *verified* zero as needing its own ADR — it is exactly the
+kind of loosening that should not arrive as a refinement.
+
+**Planned tests.**
+- `safety_023_unknown_outcome_is_never_credited_as_zero` (unit,
+  `rhizo-domain::delivery`): every `UnknownReason` charges the full
+  `effective_ml`.
+- `safety_023_a_missing_result_never_becomes_a_zero_delivery`
+  (`edge-controller::delivery`): TTL expiry with no result records
+  `OutcomeUnknown`, never `NoFlow`.
+- `safety_023_reconciliation_failure_keeps_the_conservative_charge`: an
+  unresolvable replay keeps the charge and the hold.
+- Property: any ordering and duplication of results for one `command_id` yields
+  one attempt row and one charge.
+- Scenarios registered by M16-016.
+
+**Becomes enforced.** M16 — M16-010 for the reconciliation semantics and M16-011
+for the accounting.
+
+---
+
+## SAFETY-024 — Water movement no command authorised is a fault, not an observation
+
+**Statement.** Flow observed with no authorised actuation in progress, or flow
+that continues beyond the settle window after an actuator has been commanded off,
+is a high-severity fault. The device asserts the actuator-off path immediately,
+latches the actuator, and refuses further commands; the edge sets an
+explicit-clear lockout on **every** plant bound to that actuator. Neither half
+auto-clears.
+
+**Rationale.** The system has no other representation for this. A siphon through
+a tube left below the reservoir waterline, a valve stuck open, or a pump driven
+by a shorted MOSFET moves water through the *intended* path with no command in
+flight — and asserts no leak sensor, because the tray stays dry until the pot
+overflows. By then several litres have moved.
+
+**It is not SAFETY-003.** A leak is water where it should not be, detected in the
+tray, and it already blocks every mode. Unexpected flow is water going exactly
+where the system intended, at a time nothing authorised. Conflating them would
+mean the siphon is only caught once it has already flooded something, which is
+the failure this invariant exists to catch earlier.
+
+**Enforcing components.** Device firmware, because the response must be immediate
+and cannot wait for a round trip — it extends the layer M11-002's independent run
+guard and M11-003's latched fault already occupy. The edge owns the lockout, the
+audit record, and the recovery.
+
+**Persisted state required.** Device: the latched actuator fault, surviving until
+reboot. Edge: the lockout with its explicit-clear lifecycle,
+`actuator_health.state`, and the `flow.unexpected` event — buffered through the
+device event ring so an isolated device's fault survives the isolation and
+replays.
+
+**Failure scenarios covered.** A siphon started by a tube below the waterline; a
+solenoid or check valve stuck open; a welded relay or shorted driver; a pump that
+continues after de-energising; a witness reporting depletion while the device is
+idle; cumulative flow beyond any plausible bound.
+
+**Locking every bound plant is deliberate.** Unauthorised water movement is a
+property of the hydraulic path, not of one plant's schedule, and the plant being
+flooded is not necessarily the one whose command was in flight. This is the one
+place the milestone widens a blast radius, and it is the correct direction.
+
+**Detection is bounded by the sampling cadence, and that is stated rather than
+implied.** The idle detector runs on the telemetry cadence so a battery node can
+still sleep, which means an unauthorised flow on a sleeping device is detected at
+the next wake. That is far earlier than an empty reservoir and far later than
+continuous vigilance; the power budget does not fund the latter and the invariant
+does not claim it.
+
+**Planned tests.**
+- `safety_024_continued_flow_after_stop_latches_and_locks_out` (firmware and
+  simulator): flow past `FLOW_SETTLE_MS` asserts actuator-off and latches.
+- `safety_024_flow_with_no_authorised_actuation_locks_every_bound_plant`
+  (`edge-controller`): every plant bound to the actuator is locked, not only the
+  last one watered.
+- `safety_024_unexpected_flow_does_not_auto_clear`: a reboot alone does not
+  clear the edge lockout, and clearing the edge record does not clear the
+  device's latched fault.
+- A leak and an unexpected flow are distinguishable in the record, and each fires
+  on its own signal.
+- HIL-8's unexpected-flow cases (M16-015), run with the outlet in a measuring
+  cup.
+
+**Becomes enforced.** M16 — M16-008 for the device half, M16-011 for the edge
+half, re-verified physically in M16-015.
 
 ---
 
