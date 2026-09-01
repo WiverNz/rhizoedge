@@ -141,7 +141,7 @@ Battery and solar are future field-readiness work, not an M9 promise. Size them 
 | Switched sensor rail | Default-off high-side switch rated above maximum charging voltage | 1 | module/PCB | €3–8 | Final | Solar |
 | Pump rail | Regulated/switched supply if pump cannot tolerate full battery voltage | 1 | module/PCB | €5–15 | Final | Solar |
 | Protection | IP66/IP67 enclosure with mounting plate | 1 | target about 300 × 200 × 150 mm | €25–55 | Final | Solar |
-| Cable entries | Sized IP68 glands/plugs and hydrophobic membrane vent | 1 set | M12/M16 typical; verify cables | €10–22 | Final | Solar |
+| Cable entries | Sized IP68 glands/plugs and hydrophobic membrane vent | 1 set | M12/M16 *gland thread sizes* (not milestones); verify cables | €10–22 | Final | Solar |
 | Power/service hardware | Main/branch fuses, cutoff, charge connector, terminals, strap, wire/ferrules | 1 set | site dependent | €20–40 | Final | Solar |
 | M10/M11 hardware | Probe/RS485, pump/driver, sensors, tubing and reservoir | 1 set | as above | €66–133 | Final | Solar |
 

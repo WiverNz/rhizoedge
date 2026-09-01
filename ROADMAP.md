@@ -89,10 +89,10 @@ pin may move forward deliberately
 **M0 is `DONE`** — implemented, verified, and committed. It was not reopened by
 the 2026-08-26 architecture pass; the new requirements land in M1 and later.
 
-M2–M8 are `READY`: they are pure software, need no hardware, and every
-prerequisite is a preceding milestone. M9–M11 are `PLANNED` because they depend
-on physical hardware and on ADR-007's toolchain being executed on a real machine
-(M9-001). M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
+**M1–M7 are `DONE`.** M8 is `READY`: like every software milestone before it, it
+needs no hardware and every prerequisite is a preceding milestone. M9–M11 are
+`PLANNED` because they depend on physical hardware and on ADR-007's toolchain
+being executed on a real machine (M9-001). M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
 `PLANNED` and produces documentation only. **M15 is `PLANNED` because its
 estimators need what only a real deployment produces** — real probes, a pump that
 reports delivered volume, and months of one plant's history — not because
@@ -415,7 +415,10 @@ suite runs with one command, exits 0, under 10 minutes. `scenario_first_demo`
 reproduces all eighteen steps. **Each of the seven mutations turns the suite
 red**, including the one that publishes immediately to a sleeping device.
 
-**Invariants.** Re-verifies SAFETY-001…-010 and -012 in the assembled system.
+**Invariants.** Re-verifies SAFETY-001…-010 and -012 in the assembled system,
+SAFETY-013…-020 in the isolation and reconciliation scenarios, and SAFETY-021 in
+the battery/sleep scenarios — the set §4's *Re-verified* column names. It
+enforces none of its own.
 
 **PRD.** [080](docs/prd/080-end-to-end-test-environment.md)
 
@@ -832,8 +835,10 @@ Full registry: [docs/architecture/safety-invariants.md](docs/architecture/safety
 | SAFETY-023 | An unknown delivery outcome is never credited as zero | Edge | M16 | M16 |
 | SAFETY-024 | Water movement no command authorised is a fault | Device + Edge | M16 | M16 |
 
-Every invariant names at least one automated test in the registry. M6 and M7 are
-not complete until those tests exist and pass.
+Every invariant names at least one automated test in the registry, and no
+milestone is complete until the tests for the invariants it *enforces* exist and
+pass. M6 and M7 met that bar on 2026-08-31; SAFETY-011, -019, and -020 wait on
+M9, and SAFETY-022 … -024 on M15 and M16.
 
 ---
 
@@ -902,6 +907,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
+cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
 cargo run -p rhizo-docscheck                      # planning-artefact validator
 ```

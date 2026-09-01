@@ -106,8 +106,9 @@ When a decision seems arbitrary, the reason is in an ADR
 (`docs/adr/`). Twenty of them, each with Context / Decision / Alternatives /
 Consequences / Risks. Read the relevant one rather than re-deciding.
 
-The four newest are the ones most likely to surprise you if you learned this
-project from its earlier documents:
+**ADR-015 through ADR-018 are the ones most likely to surprise you** if you
+learned this project from its earlier documents — each amends a decision an
+earlier ADR had already made, and each governs code that exists today:
 
 - **[ADR-015](docs/adr/015-device-offline-autonomy.md)** — a device provisioned
   with a validated policy **may** water while isolated. This amends ADR-003 and
@@ -124,6 +125,12 @@ project from its earlier documents:
   held as an Edge-side **intent** and minted at the next wake. Nothing on the
   wire changed. See §12.
 
+**[ADR-019](docs/adr/019-per-plant-adaptive-water-model.md) and
+[ADR-020](docs/adr/020-verified-watering-and-delivery-evidence.md) are the two
+newest, and neither describes code that exists.** They govern M15 and M16, both
+`PLANNED`; see §15 and §16 for what they do and do not change. Reading them as a
+description of current behaviour is the mistake they invite.
+
 ---
 
 ## 4. Repository layout
@@ -138,8 +145,9 @@ CLAUDE.md              this file
 docs/
 ├── README.md          documentation index — start here to navigate
 ├── Rhizo_Edge_*.md    historical source material (see §7)
-├── architecture/      9 docs: overview, components, data flow, deployment,
-│                      safety invariants, failure model, time, config, deps
+├── architecture/      12 docs: overview, components, data flow, deployment,
+│                      safety invariants, failure model, time, config, deps,
+│                      connectivity modes, offline autonomy, operational history
 ├── adr/               ADR-001…020 — why each decision was made
 ├── prd/               PRD 000…160 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning

@@ -4,7 +4,7 @@ Rhizo Edge is an offline-first Rust platform for plant monitoring and fail-safe 
 
 ## Current project state
 
-Planning and M0–M3 are complete. M4 is READY; the next executable issue is **M4-001 — Apply ingested device status to the registry**. Verify this from `ROADMAP.md`, the dependency graph, Git history, and the working tree at the start of every implementation session. Status summaries in navigation or agent files can become stale.
+Planning and M0–M7 are complete. M8 is READY; the next executable issue is **M8-001 — Add production Dockerfiles**. M15 and M16 exist as planning artefacts only — an ADR, a PRD, and issue files each — and no runtime code for either is expected before M13 and M11 respectively complete. Verify all of this from `ROADMAP.md`, the dependency graph, Git history, and the working tree at the start of every implementation session. Status summaries in navigation or agent files can become stale.
 
 Do not begin a milestone merely because its predecessor is complete. Implement only the milestone and issues the user requested, then stop after reporting completion.
 
@@ -28,7 +28,7 @@ Historical prompt and project-plan documents are provenance, not current specifi
 
 Before coding, read `ROADMAP.md`, `docs/architecture/dependency-graph.md`, the complete current issue and its dependencies, and the milestone PRD. Read the relevant crate boundary in `docs/architecture/component-model.md`.
 
-For M9-M11 hardware work, also read `docs/testing/hardware-in-the-loop.md` and, for what is physically being built and wired, `docs/hardware/home-node-hardware-guide.md`.
+For M9-M11 and M16 hardware work, also read `docs/testing/hardware-in-the-loop.md` and, for what is physically being built and wired, `docs/hardware/home-node-hardware-guide.md`.
 
 Before changing protocol, safety, actuation, persistence semantics, clocks, or offline behavior, also read the relevant protocol specification, ADRs, safety invariants, failure/time/connectivity model, and existing tests. Use actual shared contract APIs and fixtures; do not reconstruct wire formats from memory.
 

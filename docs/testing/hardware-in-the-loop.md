@@ -52,6 +52,17 @@ HIL-1 boot safety      ──► HIL-2 telemetry ──► HIL-3 pump calibratio
 A stage is not attempted until the previous one passes completely. A failure
 sends you back to the bench, not forward with a note.
 
+**HIL-8 is planned and not yet written here.** M16 adds a verified-watering
+stage — blocked tube, disconnected tube, empty reservoir, restricted flow, and
+the mid-dose disconnect, restart, and leak cases — slotted **after HIL-6 and
+before HIL-7**, because a node that cannot tell a blocked tube from a delivered
+dose has no business being pointed at a plant. **M16-015** writes it, with its
+prerequisites, procedure, and pass criteria, and measures the constants it
+settles. Other documents already refer to HIL-8 by name
+([ROADMAP.md](../../ROADMAP.md) §2,
+[safety-invariants.md](../architecture/safety-invariants.md) SAFETY-024); this
+note is where that reference lands until the stage exists.
+
 ---
 
 ## HIL-1 — Boot safety (no water in the system)
@@ -257,7 +268,8 @@ these gate a *claim*:
 | Sensor power-on → time until stable usable reading | M10-011 | the configured `sensor_warmup_ms`, and an input to the energy budget |
 | Complete-system sleep current and wake-cycle energy | M10-012 | **every autonomy figure in the repository** — until it exists, all of them stay labelled targets ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §8) |
 
-Neither involves water, and neither is on the HIL-1…HIL-7 critical path. M10-012
+Neither involves water, and neither is on the HIL-1…HIL-7 critical path — nor
+on HIL-8's, when M16 adds it. M10-012
 does need an instrument the HIL bench does not otherwise require: sleep current
 is microamps while wake current is hundreds of milliamps within the same second,
 and a handheld multimeter either burdens the supply at the low end or averages

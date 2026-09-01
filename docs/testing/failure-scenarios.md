@@ -727,13 +727,26 @@ mode with no hardware.
 | SAFETY-019 | SCEN-094, SCEN-095, SCEN-103 |
 | SAFETY-020 | SCEN-104 |
 | SAFETY-021 | SCEN-110, SCEN-111, SCEN-112 |
+| SAFETY-022 | — registered by M15-014 |
+| SAFETY-023 | — registered by M16-016 |
+| SAFETY-024 | — registered by M16-016 |
+
+**SAFETY-022, SAFETY-023, and SAFETY-024 carry no scenario yet, and that is the
+planned state rather than a gap.** They were appended by the two 2026-09-01
+planning passes ([ADR-019](../adr/019-per-plant-adaptive-water-model.md) and
+[ADR-020](../adr/020-verified-watering-and-delivery-evidence.md)), and each names
+the verification issue that registers its scenarios here — M15-014 and M16-016
+respectively. Their unit and property tests are already enumerated in
+[safety-invariants.md](../architecture/safety-invariants.md); what is outstanding
+is the *catalogue* entry, not the test design. Until those issues run, the counts
+below describe SAFETY-001 through SAFETY-021.
 
 SAFETY-018 and SAFETY-020 have one scenario each, because each states a single
 crisp property with no interesting variations; the rest carry two or more.
 
-Every invariant has at least two scenarios except SAFETY-009, SAFETY-018, and
-SAFETY-020, which have one each by nature — SAFETY-009 is a differential test
-that subsumes every other scenario. SAFETY-011 gained a second in SCEN-117,
-where converging to pump-off has to survive a power cut inside a battery
-device's awake window as well as an ordinary reset, and is still verified
+Every invariant through SAFETY-021 has at least two scenarios except SAFETY-009,
+SAFETY-018, and SAFETY-020, which have one each by nature — SAFETY-009 is a
+differential test that subsumes every other scenario. SAFETY-011 gained a second
+in SCEN-117, where converging to pump-off has to survive a power cut inside a
+battery device's awake window as well as an ordinary reset, and is still verified
 physically in M11.

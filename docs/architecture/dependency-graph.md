@@ -804,7 +804,7 @@ M0-001 → M0-002 → M0-003 → M0-012 → M0-013
        → M8-001 → M8-002 → M8-003 → M8-004 → M8-005 → M8-006 → M8-012 → M8-018
 ```
 
-Roughly 60 issues on the critical path out of 153 in M0–M8. The remainder are
+Roughly 60 issues on the critical path out of 161 in M0–M8. The remainder are
 parallelisable, concentrated in M4 (health checks), M8 (scenarios), and the pure
 domain functions of M5.
 

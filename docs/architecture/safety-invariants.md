@@ -12,13 +12,19 @@ safety suite.
 **Status legend.** `PLANNED` — specified, not yet enforced. `ENFORCED` — code
 and test exist and are green.
 
-M2/M3 already provide tested enforcement points without completing the full
-end-to-end invariants: the simulator's single actuation path and shared command
-validator support SAFETY-001/-002/-007/-012; fail-closed persistent-state and
-policy mechanics support SAFETY-013/-015/-019/-020; and M3 supplies durable
-effect identity, status ordering, event replay, and history-gap persistence for
-SAFETY-001/-011/-016/-020. These rows remain `PLANNED` until every enforcement
-point named by the invariant exists; no M6/M9 work is claimed complete here.
+**An invariant is `ENFORCED` only when every enforcement point it names exists.**
+M2 and M3 supplied tested enforcement points well before that bar was met — the
+simulator's single actuation path and shared command validator for
+SAFETY-001/-002/-007/-012, fail-closed persistent-state and policy mechanics for
+SAFETY-013/-015/-019/-020, and durable effect identity, status ordering, event
+replay, and history-gap persistence for SAFETY-001/-011/-016/-020 — and those
+rows stayed `PLANNED` throughout, because a partial enforcement point is not the
+invariant.
+
+Fourteen of them moved to `ENFORCED` when M6 landed (see below), and several are
+qualified in the table: an invariant whose device half is M9 or M11 says so in
+its status rather than claiming the whole. **No firmware or hardware work is
+claimed complete here.**
 
 ---
 
@@ -69,14 +75,27 @@ and name the milestone that completes them:
 
 
 Milestone M8 re-verifies SAFETY-001 … SAFETY-010 and SAFETY-012 end-to-end in
-the full Docker environment, and SAFETY-013 … SAFETY-020 in its network-isolation
-scenarios (SCEN-090…SCEN-107). Time synchronisation is covered by
-SCEN-073…SCEN-078.
+the full Docker environment, SAFETY-013 … SAFETY-020 in its network-isolation
+scenarios (SCEN-090…SCEN-107), and SAFETY-021 in its battery and deep-sleep
+scenarios (SCEN-110…SCEN-117). Time synchronisation is covered by
+SCEN-073…SCEN-078. SAFETY-022 … SAFETY-024 belong to milestones that have not
+started and are re-verified nowhere yet.
 
-**SAFETY-001 … SAFETY-012 are unchanged and are never renumbered.** SAFETY-013
-onward were added on 2026-08-26 when device offline autonomy became a
-requirement ([ADR-015](../adr/015-device-offline-autonomy.md)). Two existing
-invariants gained scope rather than changing meaning:
+**No invariant has ever been renumbered, and none ever will be.** SAFETY-001 …
+SAFETY-012 are the original twelve and are unchanged. Everything above them was
+appended, in four dated batches:
+
+| Added | Invariants | Why |
+|---|---|---|
+| 2026-08-26 | SAFETY-013 … SAFETY-020 | Device offline autonomy became a requirement ([ADR-015](../adr/015-device-offline-autonomy.md)) |
+| 2026-08-28 | SAFETY-021 | A device that sleeps between samples is not an offline device ([ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md)) |
+| 2026-09-01 | SAFETY-022 | A per-plant learned model may narrow a dose and never widen one ([ADR-019](../adr/019-per-plant-adaptive-water-model.md)) |
+| 2026-09-01 | SAFETY-023, SAFETY-024 | Measured delivery evidence, and water moving with no command ([ADR-020](../adr/020-verified-watering-and-delivery-evidence.md)) |
+
+The last three rows are **`PLANNED`**: they specify M15 and M16, neither of which
+has started, and nothing in the enforced set changed when they were appended.
+
+Two existing invariants gained scope on 2026-08-26 rather than changing meaning:
 
 - **SAFETY-006** (rolling cap) now counts autonomous doses in the same window —
   one budget per plant, not one per control path. See SAFETY-014.
@@ -90,9 +109,15 @@ deliberately. The mechanism is a *means* of satisfying SAFETY-002 — "an expire
 command never executes" — not a new safety property, so SAFETY-002 gained the
 enforcing rule, the failure scenarios, and three tests instead. The isolated-device
 case, where no synchronisation is possible at all, is already SAFETY-015. A
-twenty-first invariant would have restated one of the two without constraining
+further invariant would have restated one of the two without constraining
 anything new, and an invariant catalogue is only useful while every entry earns
 its number.
+
+That the registry later reached twenty-four is not a reversal of this. SAFETY-021
+constrains a state that did not exist in the model on 2026-08-26, and
+SAFETY-022 … SAFETY-024 constrain decisions no component was yet permitted to
+make. Each earned its number by forbidding something no existing entry forbade;
+none restated one.
 
 ---
 
@@ -1201,8 +1226,10 @@ half, re-verified physically in M16-015.
 
 ## How invariants are kept honest
 
-1. Every invariant above names at least one test. M6 and M7 are not complete
-   until those tests exist and pass.
+1. Every invariant above names at least one test, and no milestone is complete
+   until the tests for the invariants it claims to enforce exist and pass. M6
+   and M7 met that bar on 2026-08-31; M9, M11, M15, and M16 have not yet been
+   asked to.
 2. `rhizo-docscheck` verifies that every `SAFETY-NNN` referenced anywhere in
    `docs/` exists in this file, and that this file's summary table has no
    invariant lacking a "Planned tests" section.

@@ -56,6 +56,20 @@ plant's rolling budget as though water arrived:
 - an anti-siphon valve is stuck shut
 - the relay clicks and the pump does nothing
 
+**The V1 witness does not answer all of these, and the design does not pretend
+it does.** A reservoir scale answers exactly one question — *did water
+physically leave the reservoir, and how much?* — which covers the dry
+reservoir, the blocked or kinked line, the lost prime, the occluded line, the
+hardened tubing, the valve stuck shut, and the pump that does nothing. It says
+nothing about **where** the water went, so a tube that has fallen out of the pot
+still empties the reservoir normally and reaches `FlowMeasured` while watering
+the floor. That case is caught only by corroboration — the optional pot scale
+(L4), the soil response `no_delivery_detected` already watches, and the leak
+sensor — which is why `EvidenceLevel` is ordered (F-160-02) and why ADR-020 §4
+tabulates what each signal proves and what it does not. Reporting *hydraulic*
+delivery as *biological* delivery would be the same class of error this
+milestone exists to remove.
+
 The existing mitigations are real and all *indirect and late*.
 `no_delivery_detected` needs **two** unresponsive doses and a soil or weight
 signal that may legitimately not move; it is a claim about the plant, hours

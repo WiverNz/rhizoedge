@@ -1,15 +1,31 @@
 # Rhizo Edge — Documentation Index
 
 Everything needed to implement Rhizo Edge without rediscovering the
-architecture. **M0–M3 are complete. M4 is READY; M4-001 is next.**
+architecture. **M0–M7 are complete. M8 is READY; M8-001 is next.**
 
-> An architecture pass on 2026-08-26 added device offline autonomy
-> ([ADR-015](adr/015-device-offline-autonomy.md)), the per-plant binding and
-> policy model ([ADR-016](adr/016-plant-binding-and-policy-model.md)), and the
-> extensible measurement model
-> ([ADR-017](adr/017-extensible-measurement-model.md)). MQTT v1 was revised in
-> place before M1 froze it. Documents written before that date may describe the
-> device as having no irrigation intelligence — ADR-015 corrects that.
+> **Four passes have amended the plan since M0 shipped.** In date order:
+>
+> - **2026-08-26, architecture.** Device offline autonomy
+>   ([ADR-015](adr/015-device-offline-autonomy.md)), the per-plant binding and
+>   policy model ([ADR-016](adr/016-plant-binding-and-policy-model.md)), and the
+>   extensible measurement model
+>   ([ADR-017](adr/017-extensible-measurement-model.md)). MQTT v1 was revised in
+>   place before M1 froze it. Documents written before that date may describe
+>   the device as having no irrigation intelligence — ADR-015 corrects that.
+> - **2026-08-28, battery and deep sleep.** A device that sleeps between samples
+>   is not an offline device
+>   ([ADR-018](adr/018-battery-and-deep-sleep-device-mode.md)), and SAFETY-021
+>   keeps the new state from becoming a place where dead devices hide.
+> - **2026-09-01, adaptive water model.** Planning only
+>   ([ADR-019](adr/019-per-plant-adaptive-water-model.md), M15): a per-plant
+>   learned model that may **narrow** a dose and never widen one (SAFETY-022).
+> - **2026-09-01, verified watering.** Planning only
+>   ([ADR-020](adr/020-verified-watering-and-delivery-evidence.md), M16):
+>   physical delivery evidence, an outcome taxonomy in which *unknown* is an
+>   answer (SAFETY-023), and unexpected flow as a fault (SAFETY-024).
+>
+> M15 and M16 are **specified and not built**. Nothing in them changes a wire
+> payload, a gate step, or a watering decision that exists today.
 
 **If you are here to write code, read these four, in this order:**
 
@@ -18,8 +34,8 @@ architecture. **M0–M3 are complete. M4 is READY; M4-001 is next.**
 3. The PRD for your milestone — what to build and why
 4. Your issue file — the step-by-step scope and acceptance criteria
 
-Then start at **[M1-001](issues/M1/001-add-mqtt-contract-crate-skeleton.md)** —
-M0 is complete.
+Then start at **[M8-001](issues/M8/001-add-dockerfiles.md)** — M0–M7 are
+complete.
 
 ---
 
@@ -124,9 +140,9 @@ One PRD per milestone.
 | Document | Contents |
 |---|---|
 | [strategy.md](testing/strategy.md) | The test pyramid, naming, CI gates, what is deliberately not tested |
-| [failure-scenarios.md](testing/failure-scenarios.md) | **SCEN-001…107** — the executable scenario catalogue and its invariant coverage matrix |
+| [failure-scenarios.md](testing/failure-scenarios.md) | **SCEN-001…117** — the executable scenario catalogue and its invariant coverage matrix |
 | [simulator-strategy.md](testing/simulator-strategy.md) | Physical model, fault catalogue, the permissiveness rule |
-| [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | HIL-1…HIL-7 gated checklists for real hardware |
+| [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | HIL-1…HIL-7 gated checklists for real hardware; HIL-8 is added by M16-015 |
 | [local-development.md](testing/local-development.md) | Running, debugging, inspecting, common problems |
 
 ## Hardware

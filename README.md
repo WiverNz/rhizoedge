@@ -640,7 +640,7 @@ Start here: **[docs/README.md](docs/README.md)** — the documentation index.
 | | |
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | Milestones, exit criteria, conventions |
-| [Safety invariants](docs/architecture/safety-invariants.md) | SAFETY-001…021 |
+| [Safety invariants](docs/architecture/safety-invariants.md) | SAFETY-001…024 |
 | [Connectivity modes](docs/architecture/connectivity-modes.md) | Cloud offline vs site offline vs device isolated vs sleeping |
 | [Offline autonomy](docs/architecture/offline-autonomy.md) | The offline policy model and reconciliation |
 | [MQTT protocol v1](docs/protocol/mqtt-v1.md) | Normative wire specification |
@@ -705,9 +705,24 @@ evidence a plant was watered, and a blocked tube, a lost prime, or a tube that
 fell out of the pot all produce a perfectly successful result. This adds a
 physical witness — a load cell under the reservoir, measuring volume by
 subtraction, chosen over a flow meter because a dosing pump runs below where
-cheap flow meters are accurate — plus an outcome vocabulary in which **unknown
-is a real answer** and is never quietly rounded to zero, and a no-flow condition
-caught on the *first* dose instead of the third.
+cheap flow meters are accurate.
+
+**What that witness proves is bounded, and the milestone says so.** A reservoir
+scale answers one question exactly: *did water physically leave the reservoir,
+and how much?* That is enough to catch a blocked or kinked line, a lost prime, a
+dry reservoir, and a partial occlusion — on the *first* dose, rather than after
+two doses a plant failed to respond to. It says nothing about where the water
+went, so a tube that fell out of the pot still leaves the reservoir normally and
+is only caught by corroboration: the optional pot scale, the soil response that
+`no_delivery_detected` already watches, and the leak sensor. Evidence levels are
+ordered for exactly this reason, and a weaker one is never reported as a
+stronger one — a dose with no witness fitted reports *unverified*, not
+*verified*.
+
+On top of that sits an outcome vocabulary in which **unknown is a real answer**
+and is never quietly rounded to zero, and unauthorised water movement — a
+siphon, a stuck valve, a shorted driver — becomes a fault the system can finally
+represent.
 [ADR-020](docs/adr/020-verified-watering-and-delivery-evidence.md) ·
 [PRD 160](docs/prd/160-verified-watering.md)
 

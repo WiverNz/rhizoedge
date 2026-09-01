@@ -247,13 +247,24 @@ whether it was clamped.
 2. **Tank sensor type.** A float switch is cheapest and most reliable but binary;
    ultrasonic gives a real percentage but is sensitive to reservoir geometry and
    foam. Starting with a float switch and documenting the coarseness.
-3. **Whether a flow meter is worth adding early.** It would make delivery
-   verification direct rather than inferred. Deferred to M14 — inexpensive flow
-   meters are unreliable at these very low flow rates, so it may not help.
+3. **Whether a flow meter is worth adding early.** ~~Deferred to M14.~~
+   **Answered on 2026-09-01 by
+   [ADR-020](../adr/020-verified-watering-and-delivery-evidence.md) §4: no.**
+   The reasoning in the question itself is why — a dosing pump of this class
+   moves a fraction of a litre per minute, which is the bottom of a cheap
+   turbine meter's range and its least accurate decade. Direct delivery
+   verification is worth having and arrives in **M16**, with a **load cell under
+   the reservoir** as the witness: it measures volume by subtraction at
+   1 g = 1 ml, has no minimum flow rate, and sits outside the wetted path. An
+   inline flow meter remains a first-class *future* `DeliveryWitness` for
+   greenhouse-scale flows, not a V1 part.
 
 ## Future work
 
-- Flow-meter verification (M14).
+- Direct delivery verification (M16) — a reservoir load cell, an explicit
+  outcome taxonomy, and unexpected flow as a fault
+  ([PRD 160](160-verified-watering.md)). M16 depends on this milestone's pump
+  and HIL bench, and adds **HIL-8** after HIL-6.
 - Multiple pumps per device (M13).
 - Solenoid valves and zones (M14).
 - Automatic calibration from the pot scale (post-V1).
