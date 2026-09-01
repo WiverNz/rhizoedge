@@ -26,6 +26,7 @@ has not started.**
 | Post-M6 correction | ✅ done (2026-08-31) — durable `command.result.ack`, offline-dose attribution by name, and the M6 report's test-count evidence; see [docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections and §13 below |
 | Post-M7 correction | ✅ done (2026-08-31) — `device.capabilities` (not `…_changed`), events for destructive changes, replayed history forwarded, and one type-checked catalogue; see [docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction and §14 below |
 | M8-001 | ⬜ **next** — add production Dockerfiles |
+| M15 | 14 issues, **PLANNED** — per-plant adaptive water model, added 2026-09-01 as planning only; see §15 |
 
 **This section goes stale fastest. Verify it before trusting it:**
 
@@ -101,7 +102,7 @@ In this order. Do not skip to the issue file.
    acceptance criteria
 
 When a decision seems arbitrary, the reason is in an ADR
-(`docs/adr/`). Eighteen of them, each with Context / Decision / Alternatives /
+(`docs/adr/`). Nineteen of them, each with Context / Decision / Alternatives /
 Consequences / Risks. Read the relevant one rather than re-deciding.
 
 The four newest are the ones most likely to surprise you if you learned this
@@ -138,13 +139,13 @@ docs/
 ├── Rhizo_Edge_*.md    historical source material (see §7)
 ├── architecture/      9 docs: overview, components, data flow, deployment,
 │                      safety invariants, failure model, time, config, deps
-├── adr/               ADR-001…018 — why each decision was made
-├── prd/               PRD 000…140 — one per milestone, 17 fixed sections
+├── adr/               ADR-001…019 — why each decision was made
+├── prd/               PRD 000…150 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
 ├── testing/           strategy, 80 scenarios, simulator, HIL, local dev
 ├── hardware/          home-node-hardware-guide.md — BOM, enclosure, wiring,
 │                      power, assembly order (practical, NOT normative)
-└── issues/M0…M14/     256 implementation issues
+└── issues/M0…M15/     270 implementation issues
 
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
 
@@ -630,7 +631,7 @@ it, so run it before finishing.
 
 ## 9. Safety invariants — the short version
 
-Twenty-one numbered invariants in
+Twenty-two numbered invariants in
 [docs/architecture/safety-invariants.md](docs/architecture/safety-invariants.md),
 each with named tests and an enforcement milestone. Most become enforced in M6.
 
@@ -802,3 +803,61 @@ Four things did **not** change:
   the cloud kind. Renaming it would have been a second bug.
 - **`clean_session` and telemetry loss semantics.** Untouched, for the reasons in
   §13.
+
+---
+
+## 15. The 2026-09-01 adaptive-model planning pass
+
+**Planning only. No runtime code was written, and none is expected before M13
+completes.** A per-plant learned model of drying and dose response became a
+planned milestone: [ADR-019](docs/adr/019-per-plant-adaptive-water-model.md),
+[PRD 150](docs/prd/150-per-plant-adaptive-water-model.md), and **14 issues** in
+`docs/issues/M15/`. **SAFETY-022** was appended; the first twenty-one are
+unchanged and were never renumbered.
+
+| Was | Is now |
+|---|---|
+| Every watering number is a static species-level threshold applied to an individual pot | The static policy is still authoritative; a per-plant `HydrationModel` may **narrow** a dose inside it |
+| The moisture rise a dose produces is reduced to a boolean by `recovery_delta_vwc` and discarded | Its magnitude becomes a `DoseResponseObservation` in a durable per-epoch ledger |
+| `trend::fit` computes a slope nothing consumes | A longer-horizon `DryingRate` answers "when will this plant be dry?" |
+| 21 safety invariants | **22** — SAFETY-022 appended |
+| 256 issues, 15 milestones | **270 issues, 16 milestones** |
+| One migration, the canonical baseline | M15-002 is the first forward migration; `canonical_baseline_contains_the_final_schema` firing is the *intended* trigger, not a surprise |
+
+Five things did **not** change, and each is load-bearing:
+
+- **The wire, the firmware, and both `no_std` crates.** `rhizo-mqtt-contract` and
+  `rhizo-policy` have no M15 diff at all. The device learns nothing, and no
+  learned number reaches an `OfflinePolicy` (ADR-015 is untouched).
+- **The ADR-005 catalogue.** Closed, unamended, no new kind. The model is
+  edge-local; an epoch change writes a `plant_events` row and nothing leaves.
+- **`safety_gate`, `machine::evaluate`, `budget::dose_fits`, and every lockout
+  rule.** The clamp runs *before* the gate, so every existing check sees an
+  ordinary `f32` and cannot tell where it came from. A gate that had to recognise
+  adaptive doses would be a gate with two paths through it.
+- **`budget::dose_fits` refuses rather than clamping.** Unchanged. One
+  consequence is stated rather than discovered: a 12 ml adaptive dose can fit
+  under a cap a 40 ml static dose would have crossed. SAFETY-006 bounds the
+  24-hour **total**, so that is permitted by the invariant's own definition — but
+  it is an observable behaviour change and M15-012 tests it as such.
+- **ROADMAP §7's "no machine learning".** Still true. M15 is weighted least
+  squares over a handful of observations, and ROADMAP §7 now says so explicitly
+  so nobody reads the milestone as a licence.
+
+Two things to know before touching this area:
+
+**The model may only ask for *less*.** `clamp_proposal` bounds a proposal into
+`[min_effective_ml, automation.dose_ml]`, in exactly one place, before the gate.
+If the model concludes the plant needs *more* than the configured dose, it says
+so in the explanation and the number does not change. Raising `dose_ml` is an
+operator decision and stays one. That is SAFETY-022, and it is why no override,
+force, or bypass parameter appears anywhere in M15 — the reset endpoint discards
+inference, never a limit.
+
+**There are two confidences and they are deliberately different.**
+`Recommendation::confidence` is advisory and gates nothing, with a test that
+fails if anyone gates on it. `hydration::ModelConfidence` is a four-valued enum
+whose entire job is to gate: below `Medium` the model proposes nothing and the
+static policy answers unchanged, which is the cold-start safety property.
+Merging them would either make the recommendation engine's confidence
+load-bearing or make the model's decorative.

@@ -51,9 +51,15 @@ bug.
              M11 Real pump + hardware ───────┤
                                              ▼
                                             M13 Multi-plant home
-                                             ▼
-                                            M14 Field readiness (docs only)
+                                             │
+                                  ┌──────────┴──────────┐
+                                  ▼                     ▼
+                    M14 Field readiness      M15 Per-plant adaptive
+                        (docs only)              water model
 ```
+
+**M14 and M15 are siblings, not a chain.** Both depend only on M13, neither
+depends on the other, and either may be executed first.
 
 ### Reading the two branches after M6
 
@@ -86,6 +92,7 @@ that order. M13 requires both branches.
 | M12 | M6 | needs state and actions worth showing |
 | M13 | M12, M11 | scales a working, hardware-verified, observable system |
 | M14 | M13 | verifies reservations against a mature codebase |
+| M15 | M13 | needs real probes, a pump that reports delivered volume, and months of one plant's history before any estimate means anything |
 
 ---
 
@@ -553,6 +560,33 @@ repository and confirms each is either labelled a target or traceable to
 M10-012's measurements. That audit is the mechanism that keeps
 [ADR-018](../adr/018-battery-and-deep-sleep-device-mode.md) §8 honest.
 
+### M15 — Per-plant adaptive water model
+
+```text
+M13-017 ──→ M15-001 (hydration domain types + epoch)
+   ──→ M15-002 (epochs, observations, model state; first forward migration)
+   ──→ M15-003 (drying-segment extraction) ──→ M15-004 (drying-rate estimator)
+   ──→ M15-005 (dose-response extraction)  ──→ M15-006 (dose-response estimator)
+   ──→ M15-007 (confidence, and the gate it owns)
+   ──→ M15-008 (compose + refresh + rebuild)
+   ──→ M15-009 (epoch invalidation and reset)
+   ──→ M15-010 (shadow-mode recording)
+   ──→ M15-011 (model + explanation API)
+   ──→ M15-012 (adaptive dose inside the safety limits — SAFETY-022)
+   ──→ M15-013 (observability + anomaly hooks)
+                                          all ──→ M15-014 (verification)
+```
+
+**The chain is deliberately linear**, which is unusual for this project and is
+the point: each stage is only reviewable against the one before it, and the
+single stage that can change a volume reaching a pump (**M15-012**) sits at the
+end where it can be reviewed alone. The one place the order could be widened is
+M15-003/004 against M15-005/006 — the two estimators are independent — but they
+share `EstimatorConfig` and the weighting rule, and building them in sequence is
+how the second one inherits the first one's decisions rather than re-making them.
+
+**Nothing in M15 depends on M14**, and M14 does not depend on M15.
+
 ---
 
 ## 2b. Issues added by the 2026-08-26 architecture pass
@@ -593,6 +627,9 @@ M13 013 release CI ──► 014 MSRV matrix
     015 observability profile
 
 M14 007 Helm planning        008 future actuator model
+
+M15 003 drying segments ──► 004 drying rate  ┐  independent of each other,
+    005 dose responses  ──► 006 dose response┘  sequenced to share one config
 ```
 
 ## 2c. Issues added by the 2026-08-28 battery/deep-sleep pass

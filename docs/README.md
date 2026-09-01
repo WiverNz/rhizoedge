@@ -53,7 +53,7 @@ normalised out of the project plan.
 | [component-model.md](architecture/component-model.md) | Per-component responsibilities, interfaces, and prohibitions |
 | [data-flow.md](architecture/data-flow.md) | Ingestion, control, and cloud pipelines with transaction boundaries |
 | [deployment-model.md](architecture/deployment-model.md) | Dev, home, and future topologies; sizing and retention |
-| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…021** — rationale, enforcement, tests, milestone |
+| [safety-invariants.md](architecture/safety-invariants.md) | **SAFETY-001…022** — rationale, enforcement, tests, milestone |
 | [failure-model.md](architecture/failure-model.md) | Every failure: detection, expected state, recovery, safety behaviour |
 | [time-model.md](architecture/time-model.md) | Clock authority, staleness, TTL, the rolling 24-hour window |
 | [configuration-model.md](architecture/configuration-model.md) | Five configuration layers and who may change what |
@@ -83,6 +83,7 @@ normalised out of the project plan.
 | [ADR-016](adr/016-plant-binding-and-policy-model.md) | Per-plant bindings, roles, thresholds; optional actuator |
 | [ADR-017](adr/017-extensible-measurement-model.md) | Typed measurement kinds; batched telemetry; narrow table |
 | [ADR-018](adr/018-battery-and-deep-sleep-device-mode.md) | Battery devices sleep; announced bounded wake windows; commands held as Edge-side intents |
+| [ADR-019](adr/019-per-plant-adaptive-water-model.md) | A per-plant learned water model that may narrow a dose and never widen one |
 
 ## Product requirements
 
@@ -105,6 +106,7 @@ One PRD per milestone.
 | [120](prd/120-rust-ui.md) | M12 | Rust UI |
 | [130](prd/130-multi-plant-home.md) | M13 | Multi-plant home system |
 | [140](prd/140-field-readiness.md) | M14 | Field readiness architecture |
+| [150](prd/150-per-plant-adaptive-water-model.md) | M15 | Per-plant adaptive water model |
 
 ## Protocol and interfaces
 
@@ -140,7 +142,7 @@ the board is a compile-time profile.
 
 ## Implementation issues
 
-256 issues across 15 milestones, each with context, scope, dependencies,
+270 issues across 16 milestones, each with context, scope, dependencies,
 acceptance criteria, and verification commands.
 
 | Milestone | Issues | Subject |
@@ -160,6 +162,7 @@ acceptance criteria, and verification commands.
 | [M12](issues/M12/) | 19 | Rust UI |
 | [M13](issues/M13/) | 17 | Multi-plant home system |
 | [M14](issues/M14/) | 10 | Field readiness architecture |
+| [M15](issues/M15/) | 14 | Per-plant adaptive water model |
 
 Issue numbering within a milestone is a valid execution order: every issue's
 dependencies have lower numbers in the same milestone, or belong to an earlier

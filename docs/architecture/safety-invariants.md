@@ -47,6 +47,7 @@ point named by the invariant exists; no M6/M9 work is claimed complete here.
 | SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | ENFORCED |
+| SAFETY-022 | A learned estimate may narrow a watering decision, never widen one | Edge domain | M15 | PLANNED |
 
 **Fourteen invariants moved to `ENFORCED` on 2026-08-31**, when M6 landed the
 safety gate, the irrigation machine, the command lifecycle, the shared offline
@@ -993,6 +994,77 @@ derivation is what makes it true in the meantime.
 the dated 2026-08-28 post-M4 battery-compatibility correction and its 2026-08-28
 post-M4 review, not in M5. Re-verified in M8 against a sleeping simulator (which
 M5-021 still owes) and in M12's presentation.
+
+---
+
+## SAFETY-022 — A learned estimate may narrow a watering decision, never widen one
+
+**Statement.** No value produced by a per-plant adaptive model may increase a
+dose above the plant's configured `AutomationPolicy::dose_ml`, add to a rolling
+budget, shorten a cooldown, relax a staleness threshold, satisfy a required
+measurement, clear or defer a lockout, or reach a device's `OfflinePolicy`. Its
+only permitted effects are to propose a **smaller** dose inside
+`[min_effective_ml, dose_ml]`, to supply advisory timing, and to populate
+explanations. The clamp that enforces the bound is applied in exactly one place,
+**before** the safety gate runs.
+
+**Rationale.** An inference is not an observation, and the difference is the
+whole reason this invariant exists. Every other safety input in the system is
+something a sensor measured or a person authored; a learned coefficient is
+something the system concluded, and a system permitted to act on its own
+conclusions without a ceiling can be wrong in an unbounded direction. Bounding
+it to "less than the operator asked for" makes the worst realistic failure
+under-watering — visible, recoverable, and already surfaced — rather than a
+flooded floor.
+
+It is also what keeps the existing invariants meaningful. `safety_gate`,
+`budget::dose_fits`, the cooldown, the cycle dose limit, and the firmware
+ceiling all run on the clamped value and cannot tell where it came from, so
+adding a model does not add a second path through any of them
+([ADR-019](../adr/019-per-plant-adaptive-water-model.md) §5).
+
+**Enforcing components.** Edge domain (`rhizo_domain::hydration::clamp_proposal`)
+and the control loop that is its only caller. The device is not involved: no
+learned value crosses the wire, and an isolated device keeps evaluating the
+statically provisioned policy ADR-015 requires.
+
+**Persisted state required.** Edge: `plants.adaptive_mode`,
+`plant_hydration_model`, and `plant_adaptive_decisions` recording the proposal,
+the clamped value, and which was applied. Nothing on the device.
+
+**Failure scenarios covered.** A model that proposes more than the configured
+dose; a model that proposes a dose crossing the rolling 24-hour cap; a corrupt
+or undecodable model row; a model that is confident about a plant whose probe
+has drifted; a cold-start plant in `adaptive` mode; an epoch reset that would
+otherwise let superseded observations back into an estimate.
+
+**The clamp precedes the gate, and that ordering is the invariant.** A clamp
+applied after the gate would leave a window in which an unclamped volume existed
+inside the decision path, and a gate taught to recognise adaptive doses would be
+a gate with two paths through it. One clamp, before everything, is what makes
+"the model cannot widen anything" checkable by reading a single function.
+
+**Planned tests.**
+- `safety_022_adaptive_dose_never_exceeds_the_static_dose` (unit,
+  `rhizo-domain::hydration`): a proposal above `dose_ml` clamps to it, for every
+  generated policy and history.
+- `safety_022_adaptive_dose_cannot_cross_the_rolling_cap` (unit,
+  `rhizo-domain::irrigation`): a clamped dose is offered to the unchanged
+  `budget::dose_fits`, and the 24-hour total never exceeds `max_daily_ml`.
+- `safety_022_adaptive_dose_cannot_shorten_a_cooldown` (unit): no model value
+  reaches `cooldown_until`.
+- `safety_022_a_model_cannot_clear_a_lockout` (unit): an active lockout is
+  unaffected by any model state, including a reset epoch.
+- `safety_022_a_missing_or_corrupt_model_falls_back_to_the_static_policy`
+  (`edge-controller::hydration`): an undecodable model row produces today's
+  decision and one warning.
+- Property: for arbitrary observation histories, the issued volume is finite and
+  `<= automation.dose_ml`.
+- Scenarios registered by M15-014.
+
+**Becomes enforced.** M15 — specifically M15-012, the only issue in that
+milestone permitted to change a volume that reaches a pump. Until then the model
+is inference only, and every mode below `adaptive` is inert by construction.
 
 ---
 

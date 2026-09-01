@@ -71,8 +71,9 @@ pin may move forward deliberately
 | M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 19 | PLANNED |
 | M13 | Multi-Plant Home System | Several nodes, provisioning tooling, notifications, a supportable deployment, **release binary CI, the MSRV matrix, and the optional Grafana profile** | M12 | 17 | PLANNED |
 | M14 | Field Readiness Architecture | Architecture and honest constraints for greenhouse and field, **plus optional Helm packaging and the future actuator model** — **documentation only** | M13 | 10 | PLANNED |
+| M15 | Per-Plant Adaptive Water Model | A deterministic, explainable per-plant model of drying and dose response that may **narrow** a watering decision and never widen one | M13 | 14 | PLANNED |
 
-**Total: 256 issues.**
+**Total: 270 issues.**
 
 ### Status semantics
 
@@ -91,7 +92,10 @@ M2–M8 are `READY`: they are pure software, need no hardware, and every
 prerequisite is a preceding milestone. M9–M11 are `PLANNED` because they depend
 on physical hardware and on ADR-007's toolchain being executed on a real machine
 (M9-001). M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
-`PLANNED` and produces documentation only.
+`PLANNED` and produces documentation only. **M15 is `PLANNED` because its
+estimators need what only a real deployment produces** — real probes, a pump that
+reports delivered volume, and months of one plant's history — not because
+anything about it is unspecified.
 
 ---
 
@@ -645,6 +649,47 @@ questions recorded as genuinely unresolved.
 
 ---
 
+### M15 — Per-Plant Adaptive Water Model · PLANNED
+
+**Objective.** Learn the water behaviour of one *specific physical setup* — this
+plant, this pot, this substrate, this probe depth, this room, this season — and
+use it to answer the questions a species-level threshold cannot, **without
+gaining authority over any existing limit**.
+
+**Deliverables.** `rhizo_domain::hydration` with two deterministic estimators — a
+recency-weighted drying rate over clean drying segments, and a
+through-the-origin dose response over completed watering events · a durable
+per-epoch observation ledger that survives the 90-day raw-measurement prune ·
+a four-valued `ModelConfidence` that **gates**, unlike the recommendation
+engine's advisory confidence · explicit model **epochs** so a repot, a substrate
+change, a moved probe, or a device swap ends a model rather than poisoning it ·
+a four-stage per-plant rollout (`disabled` → `shadow` → `advisory` → `adaptive`)
+defaulting to off · shadow-mode recording of what the model *would* have said
+against what the static policy *did* say · an explanation surface that answers
+"why 28 ml?" in numbers · `SAFETY-022` and its single clamp · the first
+forward migration after the canonical baseline.
+
+**Exit criteria.** A cold-start plant behaves **identically** to today. Synthetic
+histories recover injected drying rates and dose responses within tolerance, and
+injected outliers do not move either. A proposal above `automation.dose_ml` is
+clamped to it; one that would cross the rolling cap is refused with today's
+reason. Rebuilding a model from its persisted observations reproduces the stored
+estimates exactly, and an edge restart mid-learning changes no recommendation.
+With adaptive mode disabled everywhere, decisions are byte-identical to a
+captured pre-M15 baseline. `cargo test safety_` passes including every
+`safety_022_*` test. **`rhizo-mqtt-contract`, `rhizo-policy`, the MQTT contract,
+and the ADR-005 catalogue have no M15 diff**, and both bare-metal targets still
+build.
+
+**Invariants.** Enforces **SAFETY-022**. Re-verifies SAFETY-005, SAFETY-006,
+SAFETY-012, and SAFETY-018 against a decision path that now contains a computed
+volume.
+
+**PRD.** [150](docs/prd/150-per-plant-adaptive-water-model.md) ·
+**ADR.** [019](docs/adr/019-per-plant-adaptive-water-model.md)
+
+---
+
 ## 3. Milestone dependency graph
 
 ```text
@@ -680,9 +725,15 @@ M2  Simulator    M3  Ingestion + SQLite
         M12 Rust UI  ◄──────────────────┘
          ▼
         M13 Multi-plant home
-         ▼
-        M14 Field readiness (docs only)
+         │
+         ├──────────────────────────────┐
+         ▼                              ▼
+        M14 Field readiness (docs only) M15 Per-plant adaptive water model
 ```
+
+**M14 and M15 are independent siblings of M13**, not a chain. M14 is
+documentation; M15 is code that needs M13's real history. Either may be executed
+first, and neither is a prerequisite of the other.
 
 Full detail, including issue-level ordering:
 [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
@@ -716,6 +767,7 @@ Full registry: [docs/architecture/safety-invariants.md](docs/architecture/safety
 | SAFETY-019 | Policy activation is atomic | Device | M9 | M8 |
 | SAFETY-020 | Lost buffered history is reported as an explicit gap | Device + Edge | M9 | M8 |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | M8, M12 |
+| SAFETY-022 | A learned estimate may narrow a watering decision, never widen one | Edge domain | M15 | M15 |
 
 Every invariant names at least one automated test in the registry. M6 and M7 are
 not complete until those tests exist and pass.
@@ -858,7 +910,13 @@ workspace is **never** downgraded to match an embedded constraint.
 
 Recorded so their absence is a decision rather than an oversight:
 
-- **Machine learning.** The recommendation engine is rule-based and explainable.
+- **Machine learning.** The recommendation engine is rule-based and explainable,
+  and stays that way. **M15's per-plant adaptive model is not an exception**: it
+  is weighted least squares over a handful of observations, deterministic,
+  replayable, statable in two lines of arithmetic, and bounded by SAFETY-022 so
+  that it can only ever ask for *less* water than the operator configured. No
+  trained model, no opaque coefficient, and no dependency that ships one
+  ([ADR-019](docs/adr/019-per-plant-adaptive-water-model.md) §Alternatives).
 - **N/P/K inference from EC.** Permanently out of scope — see
   [PRD 100](docs/prd/100-real-soil-sensor.md) and [PRD 140](docs/prd/140-field-readiness.md).
 - **Authentication on the Edge API.** V1's boundary is the network. The first
