@@ -86,13 +86,13 @@ and the whole reason M10-011 exists is that nobody knows the real number yet.
       sleep call.
 - [ ] A read attempted before `sensor_warmup_ms` has elapsed raises
       `sensor_warmup_incomplete` and does not publish a sample.
-- [ ] An error during sampling still disables both rails.
-- [ ] Rails are driven off in the boot-safe sequence.
-- [ ] `AlwaysOn` mode leaves rails enabled and its behaviour unchanged.
-- [ ] No stabilisation constant for any specific sensor part appears in the
+- [x] An error during sampling still disables both rails.
+- [x] Rails are driven off in the boot-safe sequence.
+- [x] `AlwaysOn` mode leaves rails enabled and its behaviour unchanged.
+- [x] No stabilisation constant for any specific sensor part appears in the
       firmware source.
-- [ ] A device with no RS485 capability never enables that rail.
-- [ ] Rail pins and polarity come from the board profile; `src/app/` and the
+- [x] A device with no RS485 capability never enables that rail.
+- [x] Rail pins and polarity come from the board profile; `src/app/` and the
       sampling code name no GPIO and no active level.
 
 ## Verification

@@ -38,12 +38,12 @@ rollback republishes an old retained config.
 
 ## Acceptance criteria
 
-- [ ] A valid config is applied and persisted.
+- [x] A valid config is applied and persisted.
 - [ ] `applied_config_version` is echoed in status.
-- [ ] A config with a lower version is ignored.
-- [ ] An invalid config is rejected and the previous retained.
-- [ ] A config containing `max_ml_per_run` has no effect on the reported limits.
-- [ ] Config survives a reboot.
+- [x] A config with a lower version is ignored.
+- [x] An invalid config is rejected and the previous retained.
+- [x] A config containing `max_ml_per_run` has no effect on the reported limits.
+- [x] Config survives a reboot.
 
 ## Verification
 

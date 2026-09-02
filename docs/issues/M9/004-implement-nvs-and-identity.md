@@ -42,11 +42,11 @@ doses are infrequent, so it is acceptable — note it.
 ## Acceptance criteria
 
 - [ ] `device_id` is derived from MAC on first boot and persisted.
-- [ ] An NVS override wins over the derived value.
-- [ ] `boot_id` changes each boot.
-- [ ] Corrupt NVS starts fresh with a log and an event.
-- [ ] The dedup ring persists across a power cycle.
-- [ ] Host tests cover all of this with the fake store.
+- [x] An NVS override wins over the derived value.
+- [x] `boot_id` changes each boot.
+- [x] Corrupt NVS starts fresh with a log and an event.
+- [x] The dedup ring persists across a power cycle.
+- [x] Host tests cover all of this with the fake store.
 
 ## Verification
 

@@ -6,8 +6,10 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 through M8 are implemented and green. M9 is READY and
-has not started.**
+**Planning is complete. M0 through M8 are implemented and green. M9 is IN
+PROGRESS: its board-free work is substantially complete and its hardware
+verification is pending a physical ESP32-C3 that has been ordered and has not
+arrived.**
 
 | | State |
 |---|---|
@@ -26,7 +28,8 @@ has not started.**
 | Post-M6 correction | ✅ done (2026-08-31) — durable `command.result.ack`, offline-dose attribution by name, and the M6 report's test-count evidence; see [docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections and §13 below |
 | Post-M7 correction | ✅ done (2026-08-31) — `device.capabilities` (not `…_changed`), events for destructive changes, replayed history forwarded, and one type-checked catalogue; see [docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction and §14 below |
 | M8 | 18 issues, **DONE** — report in [docs/reports/M8.md](docs/reports/M8.md) |
-| M9-001 | ⬜ **next** — verify the ESP32 toolchain |
+| M9 | 22 issues, **IN PROGRESS** — board-free work substantially complete, hardware verification pending; report in [docs/reports/M9.md](docs/reports/M9.md) |
+| M9-022 | ⬜ **next, and hardware-blocked** — needs the board and a multimeter |
 | M15 | 14 issues, **PLANNED** — per-plant adaptive water model, added 2026-09-01 as planning only; see §15 |
 | M16 | 16 issues, **PLANNED** — verified watering, added 2026-09-01 as planning only; see §16 |
 
@@ -50,6 +53,18 @@ Without `RHIZO_REQUIRE_BROKER` they print a loud skip and pass, so a fresh clone
 is green. **With** it — as CI sets — a missing broker is a failure, because a
 suite that can silently skip its own subject eventually proves nothing.
 
+**The firmware is two workspaces, and neither is in the root one.** Running
+`cargo test --workspace` from the repository root does **not** reach either:
+
+```bash
+cd firmware/node-app  && cargo test          # 139 tests, no board, no ESP-IDF
+cd firmware/esp32-node && cargo build --release   # needs the ESP toolchain
+```
+
+`firmware/node-app` is where every firmware safety test lives. It has no ESP-IDF
+dependency and runs on the host pin (1.98.0), so it needs no setup at all. See
+[firmware/README.md](firmware/README.md).
+
 **`Metrics::new()` is a process-wide singleton.** It caches in a `OnceLock`, so
 every caller in a test binary shares one set of gauges and counters. A test that
 sets a gauge and reads it back is racing every other test that touches it —
@@ -67,6 +82,45 @@ report.
 
 Then **update this table in the same change** that moves the project on. A
 CLAUDE.md that lies about the current position is worse than none.
+
+---
+
+## 1a. The firmware, in one screen
+
+M9 built two workspaces, and the split is the thing to understand before
+touching either:
+
+```text
+firmware/node-app/    host toolchain 1.98.0, NO esp-idf dependency
+                      every safety decision: the gate's caller, the ledger,
+                      the budget, the policy store, the buffer, the wake
+                      machine. 139 tests, no board, no setup.
+firmware/esp32-node/  nightly-2026-07-01 + -Z build-std, riscv32imc-esp-espidf
+                      main.rs, run.rs (the loop), board/ (the ONLY place a
+                      GPIO number appears), hal/, net/. Produces the image.
+```
+
+ADR-007 sketched `firmware/esp32-node/src/app/` with a grep enforcing "no
+`esp_idf_*` import". A separate crate makes that structural instead, which the
+ADR explicitly permitted, and it means the safety logic is compiled by the
+project MSRV rather than by the nightly the ESP target needs.
+
+**Stock 1.98.0 cannot build `riscv32imc-esp-espidf`.** It is a tier-3 target
+with no distributed `std`, so `rustup target add` refuses it and `std` is built
+from source with `-Z build-std`, which is nightly-only. That is why one
+workspace is pinned to a dated nightly, and why only that one is.
+
+**Three Windows facts M9-001 paid for:**
+
+- `espup install --targets esp32c3` installs **no `libclang`** and the build
+  fails in bindgen *six minutes in*, after ESP-IDF is already built. Use
+  `espup install --targets all --std`.
+- espup's export script sets `LIBCLANG_PATH` **and** prepends `esp-clang/bin` to
+  `PATH`. Both are required; `LIBCLANG_PATH` alone fails with
+  `LoadLibraryExW failed`.
+- `esp-idf-sys` refuses an `OUT_DIR` over 88 characters and cargo's fixed suffix
+  uses 73, so `CARGO_TARGET_DIR` must be **15 characters or fewer**. This
+  repository's natural target directory is 47. `subst` does not help.
 
 ---
 
@@ -171,11 +225,17 @@ crates/domain/data/    presets.v1.json — the embedded species catalogue,
                        curated entries; every value carries its provenance,
                        and nothing here names a device, sensor, or schedule.
 deploy/ scripts/ test/                        compose, helper scripts, fixtures
+
+firmware/
+├── README.md         build, flash, provision, board profiles
+├── node-app/         rhizo-node-app: the safety logic, host toolchain, no
+│                     esp-idf dependency. 139 tests, no board required.
+└── esp32-node/       the ESP32-C3 image: nightly + build-std, board/, hal/, net/
 ```
 
-`firmware/esp32-node` (M9) and `ui/rhizo-ui` (M12) will be **separate
-workspaces**, excluded from the root, so `cargo test --workspace` never attempts
-a cross build. See ADR-001.
+`firmware/node-app`, `firmware/esp32-node` (both M9) and `ui/rhizo-ui` (M12) are
+**separate workspaces**, excluded from the root, so `cargo test --workspace`
+never attempts a cross build. See ADR-001 and §1a.
 
 Each crate's responsibilities and its explicit prohibitions are in
 [docs/architecture/component-model.md](docs/architecture/component-model.md) —
@@ -256,6 +316,14 @@ cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none
 cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 docker compose -f deploy/docker-compose.yml config
 cargo run -p rhizo-docscheck
+
+# The firmware, from M9. Two separate workspaces; the root `--workspace`
+# reaches neither.
+(cd firmware/node-app && cargo fmt --all --check   && cargo clippy --all-targets --all-features -- -D warnings   && cargo test --all-features)
+
+# Needs the ESP toolchain (ADR-007). On Windows CARGO_TARGET_DIR must be 15
+# characters or fewer, or `esp-idf-sys` refuses the output directory.
+(cd firmware/esp32-node && cargo build --release)
 ```
 
 `cargo test safety_` is the project's answer to "are the invariants still
@@ -607,6 +675,68 @@ correction.
 `LeakState::Unknown` (protocol §5.8 step 6), so `--sensors soil,tank` produces a
 device that refuses every dose with `leak_unknown`. Fail-closed by design, and
 the first thing to check when a simulated dose is refused.
+
+**`safety_007_simulator_refuses_like_hardware` fails under CPU contention.**
+It drives a real broker and the command carries the ordinary 120 s TTL, so a
+machine busy enough to delay processing past it produces
+`reason: "expired"` and a confusing "an oversized request is clamped, not
+refused" assertion message. Seen once during the M9 pass while Docker was
+building images; passed three times consecutively on a quiet machine. Check the
+load before investigating the gate.
+
+**The pending-result ledger does not evict, and that is a decision, not an
+omission.** Capacity 16, actuation refused at 15 with
+`RejectReason::ResultLedgerFull` — a reason added additively within v1
+(protocol §5.8 step 13a). The check is a device-local veto that runs *after*
+`validate_water_command` has accepted, so the shared gate stays the only gate
+and this can only ever stop a dose. The reserved slot exists because a refusal
+is itself a `command.result` and needs somewhere to live; without it the device
+could reach a state where it cannot record the refusal it just issued.
+**M9-017's event buffer evicts and records a gap; this one must not**, because a
+gap reports a lost *record* the edge can see while a dropped result leaves the
+edge's *arithmetic* wrong with nothing to notice. Full reasoning in ADR-014
+§Device-side pending-result ledger and [docs/reports/M9.md](docs/reports/M9.md)
+§5.
+
+**Protocol §5.10 used to permit "evicting oldest first" and no longer does.**
+That bullet predated the ledger analysis. If you are reading an older copy, the
+bound stays permitted and the eviction does not.
+
+**A rejected `command.result` carries `delivered_ml: null`, not `0.0`.** The
+conformance suite (M9-014) found the firmware publishing `Some(0.0)` on its
+first run. Both decode and both read plausibly; §5.10's table says a rejection
+credits no volume, so there is nothing to report rather than a measured zero.
+The simulator is canonical and the firmware was changed. This is the class of
+drift the conformance suite exists for, and it is why "it compiles and the tests
+pass" is not the same as "it agrees with the reference".
+
+**`credit_window` uses `%`, not a subtract-in-a-loop, and that is a safety
+property.** A corrupted RTC word can present a credit of `u64::MAX`, which is
+about 2e11 iterations against a day-long window — a watchdog reset inside the
+accounting code. Found by a host test that took 60 seconds to run.
+
+**A firmware test that greps its own source is doing the load-bearing work.**
+`node-app/tests/single_actuation_path.rs` counts call sites of
+`validate_water_command`, `evaluate_offline`, and `Pump::run_for`;
+`node-app/tests/board_isolation.rs` scans `../esp32-node/src` for GPIO literals
+and the `compile_error!` guards. They live in `node-app` rather than
+`esp32-node` because the latter cross-compiles and its `cargo test` cannot run.
+Both assert they found files first, so a moved crate fails loudly instead of
+passing vacuously.
+
+**`board_isolation` distinguishes a concrete pin from a pin-shaped parameter.**
+`active_high: bool` handed down from the board is the abstraction working;
+`const PUMP_ACTIVE_HIGH: bool = true` outside `src/board/` is the abstraction
+being undone. The test catches `gpio<digits>` tokens and `const`/`static`
+declarations whose name says pin-or-polarity and whose value is a literal — an
+earlier, cruder version flagged every `active_high` parameter in the HAL and was
+wrong to.
+
+**With no leak sensor fitted, the firmware refuses every dose.**
+`run.rs`'s `gate_inputs` reports `LeakState::Unknown` because M9 ships fake
+adapters, and the shared gate refuses `Unknown` (protocol §5.8 step 6). That is
+fail-closed and correct, and it is the first thing to check when a dose is
+refused on a bench before M10 fits a probe.
 
 **A protocol fixture's directory is part of its assertion.** Under
 `test/fixtures/protocol/invalid/`, the directory name *is* the expected typed

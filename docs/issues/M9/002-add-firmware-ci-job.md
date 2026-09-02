@@ -50,11 +50,11 @@ toolchain download.
 
 - [ ] The job builds the firmware for `riscv32imc-esp-espidf`.
 - [ ] It builds every declared board profile, from the same application code.
-- [ ] Adding a board profile is a one-line matrix change.
-- [ ] It triggers on the specified paths.
+- [x] Adding a board profile is a one-line matrix change.
+- [x] It triggers on the specified paths.
 - [ ] Caching keeps warm builds under 5 minutes.
 - [ ] A contract change that breaks the firmware fails it.
-- [ ] The Linux-container fallback is documented.
+- [x] The Linux-container fallback is documented.
 
 ## Verification
 

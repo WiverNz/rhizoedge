@@ -56,15 +56,15 @@ success without delivering.
 
 ## Acceptance criteria
 
-- [ ] All seven traits are defined.
-- [ ] `Clock::now_ms` returns `Option`.
-- [ ] Fakes exist for every trait and are configurable.
-- [ ] Fakes can simulate read errors, stuck values, and no-delivery.
-- [ ] Pin assignments live in the board profile, and no trait definition or
+- [x] All seven traits are defined.
+- [x] `Clock::now_ms` returns `Option`.
+- [x] Fakes exist for every trait and are configurable.
+- [x] Fakes can simulate read errors, stuck values, and no-delivery.
+- [x] Pin assignments live in the board profile, and no trait definition or
       adapter outside `src/board/` names a pin, port, or polarity.
-- [ ] Real adapters are constructed by the board profile and handed to the app
+- [x] Real adapters are constructed by the board profile and handed to the app
       as trait objects.
-- [ ] Host tests can drive the full app with fakes only, with **no** board
+- [x] Host tests can drive the full app with fakes only, with **no** board
       profile involved.
 
 ## Verification

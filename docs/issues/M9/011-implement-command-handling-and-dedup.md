@@ -109,29 +109,29 @@ the edge's cap which excludes manual.
 
 ## Acceptance criteria
 
-- [ ] A valid command actuates and reports `completed`.
-- [ ] A duplicate `command_id` republishes the stored result and does **not** actuate.
-- [ ] The ring survives a power cycle.
-- [ ] NVS is written before actuation.
-- [ ] **A failed NVS write aborts the dose.**
-- [ ] The device daily cap is enforced independently of the edge.
-- [ ] A result is published for every command including rejections.
-- [ ] A published result is retained until `command.result.ack` names it, and is
+- [x] A valid command actuates and reports `completed`.
+- [x] A duplicate `command_id` republishes the stored result and does **not** actuate.
+- [x] The ring survives a power cycle.
+- [x] NVS is written before actuation.
+- [x] **A failed NVS write aborts the dose.**
+- [x] The device daily cap is enforced independently of the edge.
+- [x] A result is published for every command including rejections.
+- [x] A published result is retained until `command.result.ack` names it, and is
       **not** retired by the broker's publish ack.
-- [ ] The pending-result ledger's capacity and saturation behaviour are decided
+- [x] The pending-result ledger's capacity and saturation behaviour are decided
       and written down in the M9 report, not left implicit.
-- [ ] **A saturated ledger fails closed**: no unacknowledged watering result is
+- [x] **A saturated ledger fails closed**: no unacknowledged watering result is
       silently discarded in a way that can under-count delivered water.
-- [ ] Whether new actuation is refused while saturated is stated, with its
+- [x] Whether new actuation is refused while saturated is stated, with its
       refusal reason, and the tests match the stated choice.
-- [ ] Saturation emits a durable fault or event; already-delivered water remains
+- [x] Saturation emits a durable fault or event; already-delivered water remains
       attributable while it lasts.
-- [ ] The ledger survives a reboot at saturation with no entry dropped or
+- [x] The ledger survives a reboot at saturation with no entry dropped or
       duplicated.
-- [ ] Acknowledgement frees space and restores normal operation cleanly.
-- [ ] If eviction of an unacknowledged result is adopted, its safety equivalence
+- [x] Acknowledgement frees space and restores normal operation cleanly.
+- [x] If eviction of an unacknowledged result is adopted, its safety equivalence
       is argued explicitly in the report; otherwise the firmware does not evict.
-- [ ] `grep -c validate_water_command` shows exactly one call site.
+- [x] `grep -c validate_water_command` shows exactly one call site.
 
 ## Verification
 

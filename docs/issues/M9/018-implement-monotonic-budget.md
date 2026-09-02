@@ -44,13 +44,13 @@ authoritative. Accept it and reset the local accumulator to match.
 
 ## Acceptance criteria
 
-- [ ] A reboot does not replenish `budget_used_ml`.
-- [ ] A reboot does not shorten a cooldown.
-- [ ] The budget replenishes as the window genuinely advances.
+- [x] A reboot does not replenish `budget_used_ml`.
+- [x] A reboot does not shorten a cooldown.
+- [x] The budget replenishes as the window genuinely advances.
 - [ ] A trusted wall clock, once Edge synchronisation is re-established, allows correct window advancement.
-- [ ] The edge's post-reconciliation baseline is accepted.
-- [ ] Monotonic overflow does not grant budget or clear a cooldown.
-- [ ] Host tests cover repeated reboots at random points.
+- [x] The edge's post-reconciliation baseline is accepted.
+- [x] Monotonic overflow does not grant budget or clear a cooldown.
+- [x] Host tests cover repeated reboots at random points.
 
 ## Verification
 

@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0–M8 complete; M9 next.
+**Planning status:** complete. **Implementation status:** M0–M8 complete; **M9 in progress** — its board-free work is substantially complete and its hardware verification is pending a physical ESP32-C3.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -65,7 +65,7 @@ pin may move forward deliberately
 | M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **DONE** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **DONE** |
 | M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **DONE** |
-| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | **READY** |
+| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | **IN PROGRESS** — board-free work substantially complete; hardware verification pending ([report](docs/reports/M9.md)) |
 | M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 13 | PLANNED |
 | M11 | Real Pump and Safety Hardware | Real actuation with calibration and physically verified lockouts | M10 | 14 | PLANNED |
 | M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 19 | PLANNED |
@@ -89,10 +89,12 @@ pin may move forward deliberately
 **M0 is `DONE`** — implemented, verified, and committed. It was not reopened by
 the 2026-08-26 architecture pass; the new requirements land in M1 and later.
 
-**M1–M7 are `DONE`.** M8 is `READY`: like every software milestone before it, it
-needs no hardware and every prerequisite is a preceding milestone. M9–M11 are
-`PLANNED` because they depend on physical hardware and on ADR-007's toolchain
-being executed on a real machine (M9-001). M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
+**M1–M8 are `DONE`.** **M9 is `IN PROGRESS`**: its toolchain question is
+resolved and ADR-007 corrected from a real machine (M9-001), the image builds
+for `riscv32imc-esp-espidf`, and every criterion that a host can settle has
+been settled — but no board has executed any of it, so the milestone's exit
+criteria are not met and **M10 is not `READY`**. M10–M11 remain `PLANNED`
+because they depend on physical hardware. M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
 `PLANNED` and produces documentation only. **M15 is `PLANNED` because its
 estimators need what only a real deployment produces** — real probes, a pump that
 reports delivered volume, and months of one plant's history — not because
@@ -428,7 +430,7 @@ enforces none of its own.
 
 ---
 
-### M9 — ESP32 Rust Firmware Foundation · READY
+### M9 — ESP32 Rust Firmware Foundation · IN PROGRESS
 
 **Objective.** Real firmware speaking the identical protocol, with fake sensors
 and pump, so the simulator's fidelity claim is tested.
@@ -1012,19 +1014,27 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0–M8 are `DONE`. M9 is `READY` and has not started.** The next unstarted issue is:
+**M0–M8 are `DONE`. M9 is `IN PROGRESS`.** Its board-free work is
+substantially complete and recorded in [docs/reports/M9.md](docs/reports/M9.md),
+which labels every criterion as verified without hardware, implemented with
+hardware verification pending, or not started.
+
+The next work is **hardware-blocked**, not unstarted:
 
 ```text
-M9-001 — Verify the ESP32 toolchain
+M9-022 — M9 verification and exit criteria
 ```
 
-It depends on M8-018, which is complete, so it is executable now. See
-[docs/issues/M9/001-verify-esp32-toolchain.md](docs/issues/M9/001-verify-esp32-toolchain.md)
-and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
+It needs one official Espressif ESP32-C3-DEVKITM-1-N4X and a multimeter. The
+first measurement, before a pump is wired to anything, is HIL-1's pump-line
+check across twenty resets — see [docs/reports/M9.md](docs/reports/M9.md) §8.
 
-M9 is the first milestone that needs hardware, and the first whose toolchain is
-not this workspace's: the firmware is a separate workspace with its own pin
-(ADR-001, ADR-007), so nothing it does can move the host MSRV.
+M9-001 resolved the toolchain question empirically: stock Rust 1.98.0 **cannot**
+build `riscv32imc-esp-espidf` (a tier-3 target with no distributed `std`), so
+the firmware *image* workspace pins a dated nightly with `-Z build-std`. The
+host workspace and the firmware *application* workspace are both unchanged at
+1.98.0, so the safety logic is still compiled by the project MSRV
+(ADR-001, ADR-007).
 
 M8's report is [docs/reports/M8.md](docs/reports/M8.md).
 

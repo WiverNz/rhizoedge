@@ -26,14 +26,25 @@ qualified in the table: an invariant whose device half is M9 or M11 says so in
 its status rather than claiming the whole. **No firmware or hardware work is
 claimed complete here.**
 
+**M9's board-free pass (2026-09-02) moved nothing to `ENFORCED`, deliberately.**
+The firmware now has host-tested logic for SAFETY-001, -002, -011, -012, -013,
+-015, -016, -019, -020 and -021 — boot ordering, the dedup ring across a
+simulated power cycle, `credit_elapsed`'s single narrow rule, policy activation
+interrupted at every step, gap sealing, the wake machine — and **not one line of
+it has run on silicon**. A host test with fake adapters proves the logic is
+right; it says nothing about flash, an RTC domain, a radio, or a pin. The rows
+above are qualified rather than promoted, and
+[docs/reports/M9.md](../reports/M9.md) labels every criterion with what was
+actually done to it.
+
 ---
 
 ## Summary table
 
 | ID | Invariant | Primary enforcer | Enforced at | Status |
 |---|---|---|---|---|
-| SAFETY-001 | A duplicate watering command never causes duplicate physical watering | Device + Edge | M6 (edge), M9 (device) | ENFORCED (edge, simulator) |
-| SAFETY-002 | An expired watering command never executes | Device | M6 (sim), M9 (fw) | ENFORCED (simulator) |
+| SAFETY-001 | A duplicate watering command never causes duplicate physical watering | Device + Edge | M6 (edge), M9 (device) | ENFORCED (edge, simulator); firmware logic host-tested, hardware pending |
+| SAFETY-002 | An expired watering command never executes | Device | M6 (sim), M9 (fw) | ENFORCED (simulator); firmware logic host-tested, hardware pending |
 | SAFETY-003 | Leak detected disables all watering | Edge + Device | M6 | ENFORCED |
 | SAFETY-004 | Tank below minimum disables watering | Edge + Device | M6 | ENFORCED |
 | SAFETY-005 | Stale or invalid moisture disables automatic watering | Edge | M6 | ENFORCED |
@@ -42,16 +53,16 @@ claimed complete here.**
 | SAFETY-008 | Cloud unavailability never disables local monitoring | Edge | M7 | ENFORCED |
 | SAFETY-009 | Cloud unavailability never bypasses local watering safety | Edge | M7 | ENFORCED |
 | SAFETY-010 | Edge restart never re-executes a completed command | Edge | M6 | ENFORCED |
-| SAFETY-011 | Device restart during watering converges to pump-off | Device | M9 (fw), M11 (hw) | PLANNED |
+| SAFETY-011 | Device restart during watering converges to pump-off | Device | M9 (fw), M11 (hw) | PLANNED — firmware logic host-tested; **HIL-1 not attempted** |
 | SAFETY-012 | Uncertainty defaults to not watering | Edge domain + device | M6 | ENFORCED |
-| SAFETY-013 | Autonomous action requires a validated persisted policy | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator) |
+| SAFETY-013 | Autonomous action requires a validated persisted policy | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator); firmware logic host-tested, hardware pending |
 | SAFETY-014 | Offline doses obey the same caps and hard limits as commanded doses | Device + Edge | M6 | ENFORCED |
-| SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator) |
-| SAFETY-016 | Offline actions reconcile exactly once; no dose spans the seam twice | Edge + Device | M6 (edge), M9 (device) | ENFORCED (edge) |
+| SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator); firmware `credit_elapsed` host-tested, hardware pending |
+| SAFETY-016 | Offline actions reconcile exactly once; no dose spans the seam twice | Edge + Device | M6 (edge), M9 (device) | ENFORCED (edge); firmware `event_id` stability host-tested, hardware pending |
 | SAFETY-017 | A required measurement that is missing or stale blocks autonomous action | Device | M6 | ENFORCED |
 | SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | ENFORCED |
-| SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED |
-| SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED |
+| SAFETY-019 | Policy activation is atomic; a bad update never replaces a good policy | Device | M9 | PLANNED — interruption at every step host-tested; **real flash pending** |
+| SAFETY-020 | Lost buffered history is reported as an explicit gap, never silently dropped | Device + Edge | M9 | PLANNED — firmware buffer host-tested; **real flash and replay pending** |
 | SAFETY-021 | Expected sleep is bounded and never masks an unexpected absence | Edge | M4 | ENFORCED |
 | SAFETY-022 | A learned estimate may narrow a watering decision, never widen one | Edge domain | M15 | PLANNED |
 | SAFETY-023 | An unknown delivery outcome is never credited as zero | Edge | M16 | PLANNED |

@@ -47,13 +47,13 @@ buffered events; M9-017 owns their lifecycle.
 
 ## Acceptance criteria
 
-- [ ] An isolated device with a valid enabled policy waters within bounds.
-- [ ] An isolated device with no policy never waters.
-- [ ] Elapsed time comes from the monotonic timer, not the wall clock.
-- [ ] `grep -c validate_water_command` shows exactly one call site.
-- [ ] Every refusal is buffered as an audit event with its reason.
+- [x] An isolated device with a valid enabled policy waters within bounds.
+- [x] An isolated device with no policy never waters.
+- [x] Elapsed time comes from the monotonic timer, not the wall clock.
+- [x] `grep -c validate_water_command` shows exactly one call site.
+- [x] Every refusal is buffered as an audit event with its reason.
 - [ ] Control returns to the edge on reconnection.
-- [ ] Host tests cover all of the above with fake adapters.
+- [x] Host tests cover all of the above with fake adapters.
 
 ## Verification
 

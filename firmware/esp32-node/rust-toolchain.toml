@@ -1,0 +1,16 @@
+# ADR-007's embedded-toolchain exception, resolved empirically by M9-001.
+#
+# `riscv32imc-esp-espidf` is a **tier-3** target: `rustup target add` refuses it
+# on stable 1.98.0 because no precompiled `std` is distributed, so the target's
+# `std` must be built from source with `-Z build-std`, which is nightly-only.
+# The pin is therefore a *dated* nightly rather than `nightly`, for the same
+# reason the host workspace pins an exact stable: CI runs with `-D warnings`,
+# and a floating nightly turns a green main branch red with no code change.
+#
+# The host workspace stays on 1.98.0 and is never downgraded to match this.
+# `rust-src` is what `build-std` compiles from.
+
+[toolchain]
+channel = "nightly-2026-07-01"
+components = ["rust-src", "rustfmt", "clippy"]
+profile = "minimal"

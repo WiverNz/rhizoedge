@@ -90,17 +90,17 @@ reasons — which is the only practical way to test the checksum-failure branch.
 
 ## Acceptance criteria
 
-- [ ] One image serves both power modes, selected by configuration.
-- [ ] An absent or unrecognised `power.mode` yields `AlwaysOn`.
+- [x] One image serves both power modes, selected by configuration.
+- [x] An absent or unrecognised `power.mode` yields `AlwaysOn`.
 - [ ] Always-on behaviour is unchanged; M9-001…M9-018 tests stay green.
 - [ ] The sleep announcement's PUBACK is observed before `esp_deep_sleep`.
-- [ ] A timer wake with a valid checksum credits elapsed time; a cold boot and a
+- [x] A timer wake with a valid checksum credits elapsed time; a cold boot and a
       corrupted checksum each credit zero.
-- [ ] A power cycle mid-cooldown neither shortens the cooldown nor replenishes
+- [x] A power cycle mid-cooldown neither shortens the cooldown nor replenishes
       the budget.
 - [ ] `wake_reason` is reported truthfully in status.
-- [ ] `deep_sleep` has exactly one call site, checked structurally.
-- [ ] `src/app/` still contains no `esp_idf_*` imports.
+- [x] `deep_sleep` has exactly one call site, checked structurally.
+- [x] `src/app/` still contains no `esp_idf_*` imports.
 - [ ] **With a board:** 20 consecutive wake cycles complete with no missed wake
       and no watchdog reset.
 

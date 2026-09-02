@@ -481,35 +481,63 @@ completed and reviewed before hardware arrives.
 
 ## Open questions
 
-1. **Exact `esp-idf-svc` version.** 0.52.x at the time of writing; pinned in
-   M9-001 to whatever actually builds.
-2. **Whether stock Rust 1.98.0 can build `riscv32imc-esp-espidf` directly**, or
-   whether the espup-provided channel is required. `riscv32imc-esp-espidf` is a
-   tier-3 target, so `-Z build-std` may still be needed. M9-001 resolves this
-   empirically; either outcome is contained to the firmware workspace.
-3. **Windows toolchain friction.** The primary machine is Windows and ESP-IDF is
-   better exercised on Linux. M9-001 records the real procedure; M9-002 covers
-   the documented fallback of building in a Linux container and flashing from
-   the host.
+1. ~~**Exact `esp-idf-svc` version.**~~ **Resolved 2026-09-02 (M9-001):**
+   `esp-idf-svc` 0.52.1, `esp-idf-hal` 0.46.2, `esp-idf-sys` 0.37.2,
+   `embedded-svc` 0.29.0, ESP-IDF v5.5.1. All pinned with `=` in
+   `firmware/esp32-node/Cargo.toml`; the full table is in
+   [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md).
+2. ~~**Whether stock Rust 1.98.0 can build `riscv32imc-esp-espidf` directly.**~~
+   **Resolved 2026-09-02 (M9-001): it cannot.** `rustup target add` refuses the
+   triple on 1.98.0 — it is a recognised tier-3 target with no distributed
+   `std` — so `std` is built from source with `-Z build-std=std,panic_abort`,
+   which is nightly-only. The firmware image workspace pins
+   `nightly-2026-07-01`. The host workspace is unchanged at 1.98.0, and so is
+   `firmware/node-app`, where the safety logic and its tests live.
+3. ~~**Windows toolchain friction.**~~ **Resolved 2026-09-02 (M9-001), with
+   three findings**, all recorded in ADR-007: `espup install --targets esp32c3`
+   installs no `libclang` and the build fails in bindgen six minutes in, so
+   `--targets all --std` is required; the export script's `PATH` entry is
+   load-bearing and not just `LIBCLANG_PATH`; and `esp-idf-sys` refuses an
+   output directory over 88 characters, so `CARGO_TARGET_DIR` must be short.
+   With those three the native Windows build works, and the Linux-container
+   fallback remains documented and is what M9-002's CI job exercises.
 4. **Telemetry ring size (16)** — a balance between RAM and gap tolerance. Easily
    tuned; nothing depends on it.
-5. **The pending-result ledger's capacity and saturation behaviour.** Retaining
-   results until `command.result.ack` (protocol §5.14) makes this a bounded
-   durable ledger rather than a single NVS slot, and a bounded ledger has an
-   overflow policy whether or not one is chosen deliberately. F-090-17…19 fix
-   the *invariant* — fail closed, never silently under-count delivered water —
-   and deliberately leave the *mechanism* open, because capacity depends on NVS
-   partition size, flash endurance, and the realistic depth of an edge outage,
-   none of which are known before M9 measures them.
+5. ~~**The pending-result ledger's capacity and saturation behaviour.**~~
+   **Resolved 2026-09-02 (M9-011): capacity 16, no eviction, actuation refused
+   at 15.**
 
-   M9-011 resolves it and M9-022 verifies it, against the six points in
-   [ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
-   ledger: refusal of new actuation while saturated, accounting for
-   already-delivered water, the durable fault emitted, recovery as space frees,
-   reboot/NVS persistence at the boundary, and whether any eviction policy is
-   safety-equivalent. **The simulator's `PENDING_RESULT_LIMIT = 32` with
-   oldest-evicted is not the answer** — see §Data model for why that analysis
-   does not transfer to an ESP32.
+   - **Refusal while saturated:** yes, with `RejectReason::ResultLedgerFull`, a
+     variant added additively to the shared contract (protocol §5.8 step 13a,
+     §5.10, §9). The check runs **after** `validate_water_command` has already
+     accepted, so the shared gate stays the only gate and this can only stop a
+     dose. A device that cannot record what it delivered does not deliver more.
+   - **Already-delivered water:** nothing is evicted, so every entry is still
+     held; and `delivered_today_ml` rides on every result and in
+     `device.status`, giving the edge a running total to reconcile against.
+   - **The durable fault:** latched once on the crossing into saturation and
+     cleared on the crossing back — a state, not one event per refused command
+     — reported in status with the volume the edge has not yet counted.
+   - **Recovery:** per `command_id`. An acknowledgement removes exactly the
+     named entry, one for an entry not held is a no-op, and freeing a slot
+     below the threshold clears the fault. Nothing is re-keyed, so nothing can
+     be double-counted.
+   - **Reboot at the boundary:** the ledger is persisted state, written before
+     the publish, in the inactive of two CRC-protected NVS slots. A power cut
+     leaves the previous complete state; re-publishing is expected and the edge
+     deduplicates on `command_id`.
+   - **Eviction:** **not adopted**, and no safety-equivalence argument is
+     offered, because there is not one to make.
+
+   **Why 16, and why the reserve.** 16 matches `COMMAND_DEDUP_RING`: a deeper
+   ledger could hold a result for a command the ring had forgotten. Actuation
+   stops one slot early because a refusal is itself a `command.result` and needs
+   somewhere to live — without the reserve the device could reach a state where
+   it cannot record the refusal it just issued.
+
+   Tested in `firmware/node-app/src/ledger.rs` and
+   `src/command.rs`: filling it, asserting the refusal and its reason,
+   power-cycling at the boundary, and draining it with acknowledgements.
 
 6. **Which board actually gets deployed on battery.** The XIAO ESP32-C3 is the
    candidate; a custom ESP32-C3 PCB is the plausible end state. Deliberately

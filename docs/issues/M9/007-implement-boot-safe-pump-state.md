@@ -46,13 +46,13 @@ cannot satisfy it is not a supported board.
 
 ## Acceptance criteria
 
-- [ ] `pump_off()` is the first statement in `main`.
-- [ ] A host test asserts the call ordering.
+- [x] `pump_off()` is the first statement in `main`.
+- [x] A host test asserts the call ordering.
 - [ ] The watchdog is enabled.
-- [ ] A watchdog reset path leaves the pump off.
-- [ ] The hardware pull-down requirement is documented in the board profile,
+- [x] A watchdog reset path leaves the pump off.
+- [x] The hardware pull-down requirement is documented in the board profile,
       beside the pump pin it constrains.
-- [ ] No initialisation path can energise the pump.
+- [x] No initialisation path can energise the pump.
 
 ## Verification
 

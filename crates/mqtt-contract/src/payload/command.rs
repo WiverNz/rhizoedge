@@ -98,6 +98,25 @@ pub enum RejectReason {
     TankLow,
     PumpUnavailable,
     OverDailyMax,
+    /// The device's durable pending-result ledger is saturated.
+    ///
+    /// Not a step of the shared gate. `validate_water_command` implements
+    /// protocol §5.8 steps 1–12 and this is step 13a: a **device-local
+    /// precondition on persistence**, checked after the gate has already
+    /// accepted, which can only ever turn an acceptance into a refusal.
+    ///
+    /// A device retains every `command.result` until the edge acknowledges it
+    /// with `command.result.ack` (§5.14), so a device watering while the edge
+    /// is down accumulates unacknowledged results in a bounded durable ledger.
+    /// When that ledger is full the device cannot record what a further dose
+    /// delivered — and an unrecorded dose under-counts the edge's rolling
+    /// 24-hour budget (SAFETY-006), which is the direction that waters again
+    /// too soon. So it refuses instead, and says why
+    /// ([ADR-014](../../../../docs/adr/014-failure-and-retry-policy.md)
+    /// §Device-side pending-result ledger; PRD 090 F-090-17).
+    ///
+    /// The refusal clears itself: every acknowledgement frees a slot.
+    ResultLedgerFull,
     #[serde(other)]
     Unknown,
 }

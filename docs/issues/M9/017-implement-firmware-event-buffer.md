@@ -57,13 +57,13 @@ decision* is not.
 ## Acceptance criteria
 
 - [ ] Events buffer while isolated and replay on reconnection.
-- [ ] `event_id` is identical across repeated replays.
-- [ ] Audit events survive a telemetry flood.
-- [ ] Overflow emits a gap with the correct range and count.
-- [ ] The buffer survives a reboot.
-- [ ] Unacknowledged events are replayed again.
+- [x] `event_id` is identical across repeated replays.
+- [x] Audit events survive a telemetry flood.
+- [x] Overflow emits a gap with the correct range and count.
+- [x] The buffer survives a reboot.
+- [x] Unacknowledged events are replayed again.
 - [ ] Audit events are durable across power loss; telemetry may be lost.
-- [ ] This buffer's eviction policy is **not** applied to the pending-result
+- [x] This buffer's eviction policy is **not** applied to the pending-result
       ledger (M9-011); if the two share a storage mechanism, they do not share an
       overflow decision.
 

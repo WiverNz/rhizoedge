@@ -40,11 +40,11 @@ M6's simulator-based safety tests transfer to hardware.
 
 ## Acceptance criteria
 
-- [ ] The scenario runs against both implementations.
-- [ ] Published sequences match modulo ids and timestamps.
-- [ ] Command reject reasons are identical for every refusal case.
-- [ ] A deliberate divergence fails the test.
-- [ ] It runs on the host with no board.
+- [x] The scenario runs against both implementations.
+- [x] Published sequences match modulo ids and timestamps.
+- [x] Command reject reasons are identical for every refusal case.
+- [x] A deliberate divergence fails the test.
+- [x] It runs on the host with no board.
 
 ## Verification
 

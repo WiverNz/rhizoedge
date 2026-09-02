@@ -524,3 +524,42 @@ cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
 Those commands stop a `std`-only dependency from silently breaking the firmware
 build, which ordinary host tests do not exercise
 ([ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md)).
+
+---
+
+## 13. The firmware (from M9)
+
+**`cargo test --workspace` from the repository root does not reach it.** The
+firmware is two workspaces, both excluded from the root one, and the split
+matters:
+
+```bash
+# The safety logic. No board, no ESP-IDF, no nightly, no setup at all.
+cd firmware/node-app
+cargo fmt --all --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features            # 139 tests, seconds
+```
+
+This is where SAFETY-001, -002, -007, -011, -012, -013, -015, -016, -019, -020
+and -021 are covered for the device, where the simulator/firmware conformance
+suite lives, and where the structural board-isolation checks run. **If you touch
+either shared crate, run it** — the conformance suite is what catches the
+firmware and the simulator drifting apart, and no type system does that job.
+
+Building the image itself needs the ESP toolchain and is a separate concern:
+
+```bash
+cd firmware/esp32-node
+cargo build --release
+```
+
+Setting that up is documented in [firmware/README.md](../../firmware/README.md)
+and, with the findings behind each step, in
+[ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md) §Toolchain setup.
+Three things bite on Windows and all three are recorded there: `espup` must be
+installed with `--targets all --std` or the build fails in bindgen six minutes
+in, the export script's `PATH` entry is required as well as `LIBCLANG_PATH`, and
+`CARGO_TARGET_DIR` must be 15 characters or fewer.
+
+A cold image build is about six and a half minutes; a warm rebuild is seconds.

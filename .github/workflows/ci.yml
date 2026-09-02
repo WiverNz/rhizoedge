@@ -200,13 +200,202 @@ jobs:
           fi
           echo "all $(git ls-files scripts/ | wc -l) scripts are executable"
 
+  # The firmware application logic, on the host toolchain.
+  #
+  # Separate from `rust` because `firmware/node-app` is its own workspace
+  # (ADR-001 excludes `firmware/` from the root), so `cargo test --workspace`
+  # in the root does not reach it. It is fast -- no ESP-IDF, no cross build and
+  # no nightly -- so it gates merges alongside the host tests rather than
+  # waiting behind the image build below.
+  #
+  # This is where the structural checks live: board isolation, the single
+  # actuation path, and the simulator/firmware conformance suite (M9-014).
+  firmware-app:
+    name: firmware app (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        working-directory: firmware/node-app
+        run: rustup show active-toolchain
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            firmware/node-app/target
+          key: >-
+            ${{ runner.os }}-fwapp-${{ hashFiles('firmware/node-app/rust-toolchain.toml') }}-${{ hashFiles('firmware/node-app/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-fwapp-${{ hashFiles('firmware/node-app/rust-toolchain.toml') }}-
+
+      - name: cargo fmt
+        working-directory: firmware/node-app
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        working-directory: firmware/node-app
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        working-directory: firmware/node-app
+        run: cargo test --all-features
+
+  # The ESP32-C3 image itself (M9-002).
+  #
+  # Separate and slow: `esp-idf-sys` clones ESP-IDF and builds its C components,
+  # which dominates a cold run. It is cached aggressively and triggered only by
+  # changes that can break it -- the firmware itself, or either shared crate,
+  # because a contract edit that breaks embedded compatibility is exactly what
+  # this job exists to catch (ADR-008).
+  #
+  # **A matrix over one board profile.** The point of ADR-007's board layer is
+  # that a second ESP32-C3 board costs a profile and not a refactor, and a job
+  # that hardcoded `--features board-devkitm1` would quietly make the second
+  # profile someone else's problem. Adding `board-xiao-esp32c3` is one line
+  # here, and the ESP-IDF cache is shared across legs so the marginal cost of a
+  # leg is a compile.
+  firmware-image:
+    name: firmware image (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - board-devkitm1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether anything that can break the image changed
+        id: changed
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}...${{ github.sha }}"
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          if ! git diff --name-only "$range" > /tmp/changed 2>/dev/null; then
+            echo "cannot diff $range; building to be safe"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -qE '^(firmware/|crates/mqtt-contract/|crates/policy/|[.]github/workflows/ci[.]yml)' /tmp/changed; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `libudev-dev` is what `espflash` needs; the rest is what `esp-idf-sys`
+      # bootstraps ESP-IDF with. Listed here rather than assumed, because
+      # M9-001 established that espup provides none of it.
+      - name: Install ESP-IDF prerequisites
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git wget flex bison gperf python3 python3-pip \
+            python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util \
+            libudev-dev
+
+      # The heavy half: ESP-IDF itself, its toolchain, and the LLVM whose
+      # `libclang` `esp-idf-sys`'s bindgen needs. Keyed on the pinned ESP-IDF
+      # version and the firmware toolchain, both of which live in files.
+      - name: Cache ESP-IDF and the ESP toolchain
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.rustup/toolchains/esp
+            ~/.embuild
+            firmware/esp32-node/.embuild
+          key: >-
+            ${{ runner.os }}-espidf-${{ hashFiles('firmware/esp32-node/.cargo/config.toml') }}-${{ hashFiles('firmware/esp32-node/rust-toolchain.toml') }}
+
+      - name: Cache cargo registry and target
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            firmware/esp32-node/target
+          key: >-
+            ${{ runner.os }}-fwimage-${{ matrix.profile }}-${{ hashFiles('firmware/esp32-node/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-fwimage-${{ matrix.profile }}-
+
+      # `rust-toolchain.toml` pins a dated nightly with `rust-src`, because
+      # `riscv32imc-esp-espidf` is a tier-3 target with no distributed `std`
+      # and must be built with `-Z build-std` (M9-001).
+      - name: Install the pinned firmware toolchain
+        if: steps.changed.outputs.run == 'true'
+        working-directory: firmware/esp32-node
+        run: rustup show active-toolchain
+
+      # `--targets all --std` rather than `--targets esp32c3`: a RISC-V-only
+      # install writes an *empty* export script and installs no LLVM, and
+      # `esp-idf-sys`'s bindgen then fails with "Unable to find libclang".
+      # M9-001 found this by hitting it; the comment is the finding.
+      - name: Install ldproxy and the ESP toolchain
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          cargo install ldproxy --locked
+          cargo install espup --locked
+          espup install --targets all --std
+          . "$HOME/export-esp.sh"
+          echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"
+          dirname "$LIBCLANG_PATH" >> "$GITHUB_PATH"
+
+      - name: Build the image
+        if: steps.changed.outputs.run == 'true'
+        working-directory: firmware/esp32-node
+        run: cargo build --release --no-default-features --features ${{ matrix.profile }}
+
+      - name: cargo clippy
+        if: steps.changed.outputs.run == 'true'
+        working-directory: firmware/esp32-node
+        run: >-
+          cargo clippy --release --all-targets
+          --no-default-features --features ${{ matrix.profile }} -- -D warnings
+
+      # Zero or two board profiles must fail loudly and say why. Asserted on
+      # the *message*, not on the exit status: a build that failed for an
+      # unrelated reason would otherwise look like the guard working
+      # (F-090-46).
+      - name: Exactly one board profile
+        if: steps.changed.outputs.run == 'true'
+        working-directory: firmware/esp32-node
+        run: |
+          set -euo pipefail
+          if cargo build --release --no-default-features 2>/tmp/none.txt; then
+            echo "building with no board profile succeeded; the guard is gone" >&2
+            exit 1
+          fi
+          grep -q "no board profile is selected" /tmp/none.txt
+          grep -q "board-devkitm1" /tmp/none.txt
+
+          if cargo build --release --features board-devkitm1,board-xiao-esp32c3 2>/tmp/two.txt; then
+            echo "building with two board profiles succeeded; the guard is gone" >&2
+            exit 1
+          fi
+          grep -q "exactly one board profile must be selected" /tmp/two.txt
+          echo "both guards fire with a message naming the profiles"
+
   # ---------------------------------------------------------------------------
   # Jobs added by later milestones. Listed so their absence is visible rather
   # than merely unnoticed:
   #
-  #   no_std contract build    M1-011  cargo build -p rhizo-mqtt-contract
-  #                                      --no-default-features
-  #                                      --target thumbv7em-none-eabi
-  #   firmware                 M9-002
+  #   no_std contract build    M1-011  (in `rust`, above)
+  #   firmware app             M9-002  (in `firmware-app`, above)
+  #   firmware image           M9-002  (in `firmware-image`, above)
   #   UI                       M12
   #   release                  M13

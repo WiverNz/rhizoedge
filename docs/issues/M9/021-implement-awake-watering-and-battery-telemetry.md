@@ -83,9 +83,9 @@ to an uncalibrated soil probe publishing `null`.
 
 ## Acceptance criteria
 
-- [ ] The device does not sleep while a dose is in progress, including when
+- [x] The device does not sleep while a dose is in progress, including when
       `awake_budget_seconds` is shorter than the dose.
-- [ ] The hold is released on every path, including a refused command, a failed
+- [x] The hold is released on every path, including a refused command, a failed
       publish, and a panic-free error return.
 - [ ] `command.result` is acknowledged before the sleep announcement.
 - [ ] `FIRMWARE_MAX_RUN_SECONDS` still ends a run independently of the hold.
@@ -93,9 +93,9 @@ to an uncalibrated soil probe publishing `null`.
       `status: "interrupted"`, `delivered_ml: null`, reported at the next wake.
 - [ ] `battery_voltage` appears in the telemetry batch on capable hardware and is
       **absent** on hardware without the divider.
-- [ ] `battery_percent` is absent unless a chemistry curve is configured.
+- [x] `battery_percent` is absent unless a chemistry curve is configured.
 - [ ] `battery_low` is raised once per crossing, not once per sample.
-- [ ] No battery field appears in `IrrigationInputs` or in any argument to
+- [x] No battery field appears in `IrrigationInputs` or in any argument to
       `validate_water_command`, checked structurally.
 
 ## Verification

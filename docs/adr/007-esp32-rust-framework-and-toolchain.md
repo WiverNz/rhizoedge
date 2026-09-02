@@ -2,10 +2,12 @@
 
 ## Status
 
-Accepted — 2026-08-25. Planned for M9. **Toolchain commands verified against
-upstream documentation on 2026-08-25; re-verify at the start of M9 (issue
-M9-001).** The firmware Rust version is an explicit exception to the host
-workspace's 1.98.0 pin — see "Rust version: the embedded toolchain exception".
+Accepted — 2026-08-25. **Toolchain section executed and corrected on a real
+machine on 2026-09-02 (M9-001); the commands below are what actually ran, not
+what upstream documentation described.** The firmware Rust version is an
+explicit exception to the host workspace's 1.98.0 pin, and M9-001 resolved it:
+the exception **is** required — see "Rust version: the embedded toolchain
+exception".
 
 **Amended 2026-08-31 — actual development board.** The chip commitment
 (ESP32-C3) and the *development board* commitment (official Espressif
@@ -215,58 +217,207 @@ Why this exception is expected rather than hypothetical:
   `esp-idf-sys`, `embuild`, and tier-3 `build-std` support at the time M9 runs.
   This ADR does not guess.
 
-**M9-001 resolves it empirically and records the answer here.** Its acceptance
-criteria require executing the commands below on a real machine and correcting
-this section from what actually happened. The two acceptable outcomes are:
+### Resolved 2026-09-02 (M9-001): outcome 2, a pinned nightly with `build-std`
 
-1. `firmware/esp32-node/rust-toolchain.toml` pins `channel = "1.98.0"` and the
-   build succeeds — the exception is not needed, and this subsection is trimmed
-   to say so.
-2. The build requires the espup-provided channel or a nightly with `build-std`.
-   The exact channel name and any required flags are recorded here, and the
-   divergence is isolated to the firmware workspace.
+**Stock Rust 1.98.0 cannot build `riscv32imc-esp-espidf`.** The evidence, from
+the machine:
 
-Either way the constraint is **contained**: the contract crate is `no_std` and
-dependency-light by design ([ADR-008](008-shared-code-simulator-and-firmware.md)),
-so it compiles under both toolchains, and M1-011's bare-metal check runs on the
-host toolchain independently of any ESP tooling.
+```text
+$ rustup target add riscv32imc-esp-espidf --toolchain 1.98.0-x86_64-pc-windows-msvc
+error: toolchain '1.98.0-x86_64-pc-windows-msvc' has no prebuilt artifacts
+       available for target 'riscv32imc-esp-espidf'
+note: this may happen to a low-tier target
+```
 
-### Toolchain setup (verified 2026-08-25)
+`rustc --print target-list` *knows* the target — it is a recognised tier-3
+triple — but rustup distributes no `std` for it, so `std` must be built from
+source with `-Z build-std=std,panic_abort`, which is nightly-only. The
+firmware workspace therefore pins:
 
-```bash
-# 1. Cargo subcommands
-cargo install cargo-generate
-cargo install ldproxy
-cargo install espflash
-cargo install cargo-espflash      # optional
-cargo install espup               # provisions the ESP-IDF environment
+```toml
+# firmware/esp32-node/rust-toolchain.toml
+[toolchain]
+channel = "nightly-2026-07-01"        # rustc 1.98.0-nightly (f46ec5218 2026-06-30)
+components = ["rust-src", "rustfmt", "clippy"]
+```
 
-# 2. ESP toolchain + ESP-IDF environment
-espup install
+A **dated** nightly rather than `nightly`, for the same reason the host
+workspace pins an exact stable: CI runs clippy with `-D warnings`, and a
+floating nightly turns a green main branch red with no code change.
 
-# 3. Source the generated export script in EVERY shell that builds firmware
-#    Linux/macOS:
-. $HOME/export-esp.sh
-#    Windows: espup generates a PowerShell export script; M9-001 records its
-#    exact path and invocation after verifying it on this machine.
+`rust-src` is what `build-std` compiles from, and the flag lives in
+`firmware/esp32-node/.cargo/config.toml` so a bare `cargo build --release`
+works:
 
-# 4. Build and flash
+```toml
+[unstable]
+build-std = ["std", "panic_abort"]
+```
+
+Three things this does **not** change, and they are the reason the exception is
+tolerable:
+
+- **The host workspace stays on 1.98.0.** It is a different workspace with its
+  own `rust-toolchain.toml`, and nothing here reaches it.
+- **The firmware *application* logic also stays on 1.98.0.**
+  `firmware/node-app` is its own workspace on the host pin, so the safety logic
+  — the actuation gate's caller, the ledger, the budget, the policy store — is
+  compiled by the same compiler as the rest of the project, and its 139 tests
+  run with no ESP tooling installed at all.
+- **The shared crates are unaffected.** `rhizo-mqtt-contract` and `rhizo-policy`
+  are `no_std` and dependency-light by design
+  ([ADR-008](008-shared-code-simulator-and-firmware.md)), and M1-011's
+  bare-metal check still runs on the host toolchain.
+
+### Toolchain setup (executed 2026-09-02, M9-001)
+
+What follows is what actually ran on the primary Windows 11 machine, in order,
+from a clean shell. Three of the steps exist because of something that failed
+first; those are called out.
+
+```powershell
+# 1. Cargo subcommands. `cargo-generate` is not needed -- the firmware crate
+#    exists and is not generated from a template.
+cargo install espup ldproxy
+cargo install espflash            # needed only to flash; not needed to build
+
+# 2. The ESP toolchain.
+#
+#    `--targets all --std`, NOT `--targets esp32c3`.
+espup install --targets all --std
+
+# 3. Apply the generated export script in EVERY shell that builds firmware.
+#    Windows: espup writes it to the home directory as a PowerShell script.
+. $HOME\export-esp.ps1
+#    Linux/macOS:  . $HOME/export-esp.sh
+
+# 4. Build. The target, linker, build-std flag, MCU and ESP-IDF version all
+#    come from firmware/esp32-node/.cargo/config.toml, so this is the whole
+#    command.
 cd firmware/esp32-node
 cargo build --release
+
+# 5. Flash (needs a board).
 espflash flash target/riscv32imc-esp-espidf/release/esp32-node --monitor
 ```
 
-Notes:
+#### Corrections to the previous version of this section
 
-- `espup` is strictly required only for Xtensa targets; the upstream toolchain
-  can build RISC-V. We use `espup` anyway because it also provisions the
-  ESP-IDF C environment that `esp-idf-sys` needs, which is the harder half.
-- On Linux, `libudev-dev` is required for `espflash`.
-- ESP-IDF must **not** be cloned or activated manually; `esp-idf-sys` manages it.
+**`espup` does *not* provision the ESP-IDF C environment.** The previous text
+said it did, and gave that as the reason for using it on a RISC-V target at
+all. It does not: `esp-idf-sys`'s build script clones ESP-IDF itself and
+installs its own toolchain, cmake, ninja and Python virtualenv into
+`<drive>/.embuild/espressif`. ESP-IDF must still **not** be cloned or activated
+manually — that part was right — but for the opposite reason: `esp-idf-sys`
+already owns it.
 
-**Anything above that fails on first contact in M9 is a bug in this ADR, not in
-the developer.** M9-001's explicit job is to run these commands on a real
-machine and correct this section.
+**`espup install --targets esp32c3` is not sufficient, and fails late.** For a
+RISC-V-only selection espup adds the three bare-metal `riscv32*-unknown-none-elf`
+targets to the stable toolchain, writes an **empty** export script, and installs
+no LLVM. The build then gets all the way through cloning ESP-IDF and compiling
+its ~110 C components — about six minutes — before failing in bindgen with:
+
+```text
+Unable to find libclang: "couldn't find any valid shared libraries matching:
+['clang.dll', 'libclang.dll'], set the `LIBCLANG_PATH` environment variable"
+```
+
+The `libclang` `esp-idf-sys` needs ships with the LLVM espup installs alongside
+the **Xtensa** toolchain, which is why `--targets all` is required even though
+nothing here builds for Xtensa. `--std` skips the GCC install, which
+`esp-idf-sys` provides.
+
+**Both halves of the export script are load-bearing on Windows.** It sets
+`LIBCLANG_PATH` to the DLL *and* prepends the `esp-clang/bin` directory to
+`PATH`. Setting only `LIBCLANG_PATH` fails with
+`LoadLibraryExW failed` — the DLL is found and cannot be loaded, because its
+dependencies (`libwinpthread-1.dll` and friends) live in that directory.
+Measured both ways.
+
+#### Windows: the path-length limit, which is a hard stop
+
+`esp-idf-sys` refuses an output directory longer than **88 characters** after
+canonicalisation:
+
+```text
+Error: Too long output directory: `\\?\D:\Projects\rhizoedge\firmware\esp32-node\target\...`.
+Shorten your project path down to no more than 10 characters (or use WSL2 and
+its native Linux filesystem). Note that tricks like Windows `subst` do NOT work!
+```
+
+The check is on `OUT_DIR`, and the fixed suffix cargo appends
+(`\riscv32imc-esp-espidf\release\build\esp-idf-sys-<16 hex>\out`, plus the
+`\\?\` prefix) is 73 characters on its own — so **`CARGO_TARGET_DIR` must be
+15 characters or fewer**. This repository's natural target directory is 47.
+
+The measure that works, and the one this project uses:
+
+```powershell
+$env:CARGO_TARGET_DIR = "D:\rzt"      # any short path on any drive
+```
+
+`ESP_IDF_PATH_ISSUES=warn` downgrades the check to a warning, and is recorded
+here only so nobody has to find it: it does not make the underlying Windows
+`MAX_PATH` problem go away, it just moves where the build fails.
+
+#### The Linux-container fallback
+
+Still the documented alternative, and M9-002's CI job is the reference for it:
+build in a Linux environment and flash from the host. On this machine the
+native Windows path works with the short `CARGO_TARGET_DIR`, so the fallback is
+not required — but it remains the answer if a future ESP-IDF version tightens
+the path limit further.
+
+#### Versions that actually build
+
+| Component | Version |
+|---|---|
+| Firmware toolchain | `nightly-2026-07-01` (rustc 1.98.0-nightly, f46ec5218) |
+| Host toolchain (unchanged) | 1.98.0 |
+| Target | `riscv32imc-esp-espidf` |
+| `esp-idf-svc` | **0.52.1** |
+| `esp-idf-hal` | **0.46.2** (the ADR previously guessed 0.45) |
+| `esp-idf-sys` | **0.37.2** (previously guessed 0.36) |
+| `embedded-svc` | **0.29.0** (previously guessed 0.28) |
+| `embuild` (build-dependency) | 0.33.4 |
+| ESP-IDF | **v5.5.1**, pinned in `.cargo/config.toml` |
+| `bindgen` (transitive) | 0.71.1 |
+| `espup` | 0.17.1 |
+| `ldproxy` | 0.3.5 |
+| Python (host, accepted by IDF 5.5.1) | 3.14.2 |
+| git | 2.55.0 |
+
+Every one is pinned with `=` in `firmware/esp32-node/Cargo.toml`.
+
+#### Environment
+
+```text
+CARGO_TARGET_DIR   a path of 15 characters or fewer (Windows only, see above)
+LIBCLANG_PATH      set by export-esp.ps1 / export-esp.sh
+PATH               must include the esp-clang/bin directory (same script)
+MCU                esp32c3          } both set in .cargo/config.toml, so they
+ESP_IDF_VERSION    v5.5.1           } are not a per-shell concern
+```
+
+#### Build times, measured
+
+| | |
+|---|---|
+| espup + ldproxy install | ~2 min |
+| ESP-IDF clone, tool install, and C build (first time) | **341 s**, ~5.4 GB in `.embuild` |
+| Rust compile after that, first time | ~30 s |
+| Warm rebuild after a source edit | **~2.5 s** |
+| Rebuild after `cargo clean -p esp-idf-sys` | ~30 s |
+
+So a genuinely cold build is about **six and a half minutes** plus downloads,
+and every build after that is seconds. The "~10 min" this ADR estimated was the
+right order of magnitude.
+
+#### Offline and repeated builds
+
+Verified. Once `.embuild` and the cargo registry are populated, repeated builds
+need no network: ESP-IDF is cloned once to a pinned tag and reused, and the
+`=`-pinned crate versions resolve from the local registry.
 
 ### Build without a board attached
 
@@ -278,31 +429,61 @@ CI runs the firmware build in a **separate, non-blocking-for-host-tests job**,
 because the ESP-IDF toolchain download is slow. It is cached aggressively and
 runs only when `firmware/**` or `crates/mqtt-contract/**` changes.
 
-### Firmware structure
+### Firmware structure (as built, M9-003)
 
 ```text
-firmware/esp32-node/
-├── Cargo.toml            # own workspace; board-* features declared here
-├── rust-toolchain.toml
-├── build.rs              # embuild / esp-idf-sys
-├── sdkconfig.defaults
-├── .cargo/config.toml    # target, linker = ldproxy, runner = espflash
-└── src/
-    ├── main.rs           # pump-off FIRST, then init
-    ├── board/            # THE ONLY place a GPIO number may appear
-    │   ├── mod.rs        # profile selection, the board trait/struct, compile_error!
-    │   ├── devkitm1.rs   # ESP32-C3-DEVKITM-1-N4X pin map/peripheral construction
-    │   └── xiao_esp32c3.rs   # added with the battery hardware, not before
-    ├── net/              # wifi.rs, mqtt.rs, time_sync.rs
-    ├── sensors/          # trait defs + fake/ + real/
-    ├── pump/             # trait def + fake/ + real/
-    ├── safety/           # hard limits, dedup ring, TTL check
-    ├── nvs.rs            # persisted state
-    └── app/              # host-testable orchestration (no ESP-IDF imports)
+firmware/
+├── node-app/                 # WORKSPACE A -- host toolchain 1.98.0
+│   ├── Cargo.toml            #   no ESP-IDF dependency, by construction
+│   ├── rust-toolchain.toml   #   1.98.0, the project MSRV
+│   ├── src/                  #   ports, fakes, boot, persist, identity,
+│   │                         #   command, ledger, dedup, recovery, config,
+│   │                         #   policy, offline, budget, buffer, power,
+│   │                         #   awake_hold, sampling, telemetry, provision
+│   └── tests/                #   conformance, board_isolation,
+│                             #   single_actuation_path
+└── esp32-node/               # WORKSPACE B -- nightly + build-std, ESP target
+    ├── Cargo.toml            #   board-* features declared here
+    ├── rust-toolchain.toml   #   nightly-2026-07-01 (see the exception above)
+    ├── build.rs              #   embuild / esp-idf-sys
+    ├── sdkconfig.defaults
+    ├── .cargo/config.toml    #   target, ldproxy, espflash, build-std, MCU
+    └── src/
+        ├── main.rs           #   pump-off FIRST, then init, then the loop
+        ├── run.rs            #   the session loop: moves bytes and time only
+        ├── board/            #   THE ONLY place a GPIO number may appear
+        │   ├── mod.rs        #     profile selection, the trait, compile_error!
+        │   └── devkitm1.rs   #     ESP32-C3-DEVKITM-1-N4X pin map
+        ├── hal/              #   ESP-IDF adapters for node-app's traits
+        └── net/              #   wifi.rs, mqtt.rs, session.rs
 ```
 
-The `app/` module contains no `esp_idf_*` imports and is compiled and tested on
-the host with fake adapters. That is where the safety-relevant logic lives.
+**This differs from the layout sketched above, and the difference is an
+improvement.** The sketch put the host-testable layer in
+`firmware/esp32-node/src/app/` and enforced "no `esp_idf_*` import" with a
+grep. Splitting it into its own crate makes the same property structural — the
+crate has no ESP-IDF dependency, so an ESP-IDF symbol there does not compile —
+and this ADR already permitted it: *"a cleaner separation that achieves the
+same isolation is acceptable, and the isolation is the requirement."*
+
+Two consequences, both wanted:
+
+- the safety logic is compiled and tested by the **host** toolchain pin
+  (1.98.0), not by the nightly `riscv32imc-esp-espidf` requires;
+- `cargo test` in `firmware/node-app` needs no target flag, no `build-std`, and
+  no ESP-IDF installation, so a contributor with none of that can still run the
+  safety suite.
+
+`src/board/` is the board layer, and it is the **only** place a literal GPIO
+number, a pin polarity, or a board-specific peripheral construction may appear.
+Everything above it receives already-constructed trait objects and cannot
+observe which board it is running on.
+
+Time synchronisation has no `time_sync.rs`: the `edge.time` rules live in
+`rhizo_mqtt_contract::payload::TimeSyncState`, which the simulator uses too, and
+`hal/clock.rs` holds one rather than reimplementing it. A second copy on the
+device is how a device comes to claim synchronisation it does not have, and
+there is no way to detect that from the edge.
 
 `src/board/` is the board layer, and it is the **only** place a literal GPIO
 number, a pin polarity, or a board-specific peripheral construction may appear.
@@ -402,14 +583,17 @@ Negative, accepted:
 
 ## Risks
 
-- **The verified commands drift** before M9 begins. *Mitigation:* M9-001 is
-  explicitly a verification issue that re-runs and corrects this section, and
-  this ADR carries a re-verify note in its Status.
-- **Windows toolchain friction.** The primary development machine is Windows,
-  and the ESP-IDF build is better exercised on Linux. *Mitigation:* M9-001
-  records the exact Windows procedure; if it proves painful, the documented
-  fallback is building firmware in a Linux container while flashing from the
-  host, which M9-002 covers.
+- **The verified commands drift.** *Mitigation:* M9-001 executed and corrected
+  this section on 2026-09-02, and M9-002's CI job runs the same install and
+  build on every change to `firmware/**` or either shared crate — so drift
+  fails a job rather than a developer.
+- **Windows toolchain friction.** *Realised, and resolved.* Three distinct
+  problems, all recorded above with their measures: espup installs no
+  `libclang` for a RISC-V-only selection, the export script's `PATH` entry is
+  required and not just `LIBCLANG_PATH`, and `esp-idf-sys` refuses an output
+  directory over 88 characters. With a short `CARGO_TARGET_DIR` the native
+  Windows build works; the Linux-container fallback remains documented and is
+  what CI exercises.
 - **RISC-V `esp-idf` target support regressing** in an upstream Rust release.
   *Mitigation:* the firmware workspace pins its own toolchain version, which is
   exactly why it is a separate workspace. A regression there cannot affect host

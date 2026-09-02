@@ -88,19 +88,19 @@ and bare pin-number constants — and keep the allowed exception list to
 
 ## Acceptance criteria
 
-- [ ] `cargo build --release` succeeds with no board attached.
-- [ ] The contract crate is a path dependency with default features off.
-- [ ] `cargo test` runs host tests in the firmware workspace.
-- [ ] The protocol fixture corpus runs and passes here too.
-- [ ] `grep -r esp_idf firmware/esp32-node/src/app` returns nothing.
-- [ ] `board-devkitm1` exists, is the documented default profile, and builds.
-- [ ] Building with **no** board feature fails with a `compile_error!` naming the
+- [x] `cargo build --release` succeeds with no board attached.
+- [x] The contract crate is a path dependency with default features off.
+- [x] `cargo test` runs host tests in the firmware workspace.
+- [x] The protocol fixture corpus runs and passes here too.
+- [x] `grep -r esp_idf firmware/esp32-node/src/app` returns nothing.
+- [x] `board-devkitm1` exists, is the documented default profile, and builds.
+- [x] Building with **no** board feature fails with a `compile_error!` naming the
       available profiles; building with **two** fails the same way.
-- [ ] Nothing outside `src/board/` names a GPIO number, a pin polarity, or a
+- [x] Nothing outside `src/board/` names a GPIO number, a pin polarity, or a
       board-specific peripheral constructor.
-- [ ] The structural board-isolation test exists, fails when a pin literal is
+- [x] The structural board-isolation test exists, fails when a pin literal is
       planted in `src/app/`, and passes once it is removed.
-- [ ] The rest of the firmware obtains peripherals through the board interface
+- [x] The rest of the firmware obtains peripherals through the board interface
       and cannot observe which board profile is active.
 
 ## Verification

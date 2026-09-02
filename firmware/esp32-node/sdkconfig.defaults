@@ -1,0 +1,19 @@
+# The main task needs room for JSON encoding plus the MQTT client's own frames.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=10000
+
+# The interrupt watchdog and the task watchdog are both enabled: F-090-38
+# requires a hardware watchdog, and a watchdog reset must leave the pump off,
+# which it does because `main` drives the pump inactive as its first statement.
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_ESP_INT_WDT=y
+
+# Brownout detection resets rather than browning out mid-write, which is what
+# makes "an interrupted dose is detectable on the next boot" true rather than
+# hopeful.
+CONFIG_ESP_BROWNOUT_DET=y
+
+# NVS holds the dedup ring, the policy, the in-flight dose, and the pending
+# result ledger. It is safety state, so it gets its own generous partition
+# rather than sharing the default.
+CONFIG_NVS_ASSERT_ERROR_CHECK=y

@@ -1,0 +1,60 @@
+# The ESP32-C3 firmware image (ADR-007).
+#
+# Its own workspace with its own toolchain pin, excluded from the root
+# workspace, so `cargo test --workspace` never attempts a cross build
+# (ADR-001).
+#
+# This crate is the *adapter* layer: ESP-IDF implementations of the traits in
+# `rhizo-node-app`, plus `src/board/`, which is the only place a GPIO number may
+# appear. Every safety-relevant decision lives in `rhizo-node-app`, which has no
+# ESP-IDF dependency and is tested on the host.
+
+[workspace]
+members = ["."]
+
+[package]
+name = "esp32-node"
+description = "Rhizo Edge ESP32-C3 plant node firmware"
+version = "0.1.0"
+edition = "2021"
+license = "LicenseRef-Rhizo-Edge-Proprietary"
+publish = false
+resolver = "2"
+
+[features]
+default = ["board-devkitm1"]
+# Exactly one board profile per build. Zero or two is a `compile_error!` in
+# `src/board/mod.rs` naming the available profiles (F-090-46).
+board-devkitm1 = []
+# Reserved. ADR-007 names the Seeed XIAO ESP32-C3 as a *candidate* battery
+# board; it is not purchased and nothing about it is measured, so M9 ships the
+# seam and not an unverifiable pin map. Selecting this feature today fails the
+# build with a message saying exactly that.
+board-xiao-esp32c3 = []
+
+[dependencies]
+# By path, default features off (F-090-04). One source of truth on disk, so the
+# firmware and the host cannot drift.
+rhizo-mqtt-contract = { path = "../../crates/mqtt-contract", default-features = false }
+rhizo-policy = { path = "../../crates/policy", default-features = false }
+rhizo-node-app = { path = "../node-app" }
+
+# Pinned exactly. M9-001 verified this set builds for `riscv32imc-esp-espidf`.
+esp-idf-svc = "=0.52.1"
+esp-idf-hal = "=0.46.2"
+esp-idf-sys = "=0.37.2"
+embedded-svc = "=0.29.0"
+log = { version = "0.4", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+uuid = { version = "1.25.0", default-features = false }
+
+[build-dependencies]
+embuild = { version = "=0.33.4", features = ["espidf", "elf"] }
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"

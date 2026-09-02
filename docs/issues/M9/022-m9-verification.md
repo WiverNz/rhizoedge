@@ -72,19 +72,19 @@ Everything else in M9 can be verified on the host.
 
 ## Acceptance criteria
 
-- [ ] `cargo build --release` succeeds for the ESP target with no board.
+- [x] `cargo build --release` succeeds for the ESP target with no board.
 - [ ] The CI firmware job passes.
-- [ ] ADR-007's toolchain section has been executed and corrected.
-- [ ] ADR-007's firmware-structure section matches the board layer as built.
-- [ ] `board-devkitm1` builds; zero or two board features fail with a clear
+- [x] ADR-007's toolchain section has been executed and corrected.
+- [x] ADR-007's firmware-structure section matches the board layer as built.
+- [x] `board-devkitm1` builds; zero or two board features fail with a clear
       `compile_error!` naming the available profiles.
-- [ ] The structural board-isolation check passes: no GPIO number, pin polarity,
+- [x] The structural board-isolation check passes: no GPIO number, pin polarity,
       or board-specific peripheral construction outside `src/board/`.
-- [ ] The `app/` host tests are board-independent — they pass with no board
+- [x] The `app/` host tests are board-independent — they pass with no board
       profile selected, and their results do not vary by profile.
 - [ ] CI builds every declared board profile from the same application code.
-- [ ] Host tests cover boot safety, interrupted dose, dedup ring, and command validation.
-- [ ] **The pending-result ledger's saturation behaviour is decided, documented,
+- [x] Host tests cover boot safety, interrupted dose, dedup ring, and command validation.
+- [x] **The pending-result ledger's saturation behaviour is decided, documented,
       and tested** (M9-011): the ledger fails closed when full, no unacknowledged
       watering result is silently discarded in a way that can under-count
       delivered water, saturation is visible as a durable fault, the state
@@ -92,9 +92,9 @@ Everything else in M9 can be verified on the host.
       operation without loss or double-counting. If any eviction of an
       unacknowledged result was adopted, the report argues its safety
       equivalence explicitly.
-- [ ] PRD 090 Open question 5 is **resolved**, with the chosen capacity and
+- [x] PRD 090 Open question 5 is **resolved**, with the chosen capacity and
       behaviour recorded there and in ADR-014.
-- [ ] The conformance test shows identical behaviour to the simulator.
+- [x] The conformance test shows identical behaviour to the simulator.
 - [ ] **With a board:** it connects, appears online, publishes telemetry, applies config.
 - [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
 - [ ] **With a board:** an oversized command is clamped or rejected.

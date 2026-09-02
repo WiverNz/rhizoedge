@@ -265,6 +265,67 @@ and the realistic depth of an edge outage are M9 measurements, and a number
 chosen in an ADR before any of them are known would be a guess with an
 authoritative typeface.
 
+#### The decision, recorded 2026-09-02 (M9-011)
+
+**Capacity 16. No eviction. Actuation refused at 15.**
+
+Against the six points above, in order:
+
+1. **New actuation is refused while saturated**, with
+   `RejectReason::ResultLedgerFull` — a variant added to the shared contract in
+   the same change, additively within v1 (mqtt-v1.md §5.8 step 13a, §5.10, §9).
+   The check is a **device-local veto that runs after** `validate_water_command`
+   has already accepted, so the shared gate stays the only gate and this can
+   only ever stop a dose. A device that cannot record what it delivered does not
+   deliver more.
+
+   The reason is a new variant rather than a reused one on purpose. Refusing
+   with `pump_unavailable` would have avoided a protocol change and told the
+   edge something false: the pump is fine, and an operator chasing a pump fault
+   that does not exist is worse served than one told the ledger is full. Both
+   ends already decode an unknown reason to `RejectReason::Unknown`, so a device
+   or an edge that predates the variant still interoperates.
+
+2. **Already-delivered water stays attributable** two ways. Nothing is evicted,
+   so every entry is still held. Independently, `delivered_today_ml` rides on
+   every `command.result` and in `device.status`, giving the edge a running
+   total to reconcile against even while individual results are in flight —
+   that is the aggregated form this point asks about, and it already existed.
+
+3. **Saturation is visible.** Crossing the threshold raises a durable fault,
+   latched once per episode rather than once per refused command, and cleared on
+   the crossing back. It is reported in status and logged with the volume the
+   edge has not yet been able to count, so the outage is quantified rather than
+   merely flagged.
+
+4. **Recovery is per `command_id`.** An acknowledgement removes exactly the
+   named entry; one for an entry not held is a no-op (§5.14); freeing a slot
+   below the threshold clears the fault and re-enables actuation. Nothing is
+   re-keyed or renumbered, so nothing can be double-counted.
+
+5. **Reboot at the boundary is safe.** The ledger is part of the persisted
+   state, written before the publish, and the NVS store writes to the inactive
+   of two CRC-protected slots before switching the active pointer — so a power
+   cut leaves the previous complete state. Re-publishing after a reboot is
+   expected and the edge deduplicates on `command_id`.
+
+6. **No eviction of an unacknowledged result is adopted**, and no
+   safety-equivalence argument is offered, because there is not one to make.
+
+**The reserved slot.** Capacity is 16 and actuation stops at 15. The reserve is
+not tidiness: a refusal is *itself* a `command.result` and needs somewhere to
+live, so without it the device could reach a state where it cannot record the
+refusal it just issued. If the ledger is nonetheless completely full — several
+commands arriving while saturated — a **rejection** is published once,
+un-ledgered and unretried. That is sound for exactly one class of result and no
+other: a rejection reports zero delivered water, so losing it cannot under-count
+anything, and the saturation fault carries the condition durably regardless.
+
+**Why 16.** It matches `COMMAND_DEDUP_RING`, which already bounds how many
+distinct commands the device can remember at all. A deeper ledger could hold a
+result for a command the ring had forgotten; the two structures answer for the
+same commands and are sized together deliberately.
+
 ## Alternatives considered
 
 **Fixed-interval retry.** Rejected: either too slow to recover or too aggressive

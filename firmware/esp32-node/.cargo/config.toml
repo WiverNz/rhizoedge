@@ -1,0 +1,21 @@
+[build]
+target = "riscv32imc-esp-espidf"
+
+[target.riscv32imc-esp-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+# `espidf_time64` matches ESP-IDF 5.x's 64-bit `time_t`. Omitting it produces a
+# binary that builds and then disagrees with the C SDK about the size of a
+# timestamp, which is the worst class of bug this project could have.
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+# Tier-3 target: no `std` is distributed, so it is built from source. See
+# rust-toolchain.toml.
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32c3"
+# Pinned. `esp-idf-sys` clones and builds this itself; espup does not provide
+# it (M9-001).
+ESP_IDF_VERSION = "v5.5.1"

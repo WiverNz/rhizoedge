@@ -74,15 +74,15 @@ above all not `synced_at_monotonic`.
 - [ ] The LWT is set **before** connect, asserted by a host test.
 - [ ] `clean_session` is true.
 - [ ] Retained online status is published on connect.
-- [ ] It subscribes to the eight exact topics of protocol §3 and to no
+- [x] It subscribes to the eight exact topics of protocol §3 and to no
       wildcard, so no subscription can match a topic it publishes.
-- [ ] It does **not** subscribe to `commands/result`.
+- [x] It does **not** subscribe to `commands/result`.
 - [ ] Killing power produces the LWT within the keepalive window.
-- [ ] Applying an `edge.time` makes `clock_synced` true.
-- [ ] An `edge.time` older than the last applied one is **ignored**.
-- [ ] An `edge.time` **equal** to the last applied one is ignored and does not
+- [x] Applying an `edge.time` makes `clock_synced` true.
+- [x] An `edge.time` older than the last applied one is **ignored**.
+- [x] An `edge.time` **equal** to the last applied one is ignored and does not
       refresh `synced_at_monotonic`.
-- [ ] `clock_synced` becomes false once the last sync exceeds `TIME_SYNC_MAX_AGE_SECONDS`.
+- [x] `clock_synced` becomes false once the last sync exceeds `TIME_SYNC_MAX_AGE_SECONDS`.
 - [ ] Withholding `edge.time` leaves `clock_synced` false, reported as such, with
       telemetry unaffected.
 

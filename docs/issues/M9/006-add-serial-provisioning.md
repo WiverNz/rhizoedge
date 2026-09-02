@@ -39,11 +39,11 @@ never appear in a binary or a log.
 ## Acceptance criteria
 
 - [ ] All provisioning commands work and persist to NVS.
-- [ ] `show` redacts secrets.
+- [x] `show` redacts secrets.
 - [ ] Settings take effect after reboot.
 - [ ] Provisioning is unavailable at runtime without an explicit unlock.
-- [ ] One firmware image works for multiple devices.
-- [ ] The procedure is documented.
+- [x] One firmware image works for multiple devices.
+- [x] The procedure is documented.
 
 ## Verification
 

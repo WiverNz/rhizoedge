@@ -1,0 +1,46 @@
+# Host-testable firmware application logic (ADR-007 §Firmware structure).
+#
+# Its own workspace, deliberately. ADR-007 requires that the application layer
+# contain no `esp_idf_*` import so SAFETY-002, -007, -011, -013…-021 are
+# host-testable with no board. A separate crate that does not depend on
+# `esp-idf-sys` at all makes that structurally impossible to violate rather
+# than grep-enforced, and lets these tests run on the *host* toolchain pin
+# (1.98.0) instead of the nightly the ESP-IDF target needs (M9-001).
+#
+# `firmware/` is excluded from the root workspace (ADR-001), so this is not a
+# member of it; the two shared crates are path dependencies with default
+# features off (F-090-04).
+
+[workspace]
+members = ["."]
+
+[package]
+name = "rhizo-node-app"
+description = "ESP32 plant-node application logic, host-testable with fake adapters"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-Rhizo-Edge-Proprietary"
+rust-version = "1.98.0"
+repository = "https://github.com/wivernz/rhizoedge"
+publish = false
+
+[dependencies]
+rhizo-mqtt-contract = { path = "../../crates/mqtt-contract", default-features = false }
+rhizo-policy = { path = "../../crates/policy", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+uuid = { version = "1.25.0", default-features = false, features = ["serde"] }
+
+[dev-dependencies]
+proptest = "1.11.0"
+device-simulator = { path = "../../crates/device-simulator" }
+clap = { version = "4.6.6", features = ["derive", "env"] }
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "warn"

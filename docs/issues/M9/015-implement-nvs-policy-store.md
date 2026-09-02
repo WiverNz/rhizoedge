@@ -44,13 +44,13 @@ threshold nobody authorised is precisely what SAFETY-013 forbids.
 
 ## Acceptance criteria
 
-- [ ] A valid policy is staged, verified, activated, and acknowledged.
-- [ ] Interruption at every step leaves exactly one valid active policy.
-- [ ] A lower or equal `policy_version` is ignored.
-- [ ] A corrupt store refuses to activate and substitutes no default.
-- [ ] An invalid policy leaves the previous one active.
-- [ ] `applied_policy_versions` is reported accurately.
-- [ ] All of the above are covered by host tests with no board.
+- [x] A valid policy is staged, verified, activated, and acknowledged.
+- [x] Interruption at every step leaves exactly one valid active policy.
+- [x] A lower or equal `policy_version` is ignored.
+- [x] A corrupt store refuses to activate and substitutes no default.
+- [x] An invalid policy leaves the previous one active.
+- [x] `applied_policy_versions` is reported accurately.
+- [x] All of the above are covered by host tests with no board.
 
 ## Verification
 

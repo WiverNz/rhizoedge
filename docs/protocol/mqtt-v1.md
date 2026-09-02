@@ -815,12 +815,31 @@ The device MUST evaluate these checks in this order and MUST publish a
 12. run_ms = effective_ml / pump.ml_per_second * 1000
     if run_ms > FIRMWARE_MAX_RUN_SECONDS * 1000
         → CLAMP run_ms, recompute effective_ml, set clamped = true [SAFETY-007]
+13a. the device's durable pending-result ledger is saturated
+        → reject(result_ledger_full)     [SAFETY-006, ADR-014]
 13. persist (command_id, started_at, requested_ml) to NVS   [SAFETY-011]
 14. actuate
 ```
 
 Steps 10 and 12 clamp; every other failure rejects. Step 13 **MUST** complete
 before step 14, so an interrupted dose is detectable on the next boot.
+
+**Step 13a is a device-local precondition on persistence, not a step of the
+shared gate.** `validate_water_command` implements steps 1–12 and knows nothing
+about it; a device applies 13a *after* the gate has already accepted, so it can
+only ever turn an acceptance into a refusal and never the reverse. It is written
+here so the reason a device may emit is documented in one place, not because the
+gate grew a step.
+
+A device retains every `command.result` until the edge acknowledges it (§5.14),
+so one that waters while the edge is down accumulates unacknowledged results in
+a bounded durable ledger. When that ledger is full the device cannot record what
+a further dose delivered, and an unrecorded dose under-counts the edge's rolling
+24-hour budget (SAFETY-006) — the direction that waters again too soon. Refusing
+is the fail-closed reading, and it clears itself: every acknowledgement frees a
+slot. See
+[ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+ledger for the capacity and the reasoning.
 
 **Non-finite guard inputs are `Unknown`, never permission.** §4 forbids emitting
 `NaN` or `Infinity`, so a non-finite value reaching the gate means the reading or
@@ -940,8 +959,13 @@ prove something about only one of them.
 ```text
 clock_unsynced   expired          malformed_command   leak_detected
 leak_unknown     tank_unknown     tank_low            pump_unavailable
-over_daily_max
+over_daily_max   result_ledger_full
 ```
+
+`result_ledger_full` was **added within v1** and is the only one that is not a
+step of the shared gate — see §5.8 step 13a and §9's change log. An edge that
+predates it decodes it to `unknown`, which is the conservative reading: a
+refusal is still a refusal.
 
 #### Durability — normative
 
@@ -964,8 +988,19 @@ acknowledgement from the edge establishes that.
 - A result that cannot be published MUST be persisted to NVS and published after
   the next boot. So must one that was published and not acknowledged: the
   retained copy is what makes a reboot mid-flight harmless.
-- A device MAY bound how many unacknowledged results it holds, evicting oldest
-  first. It MUST NOT bound how long it retries one.
+- A device MAY bound how many unacknowledged results it holds. It MUST NOT
+  bound how long it retries one.
+- **A device MUST NOT silently discard an unacknowledged result in a way that
+  can under-count delivered water.** An earlier revision of this bullet said a
+  device "MAY … evict oldest first", which was written before the ledger was
+  analysed and is not safe as stated: an evicted result removes a quantity the
+  edge's rolling budget is derived from, and the edge learns nothing at all.
+  That is unlike a `history.gap`, which tells the edge it is *missing a record*
+  and can be reasoned about. The requirement is now stated in
+  [ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+  ledger, which is normative for firmware; a device whose ledger is full refuses
+  further actuation with `result_ledger_full` (§5.8 step 13a) rather than
+  forgetting what it has already delivered.
 
 > **This rule changed within v1.** It previously read "retried until the broker
 > acknowledges the QoS 1 publish, for up to 60 s", which made a device's retry
@@ -1503,6 +1538,33 @@ one broker indefinitely. Full process in
 [versioning-policy.md](versioning-policy.md).
 
 ### Change log within v1
+
+**2026-09-02 — the pending-result ledger's refusal reason (M9-011).** Additive;
+**no version bump, and none was needed.**
+
+*Added:* the `result_ledger_full` value of `command.result.reason` (§5.10), and
+§5.8's step 13a which describes when a device emits it. A device retains every
+result until the edge acknowledges it, so a bounded durable ledger is implied by
+§5.14 and every bounded structure eventually saturates. Firmware must fail
+closed there
+([ADR-014](../adr/014-failure-and-retry-policy.md) §Device-side pending-result
+ledger), and refusing without being able to say *why* would have made a
+correctly-behaving device indistinguishable from a broken one.
+
+*Changed:* §5.10's durability bullet that read "A device MAY bound how many
+unacknowledged results it holds, **evicting oldest first**". That permission
+predates the ledger analysis and is not safe as written: an evicted result
+removes a quantity the edge's rolling 24-hour budget is derived from, and the
+edge learns nothing at all — unlike a `history.gap`, which reports a lost
+*record* the edge can see and reason about. The bound stays permitted; the
+eviction does not.
+
+Backward compatible in both directions. Step 13a is a **device-local
+precondition**, not a step of the shared gate — `validate_water_command` is
+unchanged and still implements steps 1–12 — and both ends already decode an
+unrecognised `reason` to `unknown`, so an edge or a device that predates this
+still interoperates. No field was removed, retyped, or given a new meaning, and
+no topic, retention, or QoS rule changed.
 
 **2026-08-31 — result durability and dose attribution (post-M6 correction).**
 Additive throughout; **no version bump, and none was needed.** Two defects were

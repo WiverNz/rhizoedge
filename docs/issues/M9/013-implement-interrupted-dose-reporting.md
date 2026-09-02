@@ -39,12 +39,12 @@ and let the edge re-evaluate with fresh soil data.
 
 ## Acceptance criteria
 
-- [ ] An unfinished NVS record on boot produces an `interrupted` result.
-- [ ] `delivered_ml` is **null**, not 0.
-- [ ] The pump is off before the check runs.
-- [ ] The dose is **not** resumed.
-- [ ] The record clears after acknowledgement.
-- [ ] The result survives a failure to publish and is retried next boot.
+- [x] An unfinished NVS record on boot produces an `interrupted` result.
+- [x] `delivered_ml` is **null**, not 0.
+- [x] The pump is off before the check runs.
+- [x] The dose is **not** resumed.
+- [x] The record clears after acknowledgement.
+- [x] The result survives a failure to publish and is retried next boot.
 
 ## Verification
 

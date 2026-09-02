@@ -40,16 +40,16 @@ Record versions that actually build, not the ones the ADR guessed. Pin them.
 
 ## Acceptance criteria
 
-- [ ] Every command in ADR-007 has been executed.
-- [ ] ADR-007 is corrected to match reality, including on Windows.
-- [ ] A hello-world builds for `riscv32imc-esp-espidf`.
-- [ ] Exact crate versions are recorded and pinned.
-- [ ] The firmware Rust version is resolved: either `1.98.0` or a named
+- [x] Every command in ADR-007 has been executed.
+- [x] ADR-007 is corrected to match reality, including on Windows.
+- [x] A hello-world builds for `riscv32imc-esp-espidf`.
+- [x] Exact crate versions are recorded and pinned.
+- [x] The firmware Rust version is resolved: either `1.98.0` or a named
       ESP-specific channel, pinned in the firmware workspace and recorded in
       ADR-007's embedded-exception section.
-- [ ] The host workspace toolchain is **unchanged** at 1.98.0.
-- [ ] Build time from cold is measured and noted.
-- [ ] The re-verify note in ADR-007's Status is updated with the date.
+- [x] The host workspace toolchain is **unchanged** at 1.98.0.
+- [x] Build time from cold is measured and noted.
+- [x] The re-verify note in ADR-007's Status is updated with the date.
 
 ## Verification
 
