@@ -38,11 +38,11 @@ reproduction.
 
 ## Acceptance criteria
 
-- [ ] The job runs on the specified paths.
-- [ ] The full suite passes in CI.
-- [ ] Failures upload logs and database dumps.
-- [ ] Total time is under 15 minutes.
-- [ ] **No automatic retry of failed scenarios.**
+- [x] The job runs on the specified paths.
+- [x] The full suite passes in CI.
+- [x] Failures upload logs and database dumps.
+- [x] Total time is under 15 minutes.
+- [x] **No automatic retry of failed scenarios.**
 
 ## Verification
 

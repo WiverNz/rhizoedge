@@ -79,17 +79,17 @@ green, then these scenarios are decorative.
 
 ## Acceptance criteria
 
-- [ ] All five scenarios run in the existing runner and exit 0.
-- [ ] A spy subscriber confirms nothing is published on `commands/*` while the
+- [x] All five scenarios run in the existing runner and exit 0.
+- [x] A spy subscriber confirms nothing is published on `commands/*` while the
       device sleeps.
-- [ ] The delivered command's `issued_at` is the wake instant, asserted against
+- [x] The delivered command's `issued_at` is the wake instant, asserted against
       captured MQTT rather than inferred.
-- [ ] SCEN-115 exercises both the credited and the zero-credit branches
+- [x] SCEN-115 exercises both the credited and the zero-credit branches
       explicitly.
-- [ ] The battery profile scales its wake interval with the virtual clock, and
+- [x] The battery profile scales its wake interval with the virtual clock, and
       M8-004's agreement check covers it.
-- [ ] The suite still completes under 10 minutes.
-- [ ] The added mutation turns the suite red, and is reverted.
+- [x] The suite still completes under 10 minutes.
+- [x] The added mutation turns the suite red, and is reverted.
 
 ## Verification
 

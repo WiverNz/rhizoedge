@@ -38,12 +38,12 @@ rebuilt on every change during M8 development.
 
 ## Acceptance criteria
 
-- [ ] All three images build.
-- [ ] A dependency-only change rebuilds quickly (cache hit).
-- [ ] Images run as non-root.
-- [ ] **SIGTERM reaches the process and triggers graceful shutdown.**
-- [ ] Images are under 100 MB.
-- [ ] `.dockerignore` excludes build artefacts.
+- [x] All three images build.
+- [x] A dependency-only change rebuilds quickly (cache hit).
+- [x] Images run as non-root.
+- [x] **SIGTERM reaches the process and triggers graceful shutdown.**
+- [x] Images are under 100 MB.
+- [x] `.dockerignore` excludes build artefacts.
 
 ## Verification
 

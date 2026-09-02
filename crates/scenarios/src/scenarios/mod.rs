@@ -543,8 +543,13 @@ fn duplicate_command<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             // retired the result it stops publishing it — instead of sampling a
             // window and hoping the race fell the right way.
             wait_simulator(h, 400, |state| state["pending_results"].as_u64() == Some(0)).await?;
+            // Drain, *then* open the window. A republish already handed to the
+            // client before the acknowledgement was consumed is in flight and
+            // will arrive; it was sent before the retirement and says nothing
+            // about what follows it.
+            tokio::time::sleep(Duration::from_millis(150)).await;
             h.clear_mqtt().await;
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
             let after_ack = h
                 .mqtt()
                 .await
@@ -621,17 +626,24 @@ fn broker_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             json!({}),
         )
         .await?;
-        let before: i64 = sqlx::query_scalar("SELECT count(DISTINCT batch_id) FROM measurements")
-            .fetch_one(&h.sqlite)
-            .await?;
         h.stop_service("mosquitto")?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let during: i64 = sqlx::query_scalar("SELECT count(DISTINCT batch_id) FROM measurements")
+        // Let the edge finish what it had already read before sampling.
+        // Stopping the broker ends *delivery*; the messages in the ingestion
+        // channel are still the edge's to commit, and at this time scale the
+        // few hundred milliseconds that takes is hours of virtual time. The
+        // assertion below is an exact equality, so it has to start from a count
+        // that is no longer moving for a reason unrelated to the outage.
+        let during = wait_batches_settled(h).await?;
+        // Well past `max_sample_age` at the overlay's scale: 500 ms is thirty
+        // virtual minutes against a fifteen-minute threshold, which is also what
+        // makes the lockout below inevitable rather than lucky.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let still: i64 = sqlx::query_scalar("SELECT count(DISTINCT batch_id) FROM measurements")
             .fetch_one(&h.sqlite)
             .await?;
         ensure!(
-            during <= before + 1,
-            "telemetry advanced while broker was stopped: {before} -> {during}"
+            still == during,
+            "telemetry advanced while the broker was stopped: {during} -> {still}"
         );
         let outage_lockout: Option<String> =
             sqlx::query_scalar("SELECT lockout_reason FROM plants WHERE plant_id='scenario-plant'")
@@ -727,6 +739,25 @@ fn stale_sensor<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             json!({}),
         )
         .await?;
+        // A device whose clock is a day ahead, still publishing. SAFETY-005 says
+        // freshness is judged by the **edge's** `received_at` and never by a
+        // timestamp the device chose, and this is what makes the two
+        // distinguishable: withholding the stream alone stops both clocks
+        // together, so the scenario would pass against a build that trusted
+        // either one. M8-013's second mutation stayed green until this step
+        // existed.
+        //
+        // A day, because the assertion below has to outlast the lie. The
+        // staleness threshold is 900 logical seconds; a build dating samples by
+        // `device_time_ms` would call this sample fresh for 86 400 more, which
+        // is far past the window `wait_lockout` watches.
+        fault(h, "clock-skew:86400", true).await?;
+        let skewed = wait_measurement_newer_than(h, "soil_moisture", now_ms(h).await?).await?;
+        ensure!(
+            skewed,
+            "no soil sample arrived while the device clock was skewed"
+        );
+
         fault(h, "stale-soil", true).await?;
         wait_lockout(h, Some("stale_data"), 200).await?;
         // The quiet window opens *after* the lockout, which is what SCEN-022
@@ -750,6 +781,7 @@ fn stale_sensor<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             "stale sensor allowed {commands} command publications"
         );
         fault(h, "stale-soil", false).await?;
+        fault(h, "clock-skew:0", false).await?;
         wait_lockout(h, None, 200).await?;
         Ok(())
     })
@@ -1872,6 +1904,153 @@ async fn provision_offline_policy(h: &Harness) -> Result<u64> {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     bail!("device did not activate offline policy version {version}")
+}
+
+/// SCEN-034 end to end: the 24-hour cap is **rolling**, and a virtual midnight
+/// does not refill it.
+///
+/// A calendar window is the tempting implementation and the dangerous one: it
+/// hands a plant a fresh allowance at midnight, so a run that straddles it can
+/// deliver twice the cap. `window_start` is `now - 24h` for exactly this
+/// reason, and this is where that shows.
+///
+/// `recommended` is the mode under test, not `manual`: M6-007's budget query is
+/// `mode IN ('automatic','recommended')`, so a manual dose does not spend the
+/// budget and would prove nothing about it.
+fn rolling_cap_across_midnight<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":20.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        tokio::time::sleep(Duration::from_millis(700)).await;
+
+        // Spend the cap. The profile allows 300 ml a day in 60 ml doses, so the
+        // sixth request is the one that must be refused.
+        let mut accepted = 0;
+        let mut refusal = None;
+        for _ in 0..10 {
+            let (status, body) = h
+                .json(
+                    Method::POST,
+                    &format!("{}/api/v1/plants/scenario-plant/water", h.edge_url),
+                    json!({"ml": SCENARIO_DOSE_ML, "mode": "recommended"}),
+                )
+                .await?;
+            if status == reqwest::StatusCode::CONFLICT {
+                refusal = Some(body);
+                break;
+            }
+            ensure!(status == reqwest::StatusCode::ACCEPTED, "{status}: {body}");
+            accepted += 1;
+            // One command in flight at a time: let it settle before asking again.
+            wait_open_commands_drained(h).await?;
+        }
+        let refusal = refusal.context("the cap never refused a dose")?;
+        ensure!(
+            refusal["error"]["details"]["reason"] == "daily_limit",
+            "expected a daily-limit refusal, got {refusal}"
+        );
+        ensure!(accepted >= 4, "only {accepted} doses fitted inside the cap");
+
+        // Cross the next virtual midnight. At the overlay's scale a day passes
+        // in about half a minute of real time, so this is a wait rather than a
+        // simulation — and waiting is the point: the clock has to actually pass
+        // the boundary for the boundary to be tested.
+        let before = now_ms(h).await?;
+        let day_ms = 24 * 60 * 60 * 1000;
+        let midnight = before - before.rem_euclid(day_ms) + day_ms;
+        let mut crossed = false;
+        for _ in 0..4_000 {
+            if now_ms(h).await? > midnight {
+                crossed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        ensure!(
+            crossed,
+            "the edge clock did not reach the next virtual midnight"
+        );
+
+        let (status, body) = h
+            .json(
+                Method::POST,
+                &format!("{}/api/v1/plants/scenario-plant/water", h.edge_url),
+                json!({"ml": SCENARIO_DOSE_ML, "mode": "recommended"}),
+            )
+            .await?;
+        ensure!(
+            status == reqwest::StatusCode::CONFLICT
+                && body["error"]["details"]["reason"] == "daily_limit",
+            "midnight refilled the daily allowance: {status} {body}"
+        );
+        Ok(())
+    })
+}
+
+/// Waits until no command is open, so the next operator request is not refused
+/// merely because one is already in flight.
+async fn wait_open_commands_drained(h: &Harness) -> Result<()> {
+    for _ in 0..800 {
+        let open: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM commands WHERE settled_at IS NULL")
+                .fetch_one(&h.sqlite)
+                .await?;
+        if open == 0 {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    bail!("a command never settled")
+}
+
+/// The batch count, once it has stopped moving.
+///
+/// Two equal reads a quarter of a second apart. Used where a scenario needs a
+/// baseline that is not still absorbing a queue.
+async fn wait_batches_settled(h: &Harness) -> Result<i64> {
+    let mut previous = -1;
+    for _ in 0..200 {
+        let count: i64 = sqlx::query_scalar("SELECT count(DISTINCT batch_id) FROM measurements")
+            .fetch_one(&h.sqlite)
+            .await?;
+        if count == previous {
+            return Ok(count);
+        }
+        previous = count;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    bail!("telemetry ingestion never settled")
+}
+
+/// The edge's own clock, as the newest measurement receipt reports it.
+async fn now_ms(h: &Harness) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT max(received_at) FROM measurements")
+            .fetch_one(&h.sqlite)
+            .await?
+            .unwrap_or_default(),
+    )
+}
+
+/// Waits for a sample of `kind` received after `after`.
+async fn wait_measurement_newer_than(h: &Harness, kind: &str, after: i64) -> Result<bool> {
+    for _ in 0..400 {
+        let rows: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM measurements WHERE kind=? AND received_at>?")
+                .bind(kind)
+                .bind(after)
+                .fetch_one(&h.sqlite)
+                .await?;
+        if rows > 0 {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    Ok(false)
 }
 
 async fn wait_simulator(
@@ -3312,6 +3491,12 @@ scenarios!(
         ["SCEN-002"],
         ["SAFETY-006", "SAFETY-012"],
         full_watering_cycle
+    ),
+    (
+        "scenario_rolling_cap_across_midnight",
+        ["SCEN-034"],
+        ["SAFETY-006"],
+        rolling_cap_across_midnight
     ),
     (
         "scenario_recommendation_without_automation",

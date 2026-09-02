@@ -219,10 +219,13 @@ pub async fn gather(
         Some(device) => device_reachability(db, device, now_ms).await?,
     };
 
+    // Through `window_start`, not recomputed here. It is the one place the
+    // window's *shape* is stated — rolling, never a calendar day (SAFETY-006) —
+    // and a second expression saying the same thing is a second thing to change.
     let delivered = command_repo::delivered_in_window(
         db,
         plant_id,
-        now_ms - rhizo_domain::irrigation::budget::ROLLING_WINDOW_HOURS * 3_600_000,
+        rhizo_domain::irrigation::budget::window_start(now).timestamp_millis(),
     )
     .await?;
 

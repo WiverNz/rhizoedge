@@ -6,7 +6,7 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M7 complete. M8 ready, and not started.**
+> **Status: M0 through M8 complete. M9 ready, and not started.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
@@ -37,10 +37,14 @@ cloud synchronisation.
 > destructive changes the history they were not writing — see
 > [docs/reports/M7.md](docs/reports/M7.md).
 >
-> **M8 is next**, and adds no features: it makes the whole software system
-> reproducible and verifiable with one command, on any machine with Docker and
-> no hardware at all. Start at [ROADMAP.md](ROADMAP.md); the next issue is
-> [M8-001](docs/issues/M8/001-add-dockerfiles.md).
+> **M8 is complete**: the whole software system is reproducible and verifiable
+> with one command, on any machine with Docker and no hardware at all —
+> forty-one scenarios, and seven deliberate mutations of the safety logic that
+> each turn the suite red ([docs/reports/M8.md](docs/reports/M8.md)).
+>
+> **M9 is next**, and is the first milestone that needs an ESP32. Start at
+> [ROADMAP.md](ROADMAP.md); the next issue is
+> [M9-001](docs/issues/M9/001-verify-esp32-toolchain.md).
 >
 > To run it now, see [Running it locally](#running-it-locally).
 

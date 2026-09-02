@@ -39,12 +39,12 @@ tick means the control loop runs once per five simulated hours.
 
 ## Acceptance criteria
 
-- [ ] The overlay produces an accelerated topology.
-- [ ] Time scale is consistent across the edge and simulator.
-- [ ] **No service restarts on failure.**
-- [ ] Each run starts with clean volumes.
-- [ ] `--abort-on-container-exit --exit-code-from scenario-runner` works.
-- [ ] A deliberately crashed edge **fails** the run.
+- [x] The overlay produces an accelerated topology.
+- [x] Time scale is consistent across the edge and simulator.
+- [x] **No service restarts on failure.**
+- [x] Each run starts with clean volumes.
+- [x] `--abort-on-container-exit --exit-code-from scenario-runner` works.
+- [x] A deliberately crashed edge **fails** the run.
 
 ## Verification
 

@@ -81,6 +81,16 @@ scenarios (SCEN-110…SCEN-117). Time synchronisation is covered by
 SCEN-073…SCEN-078. SAFETY-022 … SAFETY-024 belong to milestones that have not
 started and are re-verified nowhere yet.
 
+**Done, and demonstrated rather than asserted (2026-09-02).** All forty-one
+scenarios pass against the real Docker topology, and each scenario names the
+invariants it re-verifies in its own catalogue entry, so the claim can be read
+back rather than taken on trust. Seven deliberate mutations — one per safety
+mechanism, listed in
+[mutation-verification.md](../testing/mutation-verification.md) — each turn the
+suite red. Three of them did not, at first: the record says which, why, and what
+was strengthened, because a mutation that stays green is a statement about the
+tests and not about the mutation.
+
 **No invariant has ever been renumbered, and none ever will be.** SAFETY-001 …
 SAFETY-012 are the original twelve and are unchanged. Everything above them was
 appended, in four dated batches:

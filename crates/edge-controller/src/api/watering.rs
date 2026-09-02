@@ -210,13 +210,24 @@ async fn immediate(
     let Ok(analysis) = plant::analyse(&state.db, loaded, now).await else {
         return storage_error();
     };
-    let pass = match irrigation::run_pass(
-        &state.commander,
-        loaded,
-        analysis.inputs.dry_duration,
-        mode,
-        now,
-    )
+    // Retried on a busy database, not on a refusal. `run_pass` runs the gate
+    // and, if it passes, persists and publishes — so a retry after a *successful*
+    // pass would be a second dose. It cannot happen: the only retried error is
+    // `Busy`, which is raised by a statement that did not commit.
+    let pass = match super::support::with_busy_retry(|| async {
+        irrigation::run_pass(
+            &state.commander,
+            loaded,
+            analysis.inputs.dry_duration,
+            mode,
+            now,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::error::EdgeError::Storage(storage) => storage,
+            other => rhizo_storage::StorageError::Database(other.to_string()),
+        })
+    })
     .await
     {
         Ok(pass) => pass,

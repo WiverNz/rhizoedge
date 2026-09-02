@@ -35,11 +35,11 @@ only way to detect a missing re-subscribe.
 
 ## Acceptance criteria
 
-- [ ] SCEN-011: one actuation, three results, one watering event.
-- [ ] The daily total counts the dose once.
-- [ ] SCEN-012: telemetry resumes after the broker restart.
-- [ ] Retained status is redelivered.
-- [ ] If the outage exceeded the staleness window, the plant locked out and recovered.
+- [x] SCEN-011: one actuation, three results, one watering event.
+- [x] The daily total counts the dose once.
+- [x] SCEN-012: telemetry resumes after the broker restart.
+- [x] Retained status is redelivered.
+- [x] If the outage exceeded the staleness window, the plant locked out and recovered.
 
 ## Verification
 

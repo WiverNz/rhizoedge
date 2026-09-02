@@ -36,12 +36,12 @@ process lifetimes.
 
 ## Acceptance criteria
 
-- [ ] The edge is killed reliably after publish, before the result.
-- [ ] **No second command is published after restart.**
-- [ ] The late result matches the existing `command_id`.
-- [ ] Exactly one watering event exists.
-- [ ] The daily total counts the dose once.
-- [ ] Irrigation state including `wait_until` is restored exactly.
+- [x] The edge is killed reliably after publish, before the result.
+- [x] **No second command is published after restart.**
+- [x] The late result matches the existing `command_id`.
+- [x] Exactly one watering event exists.
+- [x] The daily total counts the dose once.
+- [x] Irrigation state including `wait_until` is restored exactly.
 
 ## Verification
 

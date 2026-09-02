@@ -36,12 +36,12 @@ emitted count, and by re-POSTing a batch and confirming no rows are created.
 
 ## Acceptance criteria
 
-- [ ] SCEN-060: all local functions work; **`/health/ready` is 200**.
-- [ ] SCEN-061: command sequences identical modulo ids and timestamps.
-- [ ] SCEN-061: every lockout occurs in both runs.
-- [ ] SCEN-062: `pending_cloud_events` returns to 0.
-- [ ] SCEN-062: PostgreSQL row count matches the emitted count exactly.
-- [ ] SCEN-062: re-POSTing creates no rows.
+- [x] SCEN-060: all local functions work; **`/health/ready` is 200**.
+- [x] SCEN-061: command sequences identical modulo ids and timestamps.
+- [x] SCEN-061: every lockout occurs in both runs.
+- [x] SCEN-062: `pending_cloud_events` returns to 0.
+- [x] SCEN-062: PostgreSQL row count matches the emitted count exactly.
+- [x] SCEN-062: re-POSTing creates no rows.
 
 ## Verification
 

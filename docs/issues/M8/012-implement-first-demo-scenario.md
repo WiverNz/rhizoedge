@@ -40,11 +40,11 @@ output.
 
 ## Acceptance criteria
 
-- [ ] All eighteen steps execute and are asserted.
-- [ ] The scenario passes reliably (10 consecutive runs).
-- [ ] Progress output is human-readable.
-- [ ] It completes within the accelerated budget.
-- [ ] It exercises the multi-dose path, not just a single dose.
+- [x] All eighteen steps execute and are asserted.
+- [x] The scenario passes reliably (10 consecutive runs).
+- [x] Progress output is human-readable.
+- [x] It completes within the accelerated budget.
+- [x] It exercises the multi-dose path, not just a single dose.
 
 ## Verification
 

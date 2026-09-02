@@ -44,13 +44,13 @@ order-dependent flake.
 
 ## Acceptance criteria
 
-- [ ] The runner executes one scenario or all of them.
-- [ ] Each scenario starts with a clean database.
-- [ ] The MQTT spy captures all traffic.
-- [ ] Container stop/start works.
-- [ ] Runs are deterministic under a fixed seed.
-- [ ] **A failure dumps database state and MQTT traffic.**
-- [ ] Exit code is non-zero on any failure.
+- [x] The runner executes one scenario or all of them.
+- [x] Each scenario starts with a clean database.
+- [x] The MQTT spy captures all traffic.
+- [x] Container stop/start works.
+- [x] Runs are deterministic under a fixed seed.
+- [x] **A failure dumps database state and MQTT traffic.**
+- [x] Exit code is non-zero on any failure.
 
 ## Verification
 

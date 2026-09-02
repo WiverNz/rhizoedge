@@ -38,11 +38,11 @@ always a Compose configuration change.
 
 ## Acceptance criteria
 
-- [ ] Both services report their scale at startup.
-- [ ] The runner asserts agreement before any scenario.
-- [ ] A deliberate mismatch fails immediately with a clear message.
-- [ ] Both read from one Compose variable.
-- [ ] The scale is queryable at runtime.
+- [x] Both services report their scale at startup.
+- [x] The runner asserts agreement before any scenario.
+- [x] A deliberate mismatch fails immediately with a clear message.
+- [x] Both read from one Compose variable.
+- [x] The scale is queryable at runtime.
 
 ## Verification
 

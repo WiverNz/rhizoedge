@@ -39,13 +39,13 @@ fixed id would make replicas collide on the broker.
 
 ## Acceptance criteria
 
-- [ ] `docker compose up --build` starts all five services.
-- [ ] Health gating produces clean startup logs.
-- [ ] `curl localhost:8080/api/v1/overview` works after startup.
-- [ ] Volumes persist across `down`/`up`.
-- [ ] `down -v` resets cleanly.
-- [ ] `--scale device-simulator=3` produces three distinct devices.
-- [ ] The edge still starts when the broker is deliberately unavailable.
+- [x] `docker compose up --build` starts all five services.
+- [x] Health gating produces clean startup logs.
+- [x] `curl localhost:8080/api/v1/overview` works after startup.
+- [x] Volumes persist across `down`/`up`.
+- [x] `down -v` resets cleanly.
+- [x] `--scale device-simulator=3` produces three distinct devices.
+- [x] The edge still starts when the broker is deliberately unavailable.
 
 ## Verification
 

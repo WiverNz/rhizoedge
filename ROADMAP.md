@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0–M7 complete; M8 next.
+**Planning status:** complete. **Implementation status:** M0–M8 complete; M9 next.
 **Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
@@ -64,8 +64,8 @@ pin may move forward deliberately
 | M5 | Plant Model and Recommendations | Plants, **bindings, per-measurement thresholds**, offline-policy authoring, species presets, trends, and an explainable recommendation engine — **issuing no commands** | M4 | 22 | **DONE** |
 | M6 | Irrigation Control and Safety | The state machine, the safety gate, the command lifecycle, the **offline evaluator and reconciliation**, and every non-hardware SAFETY invariant | M5, M2 | 24 | **DONE** |
 | M7 | Cloud API and PostgreSQL | Optional idempotent history sync that cannot affect local safety | M6 | 15 | **DONE** |
-| M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **READY** |
-| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | PLANNED |
+| M8 | End-to-End Test Environment | The whole software system reproducible and verifiable with one command, no hardware | M7 | 18 | **DONE** |
+| M9 | ESP32 Rust Firmware Foundation | Real firmware speaking the same protocol, with fake sensors and pump, **plus the persisted offline policy, evaluator, event buffer, and monotonic budget** | M8 | 22 | **READY** |
 | M10 | Real Soil Sensor Integration | Real readings behind the unchanged `SoilSensor` trait | M9 | 13 | PLANNED |
 | M11 | Real Pump and Safety Hardware | Real actuation with calibration and physically verified lockouts | M10 | 14 | PLANNED |
 | M12 | Rust UI | A Tauri 2 + Leptos desktop client that structurally cannot bypass safety | M6 (functional), M11 (full picture) | 19 | PLANNED |
@@ -398,7 +398,7 @@ cloud dependency.
 
 ---
 
-### M8 — End-to-End Test Environment · READY
+### M8 — End-to-End Test Environment · DONE
 
 **Objective.** Make the whole software system reproducible in one command, and
 prove the safety claims are detected rather than assumed.
@@ -420,14 +420,15 @@ SAFETY-013…-020 in the isolation and reconciliation scenarios, and SAFETY-021 
 the battery/sleep scenarios — the set §4's *Re-verified* column names. It
 enforces none of its own.
 
-**PRD.** [080](docs/prd/080-end-to-end-test-environment.md)
+**PRD.** [080](docs/prd/080-end-to-end-test-environment.md) ·
+**Report.** [docs/reports/M8.md](docs/reports/M8.md)
 
 > **M8 is the software-only demo.** It requires no ESP32, no pump, no plant, and
 > the M12 desktop UI is deliberately **not** part of it.
 
 ---
 
-### M9 — ESP32 Rust Firmware Foundation · PLANNED
+### M9 — ESP32 Rust Firmware Foundation · READY
 
 **Objective.** Real firmware speaking the identical protocol, with fake sensors
 and pump, so the simulator's fidelity claim is tested.
@@ -1011,17 +1012,21 @@ Recorded so their absence is a decision rather than an oversight:
 
 ## 8. Implementation starting point
 
-**M0–M7 are `DONE`. M8 is `READY` and has not started.** The next unstarted issue is:
+**M0–M8 are `DONE`. M9 is `READY` and has not started.** The next unstarted issue is:
 
 ```text
-M8-001 — Add production Dockerfiles
+M9-001 — Verify the ESP32 toolchain
 ```
 
-It depends on M6-024, which is complete, so it is executable now. See
-[docs/issues/M8/001-add-dockerfiles.md](docs/issues/M8/001-add-dockerfiles.md)
+It depends on M8-018, which is complete, so it is executable now. See
+[docs/issues/M9/001-verify-esp32-toolchain.md](docs/issues/M9/001-verify-esp32-toolchain.md)
 and [docs/architecture/dependency-graph.md](docs/architecture/dependency-graph.md).
 
-M6's report is [docs/reports/M6.md](docs/reports/M6.md).
+M9 is the first milestone that needs hardware, and the first whose toolchain is
+not this workspace's: the firmware is a separate workspace with its own pin
+(ADR-001, ADR-007), so nothing it does can move the host MSRV.
+
+M8's report is [docs/reports/M8.md](docs/reports/M8.md).
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails
 the build if it names an issue from a milestone already marked `DONE`.

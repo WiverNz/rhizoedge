@@ -6,7 +6,7 @@ Working notes for Claude Code sessions on this repository.
 
 ## 1. Where the project is right now
 
-**Planning is complete. M0 through M7 are implemented and green. M8 is READY and
+**Planning is complete. M0 through M8 are implemented and green. M9 is READY and
 has not started.**
 
 | | State |
@@ -25,7 +25,8 @@ has not started.**
 | M7 | 15 issues, **DONE** — report in [docs/reports/M7.md](docs/reports/M7.md) |
 | Post-M6 correction | ✅ done (2026-08-31) — durable `command.result.ack`, offline-dose attribution by name, and the M6 report's test-count evidence; see [docs/reports/M6.md](docs/reports/M6.md) §Post-M6 corrections and §13 below |
 | Post-M7 correction | ✅ done (2026-08-31) — `device.capabilities` (not `…_changed`), events for destructive changes, replayed history forwarded, and one type-checked catalogue; see [docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction and §14 below |
-| M8-001 | ⬜ **next** — add production Dockerfiles |
+| M8 | 18 issues, **DONE** — report in [docs/reports/M8.md](docs/reports/M8.md) |
+| M9-001 | ⬜ **next** — verify the ESP32 toolchain |
 | M15 | 14 issues, **PLANNED** — per-plant adaptive water model, added 2026-09-01 as planning only; see §15 |
 | M16 | 16 issues, **PLANNED** — verified watering, added 2026-09-01 as planning only; see §16 |
 
@@ -159,10 +160,10 @@ docs/
 tools/docscheck/       planning-artefact validator (Rust, no dependencies)
 
 Cargo.toml             root workspace (M0-002)
-crates/                ten implemented/building workspace crates:
+crates/                eleven implemented/building workspace crates:
                        mqtt-contract, policy, domain, storage, telemetry,
                        cloud-client, testkit, edge-controller, device-simulator,
-                       cloud-api
+                       cloud-api, scenarios
 migrations/edge/       0001_initial.sql — the only migration, and the canonical
                        pre-release baseline holding the whole schema through M6
 crates/domain/data/    presets.v1.json — the embedded species catalogue,

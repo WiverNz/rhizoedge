@@ -24,31 +24,59 @@ use super::ApiState;
 use super::support::{error, error_with, storage_error, timestamp};
 use crate::plant;
 
-async fn publish_for_plant(state: &ApiState, plant_id: &str, now: i64) -> Result<(), ()> {
+/// Why a policy set could not be published.
+///
+/// The two are answered differently and must not be collapsed: a stored
+/// document this build cannot decode is a 500 the operator can do nothing
+/// about, while an unreachable broker is a 503 that the same request will fix
+/// when retried. Mapping both to "stored but not published" would tell an
+/// operator to retry a request that can never succeed.
+enum PublishError {
+    /// A read or a write against the local database failed.
+    Storage,
+    /// The policy set could not be put on the wire.
+    Transport,
+}
+
+/// Republishes the whole retained policy set for the plant's actuator device.
+///
+/// The topic is retained and carries **every** policy bound to that device, so
+/// it is rebuilt from storage rather than patched: a device that reconnects
+/// must find one document describing all of its plants, not the last one
+/// edited.
+///
+/// `published_at` is stamped *after* the publish, in one statement covering the
+/// plants that were in the document. Recording it first would claim a
+/// publication that had not happened.
+async fn publish_for_plant(state: &ApiState, plant_id: &str, now: i64) -> Result<(), PublishError> {
     let device_id: Option<String> =
         sqlx::query_scalar("SELECT device_id FROM actuator_bindings WHERE plant_id=?")
             .bind(plant_id)
             .fetch_optional(state.db.pool())
             .await
-            .map_err(|_| ())?;
+            .map_err(|_| PublishError::Storage)?;
+    // A monitoring plant has no actuator and therefore no device to provision.
+    // That is a normal plant, not a failure (SAFETY-018).
     let Some(device_id) = device_id else {
         return Ok(());
     };
     let rows = sqlx::query(
-        "SELECT p.plant_id,p.policy_json FROM offline_policies p JOIN actuator_bindings a ON a.plant_id=p.plant_id WHERE a.device_id=? ORDER BY p.plant_id",
+        "SELECT p.plant_id,p.policy_json FROM offline_policies p \
+         JOIN actuator_bindings a ON a.plant_id=p.plant_id \
+         WHERE a.device_id=? ORDER BY p.plant_id",
     )
     .bind(&device_id)
     .fetch_all(state.db.pool())
     .await
-    .map_err(|_| ())?;
+    .map_err(|_| PublishError::Storage)?;
     let mut policies = Vec::with_capacity(rows.len());
-    let mut plants = Vec::with_capacity(rows.len());
     for row in rows {
         let document: String = row.get("policy_json");
-        policies.push(serde_json::from_str::<OfflinePolicy>(&document).map_err(|_| ())?);
-        plants.push(row.get::<String, _>("plant_id"));
+        policies.push(
+            serde_json::from_str::<OfflinePolicy>(&document).map_err(|_| PublishError::Storage)?,
+        );
     }
-    let device = DeviceId::parse(&device_id).map_err(|_| ())?;
+    let device = DeviceId::parse(&device_id).map_err(|_| PublishError::Storage)?;
     let payload = Envelope {
         v: rhizo_mqtt_contract::PROTOCOL_VERSION,
         kind: MessageKind::DevicePolicy,
@@ -61,7 +89,7 @@ async fn publish_for_plant(state: &ApiState, plant_id: &str, now: i64) -> Result
         data: OfflinePolicySet { policies },
     }
     .to_json()
-    .map_err(|_| ())?;
+    .map_err(|_| PublishError::Storage)?;
     state
         .commander
         .transport()
@@ -71,16 +99,31 @@ async fn publish_for_plant(state: &ApiState, plant_id: &str, now: i64) -> Result
             true,
         )
         .await
-        .map_err(|_| ())?;
-    for plant in plants {
-        sqlx::query("UPDATE offline_policies SET published_at=? WHERE plant_id=?")
-            .bind(now)
-            .bind(plant)
-            .execute(state.db.pool())
-            .await
-            .map_err(|_| ())?;
-    }
+        .map_err(|_| PublishError::Transport)?;
+    // One statement, so a failure part-way cannot leave some plants of the same
+    // retained document claiming publication and others not.
+    sqlx::query(
+        "UPDATE offline_policies SET published_at=? WHERE plant_id IN \
+         (SELECT plant_id FROM actuator_bindings WHERE device_id=?)",
+    )
+    .bind(now)
+    .bind(&device_id)
+    .execute(state.db.pool())
+    .await
+    .map_err(|_| PublishError::Storage)?;
     Ok(())
+}
+
+/// The response a failed publication produces.
+fn publish_error(failure: &PublishError) -> Response {
+    match failure {
+        PublishError::Storage => storage_error(),
+        PublishError::Transport => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "policy_publish_failed",
+            "the policy was stored but could not be published to the device",
+        ),
+    }
 }
 
 fn row_json(row: &binding_repo::OfflinePolicyRow) -> serde_json::Value {
@@ -152,12 +195,8 @@ pub async fn put(State(state): State<ApiState>, Path(id): Path<String>) -> Respo
     {
         return storage_error();
     }
-    if publish_for_plant(&state, &id, now).await.is_err() {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "policy_publish_failed",
-            "the policy was stored but could not be published to the device",
-        );
+    if let Err(failure) = publish_for_plant(&state, &id, now).await {
+        return publish_error(&failure);
     }
     let missing: Vec<String> = missing_safety_bindings(&bindings)
         .iter()
@@ -224,12 +263,8 @@ async fn set_enabled(state: &ApiState, plant_id: &str, enabled: bool) -> Respons
     {
         return storage_error();
     }
-    if publish_for_plant(state, plant_id, now).await.is_err() {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "policy_publish_failed",
-            "the policy was stored but could not be published to the device",
-        );
+    if let Err(failure) = publish_for_plant(state, plant_id, now).await {
+        return publish_error(&failure);
     }
     match binding_repo::offline_policy(&state.db, plant_id).await {
         Ok(Some(row)) => Json(row_json(&row)).into_response(),

@@ -1,6 +1,6 @@
 # PRD 080 — End-to-End Test Environment
 
-**Milestone:** M8 · **Status:** PLANNED · **Depends on:** M7
+**Milestone:** M8 · **Status:** DELIVERED · **Depends on:** M7
 
 ## Summary
 

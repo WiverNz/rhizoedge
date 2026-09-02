@@ -37,11 +37,11 @@ session the broker would have queued the command.
 
 ## Acceptance criteria
 
-- [ ] SCEN-022: lockout after the staleness window, auto-clear on resumption, **no command issued**.
-- [ ] SCEN-023: field nulled, event raised, `SensorFault` lockout.
-- [ ] SCEN-025: command refused with `clock_unsynced`; **telemetry continues**.
-- [ ] SCEN-031: no queued command is delivered or executed.
-- [ ] Each lockout is visible in the API with its reason.
+- [x] SCEN-022: lockout after the staleness window, auto-clear on resumption, **no command issued**.
+- [x] SCEN-023: field nulled, event raised, `SensorFault` lockout.
+- [x] SCEN-025: command refused with `clock_unsynced`; **telemetry continues**.
+- [x] SCEN-031: no queued command is delivered or executed.
+- [x] Each lockout is visible in the API with its reason.
 
 ## Verification
 

@@ -37,11 +37,11 @@ sensor cannot see.
 
 ## Acceptance criteria
 
-- [ ] SCEN-040: automatic watering stops; `POST /water` returns **409**; nothing published.
-- [ ] SCEN-040: clearing while wet returns 409; clearing when dry succeeds.
-- [ ] SCEN-042: lockout; the device also refuses; refill auto-clears.
-- [ ] SCEN-044: lockout after two unresponsive doses; **no third dose**.
-- [ ] SCEN-044's lockout requires an explicit clear.
+- [x] SCEN-040: automatic watering stops; `POST /water` returns **409**; nothing published.
+- [x] SCEN-040: clearing while wet returns 409; clearing when dry succeeds.
+- [x] SCEN-042: lockout; the device also refuses; refill auto-clears.
+- [x] SCEN-044: lockout after two unresponsive doses; **no third dose**.
+- [x] SCEN-044's lockout requires an explicit clear.
 
 ## Verification
 

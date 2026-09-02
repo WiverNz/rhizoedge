@@ -35,6 +35,43 @@ pub fn error_with(
         .into_response()
 }
 
+/// Runs a storage operation, waiting out a transient SQLite busy.
+///
+/// SQLite serialises writers even under WAL, and the edge has three of them: the
+/// control loop, the ingestion pipeline, and this API. A request that arrives
+/// while one of the others holds the write lock is *queued*, not failed — the
+/// ingestion pipeline has taken that view since M3, and an operator's dose
+/// request deserves the same.
+///
+/// Only [`StorageError::Busy`] is retried, which `classify` already names
+/// transient. A constraint violation or an I/O error returns on the first
+/// attempt, unchanged: this makes a caller wait, it does not make a failure
+/// disappear.
+///
+/// # Errors
+///
+/// Returns the last failure when every attempt was busy, or the first failure
+/// of any other kind.
+pub async fn with_busy_retry<T, F, Fut>(mut operation: F) -> Result<T, rhizo_storage::StorageError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, rhizo_storage::StorageError>>,
+{
+    let mut delay = std::time::Duration::from_millis(25);
+    for attempt in 0..4 {
+        match operation().await {
+            Ok(value) => return Ok(value),
+            Err(rhizo_storage::StorageError::Busy(reason)) if attempt < 3 => {
+                tracing::warn!(attempt = attempt + 1, %reason, "retrying a busy SQLite read");
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the bounded retry loop always returns")
+}
+
 /// A storage failure, reported without leaking the query.
 #[must_use]
 pub fn storage_error() -> Response {

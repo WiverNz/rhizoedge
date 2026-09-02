@@ -98,7 +98,8 @@ async fn one(
     let Some(loaded) = plant::load(&state.db, plant_id).await? else {
         return Ok(None);
     };
-    let now_ms = state.clock.now().timestamp_millis();
+    let now = state.clock.now();
+    let now_ms = now.timestamp_millis();
     let mut latest = serde_json::Map::new();
     for bound in &loaded.sensors {
         let device = bound.binding.device_id.to_string();
@@ -147,7 +148,10 @@ async fn one(
             .map(|(kind, severity)| (kind, serde_json::Value::String(severity)))
             .collect(),
     );
-    let window_start = now_ms - 24 * 60 * 60 * 1_000;
+    // The same window the control loop budgets against, from the same
+    // function: a literal here and a rolling window there would let the page an
+    // operator reads disagree with the rule that refused their dose.
+    let window_start = rhizo_domain::irrigation::budget::window_start(now).timestamp_millis();
     let delivered = plant_repo::delivered_since(&state.db, plant_id, window_start).await?;
     let budget = serde_json::json!({
         "delivered_last_24h_ml": delivered,

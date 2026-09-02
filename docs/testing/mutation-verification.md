@@ -131,10 +131,21 @@ that reads `row.received_at`.
 **Mutation:** compare against the sample's device timestamp instead.
 **Must fail:** `scenario_stale_sensor` (SCEN-022).
 
-The scenario withholds soil moisture with the `stale-soil` fault while the device
-keeps reporting everything else. A device whose clock keeps advancing therefore
-keeps *claiming* freshness it does not have, the lockout never appears, and the
-scenario's "locked out after the staleness window" assertion fails.
+**Site as run:** `crates/storage/src/repo/ingest.rs`, the measurement insert,
+writing `device_time_ms` into the `received_at` column. That is the same lie in
+the place every freshness check reads, and it needs no new plumbing.
+
+The scenario skews the device's clock a day ahead, lets one sample land, and
+*then* withholds soil moisture with the `stale-soil` fault. Under the mutation
+that sample carries a timestamp a day in the future, so it keeps looking fresh
+long past `max_sample_age` and the lockout never appears.
+
+**The skew step exists because of this run.** SCEN-022 originally only withheld
+the stream, and the mutation stayed **green**: withholding a stream stops the
+device's clock and the edge's receipt *together*, so both builds aged the sample
+out on exactly the same schedule. The scenario proved a lockout appears, not that
+it appears for the documented reason, and that is precisely the finding this
+procedure exists to produce.
 
 ### 3 — Make the outbox drain blocking
 
@@ -149,6 +160,14 @@ The scenario stops `cloud-api` for its whole duration and requires local
 watering to proceed and `/health/ready` to answer **200**. A blocking drain makes
 the edge stop making decisions the moment the cloud is unreachable, which is
 precisely the coupling ADR-008 exists to forbid.
+
+**As observed, the mutation is blunter than that.** `drain::run` is a loop that
+returns only at shutdown, so awaiting it on the startup path means the edge never
+binds its API at all — with the cloud up or down. The run therefore goes red at
+the runner's *first startup check* rather than inside SCEN-060, with a connection
+refused to `/api/v1/overview`. That is a true detection and it is attributable to
+the mutation, but it does not exercise SCEN-060's assertion, and the record says
+so rather than implying otherwise.
 
 ### 4 — Re-publish commands on restart
 
@@ -173,10 +192,29 @@ plant is watered twice.
 **Must fail:** `scenario_full_watering_cycle` (SCEN-002), which is this suite's
 carrier for the property SCEN-034 states.
 
+**Must fail:** `scenario_rolling_cap_across_midnight` (SCEN-034).
+
 A calendar window hands a plant a fresh allowance at midnight, so a run that
-straddles it can deliver twice the cap. Under the accelerated clock a virtual
-midnight arrives within the scenario, and the "never exceeds `max_daily_ml`"
-assertion fails.
+straddles it can deliver twice the cap. The scenario spends the whole 300 ml
+allowance in `recommended` doses, waits for the edge's virtual clock to pass the
+next midnight — about half a minute of real time at the overlay's scale — and
+requires the next request to still be refused with `daily_limit`.
+
+**Two findings came out of this one, and both were fixed.**
+
+First, the mutation was green against `scenario_full_watering_cycle`, which PRD
+080 names. That scenario delivers two 60 ml doses against a 300 ml cap and never
+approaches the boundary, so the *shape* of the window is invisible to it. A cap
+can only be told from a calendar by filling it and crossing a midnight, which is
+what the new scenario does.
+
+Second — and this is the more serious one — the mutation was **still** green
+after the scenario existed, because `budget::window_start` was dead code.
+Nothing outside the domain crate's own tests called it: the control loop
+recomputed `now - ROLLING_WINDOW_HOURS` inline and the plant API used a bare
+`24 * 60 * 60 * 1_000`. The function that documents SAFETY-006's window was not
+the one the running system used, so editing it — exactly what somebody adjusting
+the window would do — changed nothing. Both call sites now go through it.
 
 ### 6 — Let the simulator skip the shared validator
 
@@ -192,6 +230,14 @@ which fails at `cargo test` before the suite is even reached.
 This is the mutation that proves the simulator is a *device* and not a mirror of
 the edge's opinion. Both halves are recorded: a mutation caught by a unit test
 as well as by the assembled system is caught twice, which is the intent.
+
+**Only `scenario_tank_empty` caught it, and the reason is worth keeping.**
+`scenario_leak` passed, because the *edge's* gate refuses a leaking plant before
+a command is ever published — so the device's own refusal is never reached and a
+device that had stopped refusing looks identical. SCEN-042 does reach it: the
+tank empties after the command is on its way, and the device is the only party
+left to say no. Defence in depth is why the leak case is masked, and the tank
+case is why the second layer is still tested.
 
 ### 7 — Publish immediately to a sleeping device
 
@@ -216,15 +262,36 @@ build that published up front made its decision before the leak existed.
 Run once at M8 acceptance, on the commit recorded in
 [docs/reports/M8.md](../reports/M8.md).
 
-| # | Mutation | Scenario that must fail | Outcome |
+Run on 2026-09-02 against the M8 topology at `RHIZO_TIME_SCALE=3600`, one
+mutation at a time, each in a throwaway copy of the tree.
+
+| # | Mutation | Scenario that went red | Outcome |
 |---|---|---|---|
-| 1 | Leak check removed from the gate | `scenario_leak` | _pending_ |
-| 2 | `device_time_ms` used for staleness | `scenario_stale_sensor` | _pending_ |
-| 3 | Outbox drain made blocking | `scenario_cloud_unavailable` | _pending_ |
-| 4 | Commands re-published on restart | `scenario_restart_mid_command` | _pending_ |
-| 5 | Calendar day used for the cap | `scenario_full_watering_cycle` | _pending_ |
-| 6 | Simulator skips the shared validator | `scenario_leak` | _pending_ |
-| 7 | Immediate publish to a sleeping device | `scenario_sleeping_manual_water` | _pending_ |
+| 1 | Leak check removed from the gate | `scenario_leak` | **RED** — `expected lockout Some("leak"), observed None` |
+| 2 | `device_time_ms` used for staleness | `scenario_stale_sensor` | **RED** — `expected lockout Some("stale_data"), observed None` |
+| 3 | Outbox drain made blocking | startup check | **RED** — the edge never binds its API; `/api/v1/overview` refused |
+| 4 | Commands re-published on restart | `scenario_restart_mid_command` | **RED** — `2 water commands were published across the crash and the restart` |
+| 5 | Calendar day used for the cap | `scenario_rolling_cap_across_midnight` | **RED** — `midnight refilled the daily allowance: 202 Accepted` |
+| 6 | Simulator skips the shared validator | `scenario_tank_empty` | **RED** — the refusal never arrives; `scenario_leak` passes, masked by the edge gate |
+| 7 | Immediate publish to a sleeping device | `scenario_sleeping_manual_water` | **RED** — `status` was `issued`, not `pending_for_device_wake` |
+
+### What the run changed
+
+Three of the seven were green on the first attempt, and each was a real weakness
+rather than a mutation that missed:
+
+- **2** — SCEN-022 could not distinguish the edge's clock from the device's,
+  because withholding a stream stops both. The scenario now skews the device's
+  clock a day ahead before the stream goes silent.
+- **5** — no scenario approached the daily cap, so the window's shape was
+  untested; `scenario_rolling_cap_across_midnight` was added. It was *still*
+  green afterwards, because `budget::window_start` was called by nothing outside
+  the domain crate's tests. Both runtime call sites now use it.
+- **6** — caught by SCEN-042 rather than SCEN-040, for the structural reason
+  recorded above. No change was needed; the record was.
+
+Mutation 3's detection is blunter than PRD 080 implies and is recorded as such.
+The remaining three behaved exactly as the PRD predicted.
 
 ## What this does not prove
 

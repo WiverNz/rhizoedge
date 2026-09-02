@@ -54,16 +54,16 @@ that the safety suite detects the removal of each safety mechanism.
 
 ## Acceptance criteria
 
-- [ ] `docker compose up --build` starts all five services from a fresh clone.
-- [ ] The full suite runs with one command and exits 0.
-- [ ] Total runtime is under 10 minutes.
-- [ ] Every `e2e` scenario in failure-scenarios.md is implemented and green.
-- [ ] `scenario_first_demo` reproduces all eighteen steps.
-- [ ] **Each of the seven mutations turns the suite red** — the six from M8-013
+- [x] `docker compose up --build` starts all five services from a fresh clone.
+- [x] The full suite runs with one command and exits 0.
+- [x] Total runtime is under 10 minutes.
+- [x] Every `e2e` scenario in failure-scenarios.md is implemented and green.
+- [x] `scenario_first_demo` reproduces all eighteen steps.
+- [x] **Each of the seven mutations turns the suite red** — the six from M8-013
       and M8-017's immediate-publish-to-a-sleeping-device mutation.
-- [ ] CI runs the suite.
-- [ ] A failing scenario prints database state and MQTT traffic.
-- [ ] safety-invariants.md, ROADMAP.md, and README updated; report recorded.
+- [x] CI runs the suite.
+- [x] A failing scenario prints database state and MQTT traffic.
+- [x] safety-invariants.md, ROADMAP.md, and README updated; report recorded.
 
 ## Verification
 

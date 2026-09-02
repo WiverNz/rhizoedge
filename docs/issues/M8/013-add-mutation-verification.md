@@ -41,10 +41,10 @@ corresponding scenario is not actually testing what it claims.
 
 ## Acceptance criteria
 
-- [ ] Each of the six mutations is applied and reverted.
-- [ ] Each turns its named scenario red.
-- [ ] Results are recorded in the milestone report.
-- [ ] Any mutation that does not fail is investigated and the scenario strengthened.
+- [x] Each of the six mutations is applied and reverted.
+- [x] Each turns its named scenario red.
+- [x] Results are recorded in the milestone report.
+- [x] Any mutation that does not fail is investigated and the scenario strengthened.
 
 ## Verification
 

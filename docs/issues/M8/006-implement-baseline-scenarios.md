@@ -36,12 +36,12 @@ checking the database — it proves nothing was published even transiently.
 
 ## Acceptance criteria
 
-- [ ] SCEN-001 passes: telemetry stored with correct counts.
-- [ ] SCEN-002 passes with the exact state sequence asserted.
-- [ ] SCEN-002 never exceeds `max_daily_ml`.
-- [ ] Every watering event has a matching terminal command.
-- [ ] SCEN-003 passes with **zero MQTT commands captured**.
-- [ ] All three complete within the accelerated time budget.
+- [x] SCEN-001 passes: telemetry stored with correct counts.
+- [x] SCEN-002 passes with the exact state sequence asserted.
+- [x] SCEN-002 never exceeds `max_daily_ml`.
+- [x] Every watering event has a matching terminal command.
+- [x] SCEN-003 passes with **zero MQTT commands captured**.
+- [x] All three complete within the accelerated time budget.
 
 ## Verification
 
