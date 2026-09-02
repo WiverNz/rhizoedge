@@ -1033,6 +1033,10 @@ mod tests {
             ("duplicate:0.5", Fault::Duplicate { rate: 0.5 }),
             ("reorder:0.25", Fault::Reorder { rate: 0.25 }),
             ("invalid-soil:1", Fault::InvalidSoil { rate: 1.0 }),
+            ("stale-soil", Fault::StaleSoil),
+            ("stale-tank", Fault::StaleTank),
+            ("stale-leak", Fault::StaleLeak),
+            ("stale-weight", Fault::StaleWeight),
             ("stuck-sensor", Fault::StuckSensor),
             ("clock-unsync", Fault::ClockUnsync),
             ("clock-skew:-90", Fault::ClockSkew { seconds: -90 }),
@@ -1041,6 +1045,7 @@ mod tests {
             ("pump-no-delivery", Fault::PumpNoDelivery),
             ("pump-stuck-on", Fault::PumpStuckOn),
             ("restart-mid-dose", Fault::RestartMidDose),
+            ("disconnect-mid-dose", Fault::DisconnectMidDose),
             ("restart", Fault::Restart),
             (
                 "policy-interrupt:stage",

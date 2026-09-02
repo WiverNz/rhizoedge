@@ -25,8 +25,15 @@
 //! gate would produce two builds of the component whose entire job is to be the
 //! reference device, and a scenario suite run against the gated-out build would
 //! lose fault injection silently — a green suite that tested less than it
-//! claimed. Binding to loopback is the containment that actually matters, and
-//! that is unconditional.
+//! claimed. Binding to loopback is the containment that actually matters.
+//!
+//! It is not *quite* unconditional: M8's Compose topology puts the simulator on
+//! an isolated bridge network where the scenario runner is a sibling container
+//! and loopback is unreachable, so `--allow-remote-control-api` opts one process
+//! into a routable bind. The flag is checked in **two** independent places —
+//! [`Cli::validate`](crate::cli::Cli::validate) at startup and [`serve`] at the
+//! moment of binding — because a containment that a future caller can skip by
+//! not calling the validator is not containment.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -83,17 +90,37 @@ pub fn router(state: ControlState) -> Router {
         .with_state(state)
 }
 
-/// The address the control API binds to.
+/// Whether this process may bind the control API to `address`.
 ///
-/// Loopback, always. A test affordance that accepted connections from the
-/// network would be a way to interfere with a device from off the machine, and
-/// the simulator is routinely run beside real services.
+/// Loopback needs no permission. A test affordance that accepted connections
+/// from the network would be a way to interfere with a device from off the
+/// machine, and the simulator is routinely run beside real services — so a
+/// routable bind requires `--allow-remote-control-api`, which only M8's
+/// isolated Compose network passes.
+///
+/// # Errors
+///
+/// Returns `InvalidInput` when a routable address was not explicitly permitted.
+pub fn permit_bind(address: SocketAddr, allow_remote: bool) -> std::io::Result<()> {
+    if address.ip().is_loopback() || allow_remote {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "simulator control API bind must be loopback, got {address}; \
+             pass --allow-remote-control-api to permit a routable bind"
+        ),
+    ))
+}
+
 /// Serves the control API until the process ends.
 ///
 /// # Errors
 ///
-/// Returns a bind or serve failure.
+/// Returns a permission, bind, or serve failure.
 pub async fn serve(state: ControlState, address: SocketAddr) -> std::io::Result<()> {
+    permit_bind(address, state.cli.allow_remote_control_api)?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     tracing::info!(
         %address,
@@ -442,6 +469,20 @@ mod tests {
         let error = serve(state, address).await.unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("must be loopback"));
+    }
+
+    /// The serving boundary is a second, independent check of the same rule the
+    /// CLI validates. It is asserted on [`permit_bind`] rather than on `serve`
+    /// so the permitted case cannot be expressed as a future that never
+    /// returns — which is what a `serve(...).await` on a bind that *succeeds*
+    /// would be.
+    #[test]
+    fn the_serving_boundary_permits_a_routable_bind_only_with_the_e2e_flag() {
+        let routable: SocketAddr = "0.0.0.0:9090".parse().unwrap();
+        let loopback: SocketAddr = "127.0.0.1:9090".parse().unwrap();
+        assert!(permit_bind(routable, false).is_err());
+        assert!(permit_bind(routable, true).is_ok());
+        assert!(permit_bind(loopback, false).is_ok());
     }
 
     #[tokio::test]

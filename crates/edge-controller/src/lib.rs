@@ -28,6 +28,7 @@ pub mod config;
 pub mod control;
 pub mod device;
 pub mod error;
+pub mod faults;
 pub mod metrics;
 pub mod mqtt;
 pub mod pipeline;

@@ -1023,14 +1023,29 @@ async fn a_full_cycle_waters_a_real_simulated_plant() {
     );
     mark_connected(&edge.db, edge.clock.now()).await;
 
-    // One control pass: dry, confirmed, permitted — so a dose is issued.
-    edge_controller::control::tick::irrigation_pass(
-        &edge.commander,
-        &Metrics::new().unwrap(),
-        edge.clock.now(),
-    )
-    .await
-    .unwrap();
+    // Two control passes, which is PRD 060's transition table and not a
+    // workaround: `Normal -> Drying -> DryConfirmed -> DoseIssued`. The first
+    // pass *persists* the confirmation and issues nothing, so the assembled
+    // system walks the documented path rather than arriving at the right end
+    // state by a shortcut. Asserting the intermediate state is the point.
+    let metrics = Metrics::new().unwrap();
+    edge_controller::control::tick::irrigation_pass(&edge.commander, &metrics, edge.clock.now())
+        .await
+        .unwrap();
+    assert_eq!(
+        rhizo_storage::repo::command::irrigation_state(&edge.db, "monstera-01")
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        "dry_confirmed",
+        "the confirming pass records the state and commands nothing"
+    );
+    assert_eq!(count(&edge.db, "commands").await, 0);
+
+    edge_controller::control::tick::irrigation_pass(&edge.commander, &metrics, edge.clock.now())
+        .await
+        .unwrap();
 
     let state = rhizo_storage::repo::command::irrigation_state(&edge.db, "monstera-01")
         .await

@@ -42,9 +42,18 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Err(error) = harness.assert_time_scale_agreement().await {
-        eprintln!("startup check failed: {error:#}");
-        return ExitCode::FAILURE;
+    // Every startup check runs before the first scenario, and any failure ends
+    // the run. PRD 080's failure table is explicit that an environment which
+    // cannot exercise its subject must fail loudly rather than report a pass.
+    for check in [
+        harness.assert_time_scale_agreement().await,
+        harness.assert_fault_injection_available().await,
+        harness.assert_device_identity_is_enforced().await,
+    ] {
+        if let Err(error) = check {
+            eprintln!("startup check failed: {error:#}");
+            return ExitCode::FAILURE;
+        }
     }
     for scenario in selected {
         println!("\n=== {} ===", scenario.name);

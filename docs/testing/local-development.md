@@ -281,18 +281,35 @@ Real time makes a watering cycle take an hour. Don't wait:
 
 ```bash
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
-  up --abort-on-container-exit --exit-code-from scenario-runner
+  up --build --abort-on-container-exit --exit-code-from scenario-runner
 ```
 
-A single scenario:
+A single scenario, or the catalogue:
 
 ```bash
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
   run --rm scenario-runner --scenario scenario_cloud_outage_recovery
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
+  run --rm scenario-runner --list
 ```
 
-At `--time-scale 600`, a full multi-dose cycle with two 15-minute absorption
-waits finishes in about six seconds.
+At `--time-scale 3600` a full multi-dose cycle with two 15-minute absorption
+waits finishes in about a second, and the whole catalogue in a few minutes.
+
+**Pass `--build`, or run `build` first.** The overlay's edge is a *different
+binary* from the base topology's: it carries the `e2e-faults` feature, which
+compiles in the process-boundary crash hooks SCEN-051 and SCEN-102 arm, and it
+is tagged `rhizo-edge-edge-controller:e2e` so it can never be mistaken for an
+image anyone might deploy. The runner refuses to start against a build without
+them rather than skipping those two scenarios quietly — one of three startup
+checks, alongside time-scale agreement across the services and proof that each
+device authenticates as itself rather than as the edge principal (ADR-012).
+
+The overlay also adds a second simulator in battery mode, `battery-node-01`,
+which SCEN-113…SCEN-117 need. It is deliberately not behind a Compose profile:
+the command above is the documented way to run the suite, and a default
+topology that could not run part of its own suite would make that
+documentation false.
 
 ---
 

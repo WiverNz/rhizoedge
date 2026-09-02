@@ -51,20 +51,17 @@ jobs:
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
 
+      # One command, and no retry on failure. PRD 080 is explicit that a flaky
+      # scenario is quarantined and fixed, never retried to green: a safety test
+      # that is retried until it passes is a safety test that does not work.
+      #
+      # The script brings the topology up, waits on its health gates, runs the
+      # runner as a one-shot container, and collects diagnostics on failure. It
+      # is not `up --abort-on-container-exit`, because a third of these
+      # scenarios stop containers on purpose and that flag would read the first
+      # such stop as a reason to end the run — see the script's own header.
       - name: Run complete scenario suite once
-        run: >-
-          docker compose
-          -f deploy/docker-compose.yml
-          -f deploy/docker-compose.test.yml
-          up --abort-on-container-exit --exit-code-from scenario-runner
-
-      - name: Capture service logs on failure
-        if: failure()
-        run: >-
-          docker compose
-          -f deploy/docker-compose.yml
-          -f deploy/docker-compose.test.yml
-          logs --no-color > deploy/artifacts/compose.log
+        run: ./scripts/run-scenarios.sh
 
       - name: Upload observable-state diagnostics
         if: failure()
@@ -74,6 +71,9 @@ jobs:
           path: deploy/artifacts/
           if-no-files-found: error
 
+      # The script tears the topology down itself, on success and on failure
+      # alike. This is the belt-and-braces case: a cancelled job, or a failure
+      # before the script was reached.
       - name: Tear down
         if: always()
         run: >-

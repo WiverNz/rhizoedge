@@ -46,9 +46,8 @@ developer / CI
      │     → mosquitto, device-simulator, edge-controller, cloud-api, postgres
      │     → curl localhost:8080/api/v1/overview
      │
-     └─ docker compose -f deploy/docker-compose.yml \
-                       -f deploy/docker-compose.test.yml \
-                       up --abort-on-container-exit --exit-code-from scenario-runner
+     └─ ./scripts/run-scenarios.sh
+           → brings the accelerated topology up and waits on its health gates
            → scenario-runner drives and asserts every scenario
            → exit 0 = the system works
 ```
@@ -96,16 +95,27 @@ developer / CI
 docker compose -f deploy/docker-compose.yml up --build
 
 # whole suite
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
-  up --abort-on-container-exit --exit-code-from scenario-runner
+./scripts/run-scenarios.sh
 
 # one scenario
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
-  run --rm scenario-runner --scenario scenario_cloud_outage_recovery
+./scripts/run-scenarios.sh --scenario scenario_cloud_outage_recovery
 
 # reset
 docker compose -f deploy/docker-compose.yml down -v
 ```
+
+> **Amended during M8 execution.** The suite was specified as
+> `up --abort-on-container-exit --exit-code-from scenario-runner`, and that
+> command cannot work: `--abort-on-container-exit` ends the run the moment any
+> container exits, and stopping containers is what a third of these scenarios
+> do. SCEN-051 kills the edge, SCEN-012 restarts the broker, SCEN-060 stops the
+> cloud, and the harness stops the edge and simulator between every pair of
+> scenarios to give each a clean database (F-080-05). Measured, not assumed:
+> under that flag the runner is SIGKILLed with exit 137 during the second
+> scenario, which reads as a scenario failure and is not one. `run-scenarios.sh`
+> brings the topology up, waits on its health gates, runs the runner as a
+> one-shot container, collects diagnostics on failure, and exits with the
+> runner's status — still one command, and still non-zero on any failure.
 
 Scenario-runner interfaces: the edge REST API
 ([http-api-boundaries.md](../protocol/http-api-boundaries.md) §2), the simulator

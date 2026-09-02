@@ -7,6 +7,19 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use std::{future::Future, pin::Pin};
 
+/// The dose the scenario profile configures, in millilitres.
+///
+/// A named constant because several scenarios assert that *exactly one dose of
+/// this size* was delivered — an autonomous dose while isolated, for instance —
+/// and a literal repeated beside the profile's own literal is a pair that drifts
+/// apart the first time either is retuned. It has been retuned once already:
+/// 40 ml into the simulator's 2500 ml pot could never satisfy the 3.0 VWC
+/// recovery threshold, and the cycle was unsatisfiable.
+const SCENARIO_DOSE_ML: f64 = 60.0;
+
+/// Half a millilitre either side, for comparing a float against the dose.
+const DOSE_EPSILON_ML: f64 = 0.01;
+
 /// Boxed scenario future.
 pub type ScenarioFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
@@ -14,7 +27,14 @@ pub type ScenarioFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + '
 pub struct Scenario {
     /// Stable CLI name.
     pub name: &'static str,
-    /// Safety invariants re-verified by the scenario.
+    /// Numbered scenarios from `docs/testing/failure-scenarios.md` this covers.
+    ///
+    /// F-080-20 requires every `e2e` scenario assigned to M8 to be implemented,
+    /// and this field is what makes that claim checkable rather than asserted:
+    /// [`tests::every_m8_scenario_in_the_catalogue_is_implemented`] reads the
+    /// document and fails if an id is unclaimed or claimed twice.
+    pub covers: &'static [&'static str],
+    /// Safety invariants re-verified by the scenario (F-080-22).
     pub proves: &'static [&'static str],
     /// Observable-state implementation.
     pub run: for<'a> fn(&'a Harness) -> ScenarioFuture<'a>,
@@ -107,9 +127,24 @@ async fn setup_plant(h: &Harness, automatic: bool) -> Result<String> {
             h,
             Method::POST,
             "/api/v1/profiles",
+            // The numbers have to be coherent with the *modelled pot*, not
+            // merely plausible on their own. The simulator's soil model holds
+            // 2500 ml and converts volume to moisture at `100 / pot_volume`, so
+            // one millilitre is 0.04 VWC and a 60 ml dose is +2.4. Recovery is
+            // judged against the reading taken before the cycle's *first* dose,
+            // so two doses clear the 3.0 VWC threshold and one does not:
+            // deliberately, because SCEN-002's documented sequence and the
+            // eighteen-step demo both require the recheck-and-dose-again path.
+            //
+            // An earlier 40 ml dose made the cycle unsatisfiable — +1.6 VWC per
+            // dose against a 3.0 threshold, cumulative +4.8 over the three doses
+            // `max_doses_per_cycle` allows, but the drying between them ate the
+            // margin and the plant reached `max_doses_reached` every time. That
+            // is the machine behaving correctly on an incoherent policy, which
+            // is exactly the kind of thing a scenario should not be built on.
             json!({
                 "profile_id":"scenario-profile", "name":"Scenario profile",
-                "target_min_vwc":28.0, "target_max_vwc":45.0, "dose_ml":40.0,
+                "target_min_vwc":28.0, "target_max_vwc":45.0, "dose_ml":SCENARIO_DOSE_ML,
                 "max_doses_per_cycle":3, "max_daily_ml":300.0,
                 "dry_confirm_minutes":30, "cooldown_hours":6.0,
                 "absorption_minutes":15, "recovery_delta_vwc":3.0,
@@ -125,14 +160,23 @@ async fn setup_plant(h: &Harness, automatic: bool) -> Result<String> {
     api_ok(h, Method::POST, "/api/v1/plants", json!({
         "plant_id":"scenario-plant", "name":"Scenario plant", "profile_id":profile, "pot_volume_ml":2000.0
     })).await?;
-    let mut bindings = vec![("soil-0", "default", "soil_moisture", "control")];
-    if automatic {
-        bindings.extend([
-            ("tank-0", "reservoir", "tank_level", "required"),
-            ("leak-0", "tray", "leak_state", "required"),
-            ("weight-0", "default", "pot_weight", "advisory"),
-        ]);
-    }
+    // Bound the same way whether or not automation is on. A binding says what
+    // the plant *has*, not whether anybody has switched watering on, and the two
+    // are independent: an operator wires the tray sensor once and decides about
+    // automation afterwards.
+    //
+    // Binding them only in the automatic case made the non-automatic plant a
+    // pot with a pump and no leak sensor, which the shared gate refuses outright
+    // — `LeakState::Unknown` is `Uncertain`, fail-closed and correct. SCEN-003
+    // then observed a locked-out plant rather than the advice-without-a-command
+    // it exists to check, which is a scenario testing the wrong subject. A plant
+    // that is genuinely under-provisioned is SCEN-106's business.
+    let bindings = [
+        ("soil-0", "default", "soil_moisture", "control"),
+        ("tank-0", "reservoir", "tank_level", "required"),
+        ("leak-0", "tray", "leak_state", "required"),
+        ("weight-0", "default", "pot_weight", "advisory"),
+    ];
     for (sensor_id, point, kind, role) in bindings {
         api_ok(
             h,
@@ -163,6 +207,31 @@ async fn setup_plant(h: &Harness, automatic: bool) -> Result<String> {
         }),
     )
     .await?;
+    // Every `required` binding needs a policy, not only the control stream.
+    // `plant::analyse` treats a required binding with no policy as unhealthy:
+    // declaring a measurement required is a claim that watering depends on it,
+    // and there is no defensible default staleness for a claim like that
+    // (SAFETY-017). Without these two the recommendation engine reported
+    // `sensor_unhealthy` and blocked for ever, while the irrigation gate —
+    // which derives its own freshness bound from the telemetry cadence — went
+    // on watering. Two surfaces disagreeing about the same plant is exactly the
+    // kind of thing the assembled suite exists to catch, and a scenario must
+    // not bake it in.
+    for (kind, policy) in [
+        (
+            "tank_level",
+            json!({ "target_min":20.0, "stale_after_ms":900000 }),
+        ),
+        ("leak_state", json!({ "stale_after_ms":900000 })),
+    ] {
+        api_ok(
+            h,
+            Method::PUT,
+            &format!("/api/v1/plants/scenario-plant/measurement-policies/{kind}"),
+            policy,
+        )
+        .await?;
+    }
     Ok(device)
 }
 
@@ -190,7 +259,7 @@ async fn setup_battery_plant(h: &Harness) -> Result<String> {
         "/api/v1/profiles",
         json!({
             "profile_id":"battery-profile", "name":"Battery profile",
-            "target_min_vwc":28.0, "target_max_vwc":45.0, "dose_ml":40.0,
+            "target_min_vwc":28.0, "target_max_vwc":45.0, "dose_ml":SCENARIO_DOSE_ML,
             "max_doses_per_cycle":3, "max_daily_ml":300.0,
             "dry_confirm_minutes":30, "cooldown_hours":6.0,
             "absorption_minutes":15, "recovery_delta_vwc":3.0,
@@ -274,6 +343,24 @@ async fn request_battery_water_mode(h: &Harness, ml: f64, mode: &str) -> Result<
     Ok(body)
 }
 
+/// Whether a captured topic is a command the **edge** issued to a device.
+///
+/// `topic.contains("/commands/")` is not that, and the difference is not
+/// cosmetic: `commands/result` is a *device* publication, it lives under the
+/// same path segment, and the device republishes it every retry interval until
+/// an acknowledgement names it. Counting those as commands turns "the gate
+/// refused to water" into "seven commands were published", which is a negative
+/// safety assertion failing on the noise it was supposed to ignore.
+///
+/// The edge-to-device command topics are `commands/water`, `commands/tare`,
+/// `commands/calibrate`, and `commands/result/ack`; only the first three can
+/// actuate anything (protocol §3).
+fn is_edge_command(topic: &str) -> bool {
+    topic.ends_with("/commands/water")
+        || topic.ends_with("/commands/tare")
+        || topic.ends_with("/commands/calibrate")
+}
+
 async fn api_ok(h: &Harness, method: Method, path: &str, body: Value) -> Result<Value> {
     let url = format!("{}{}", h.edge_url, path);
     let (status, value) = h.json(method, &url, body).await?;
@@ -306,7 +393,7 @@ fn recommendation_without_automation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                     .mqtt()
                     .await
                     .into_iter()
-                    .filter(|m| m.topic.contains("/commands/"))
+                    .filter(|m| is_edge_command(&m.topic))
                     .count();
                 ensure!(
                     commands == 0,
@@ -390,7 +477,7 @@ fn full_watering_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             "SELECT count(*), coalesce(sum(w.delivered_ml),0), sum(CASE WHEN c.status NOT IN ('completed','accepted','success') OR c.command_id IS NULL THEN 1 ELSE 0 END) FROM watering_events w LEFT JOIN commands c ON c.command_id=w.command_id WHERE w.plant_id='scenario-plant'"
         ).fetch_one(&h.sqlite).await?;
         ensure!(
-            events >= 1 && events <= 3,
+            (1..=3).contains(&events),
             "dose count {events} outside 1..=3"
         );
         ensure!(
@@ -444,6 +531,18 @@ fn duplicate_command<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                 "duplicate did not replay stored terminal result: {payload}"
             );
             wait_mqtt(h, |m| m.topic.ends_with("/commands/result/ack"), 200).await?;
+            // Wait for the *device* to report an empty ledger before opening
+            // the quiet window. A `command.result` is retired when an
+            // acknowledgement names it, but the device's republish timer is
+            // free-running: seeing the acknowledgement on the wire says the
+            // edge sent one, not that the device has consumed it, and a
+            // retransmission queued a moment earlier still arrives afterwards.
+            //
+            // `pending_results` is the retirement itself, so this asserts the
+            // property the acknowledgement exists for — once the device has
+            // retired the result it stops publishing it — instead of sampling a
+            // window and hoping the race fell the right way.
+            wait_simulator(h, 400, |state| state["pending_results"].as_u64() == Some(0)).await?;
             h.clear_mqtt().await;
             tokio::time::sleep(Duration::from_millis(100)).await;
             let after_ack = h
@@ -491,7 +590,19 @@ async fn wait_mqtt(
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    bail!("expected MQTT publication was not captured")
+    // The topics that *were* seen, not a bare timeout: PRD 080 asks for the last
+    // known state on a failure, and "an expected publication was not captured"
+    // says nothing about whether the device was silent, busy with something
+    // else, or publishing the right thing to the wrong topic.
+    let mut topics: Vec<String> = h
+        .mqtt()
+        .await
+        .into_iter()
+        .map(|message| message.topic)
+        .collect();
+    topics.sort_unstable();
+    topics.dedup();
+    bail!("expected MQTT publication was not captured; topics seen: {topics:?}")
 }
 
 fn broker_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
@@ -617,13 +728,22 @@ fn stale_sensor<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         )
         .await?;
         fault(h, "stale-soil", true).await?;
-        h.clear_mqtt().await;
         wait_lockout(h, Some("stale_data"), 200).await?;
+        // The quiet window opens *after* the lockout, which is what SCEN-022
+        // actually claims: "after `max_sample_age`, the plant enters
+        // `Lock(StaleData)`; no command is issued". Opening it at the moment
+        // the fault is injected asserts something else and something false —
+        // the last reading is still fresh then, the plant is still dry, and an
+        // edge that issued a dose on it would be behaving correctly. SAFETY-005
+        // is about acting on data that has *aged out*, not about the instant a
+        // sensor fell silent.
+        h.clear_mqtt().await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         let commands = h
             .mqtt()
             .await
             .into_iter()
-            .filter(|m| m.topic.contains("/commands/") && !m.topic.ends_with("/result/ack"))
+            .filter(|m| is_edge_command(&m.topic))
             .count();
         ensure!(
             commands == 0,
@@ -787,11 +907,14 @@ fn queued_command_expiry<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         tokio::time::sleep(Duration::from_millis(150)).await;
         h.clear_mqtt().await;
         h.publish(&topic, payload.clone()).await?;
-        // 300 ms at the suite's 600x scale is 180 virtual seconds: beyond the
-        // command's two-minute lifetime while the clean-session subscriber is
-        // absent.
+        // The wait only has to exceed the command's two-minute lifetime in
+        // *virtual* time while the clean-session subscriber is absent, and the
+        // overlay runs at 3600x — so 300 ms of real time is several hours of it.
+        // Generous on purpose: the property is that an expired command is never
+        // executed, and cutting the margin fine would test the margin instead.
         tokio::time::sleep(Duration::from_millis(300)).await;
         h.start_service("device-simulator")?;
+        h.wait_simulator_ready().await?;
         for _ in 0..200 {
             let state = h
                 .get_json(&format!("{}/sim/state", h.simulator_url))
@@ -878,7 +1001,7 @@ fn leak<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             !h.mqtt()
                 .await
                 .iter()
-                .any(|message| message.topic.contains("/commands/")),
+                .any(|message| is_edge_command(&message.topic)),
             "a command was published while the leak lockout was active"
         );
         let (wet_status, _) = h
@@ -1087,7 +1210,11 @@ fn restart_mid_command<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             !h.service_running("edge-controller")?,
             "edge fault hook did not terminate the process"
         );
-        h.clear_mqtt().await;
+        // The spy is deliberately *not* cleared here. SAFETY-010 is a claim
+        // about both process lifetimes together — "only one command was ever
+        // published" — and a window that starts after the restart cannot
+        // distinguish an edge that republished from one that did not, because
+        // the count it compares against would be the republished one.
         h.start_service("edge-controller")?;
         wait_edge_ready(h).await?;
         for _ in 0..400 {
@@ -1109,7 +1236,8 @@ fn restart_mid_command<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             .count();
         ensure!(
             publications == 1,
-            "restart published {publications} water commands"
+            "SAFETY-010: {publications} water commands were published across the crash and the \
+             restart, and exactly one may ever be"
         );
         let row: (String, i64, f64) = sqlx::query_as(
             "SELECT c.status,count(w.watering_event_id),coalesce(sum(w.delivered_ml),0) FROM commands c LEFT JOIN watering_events w ON w.command_id=c.command_id WHERE c.command_id=? GROUP BY c.status",
@@ -1342,6 +1470,16 @@ fn cloud_outage_recovery<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         )
         .fetch_one(&h.sqlite)
         .await?;
+        // The exact identities being recovered, captured before the edge is
+        // restarted. Counting *all* of `synced_events` afterwards would fold in
+        // whatever the restarted edge legitimately emits about itself — device
+        // status, config, connectivity — and turn "exactly once" into "exactly
+        // 500", which is a different and false claim. Exactly-once is a
+        // statement about these identities, so these are what get counted.
+        let recovering: Vec<String> =
+            sqlx::query_scalar("SELECT event_id FROM pending_cloud_events")
+                .fetch_all(&h.sqlite)
+                .await?;
         h.start_service("cloud-api")?;
         for _ in 0..400 {
             if h.get_json(&format!("{}/health/ready", h.cloud_url))
@@ -1376,13 +1514,15 @@ fn cloud_outage_recovery<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             .await?;
         ensure!(pending == 0, "cloud outbox did not drain: {pending} remain");
         let (rows, distinct): (i64, i64) = sqlx::query_as(
-            "SELECT count(*),count(DISTINCT event_id) FROM synced_events WHERE edge_id='home-01'",
+            "SELECT count(*),count(DISTINCT event_id) FROM synced_events WHERE edge_id='home-01' AND event_id::text = ANY($1)",
         )
+        .bind(&recovering)
         .fetch_one(&h.postgres)
         .await?;
         ensure!(
             rows == emitted && distinct == emitted,
-            "PostgreSQL ledger mismatch: rows={rows}, distinct={distinct}, emitted={emitted}"
+            "PostgreSQL ledger mismatch for the recovered events: rows={rows}, \
+             distinct={distinct}, emitted={emitted}"
         );
         let occurred_at = chrono::DateTime::from_timestamp_millis(sample.3)
             .context("outbox timestamp outside chrono range")?
@@ -1403,10 +1543,12 @@ fn cloud_outage_recovery<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             status.is_success() && response["results"][0]["status"] == "duplicate",
             "re-POST was not duplicate: {status} {response}"
         );
-        let after: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM synced_events WHERE edge_id='home-01'")
-                .fetch_one(&h.postgres)
-                .await?;
+        let after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM synced_events WHERE edge_id='home-01' AND event_id::text = ANY($1)",
+        )
+        .bind(&recovering)
+        .fetch_one(&h.postgres)
+        .await?;
         ensure!(after == rows, "duplicate re-POST created a PostgreSQL row");
         Ok(())
     })
@@ -1547,7 +1689,7 @@ fn first_demo<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                     .bind(&first_command.0)
                     .fetch_one(&h.sqlite)
                     .await?;
-            if delivered >= 40.0 && status == "completed" {
+            if delivered >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML && status == "completed" {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -1746,7 +1888,14 @@ async fn wait_simulator(
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    bail!("simulator state did not reach the expected condition")
+    // The last state, not a bare timeout: PRD 080's failure table asks for the
+    // last known state on a timeout, and "did not reach the expected condition"
+    // on its own means a trip to the container to ask what it was.
+    let last = h
+        .get_json(&format!("{}/sim/state", h.simulator_url))
+        .await
+        .unwrap_or_else(|error| json!({ "unreadable": error.to_string() }));
+    bail!("simulator state did not reach the expected condition; last observed: {last}")
 }
 
 fn isolation_no_policy<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
@@ -1812,10 +1961,15 @@ fn isolation_automation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         h.simulator_post("/sim/state", json!({"moisture_vwc":5.0}))
             .await?;
         let dosed = wait_simulator(h, 1000, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
-        ensure!(dosed["delivered_today_ml"].as_f64().unwrap_or_default() <= 40.01);
+        ensure!(
+            dosed["delivered_today_ml"].as_f64().unwrap_or_default()
+                <= SCENARIO_DOSE_ML + DOSE_EPSILON_ML,
+            "the isolated device delivered more than one bounded dose"
+        );
         h.simulator_post("/sim/state", json!({"moisture_vwc":46.0}))
             .await?;
         let reconnected = wait_simulator(h, 800, |s| s["connected"] == true).await?;
@@ -1823,13 +1977,15 @@ fn isolation_automation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             reconnected["delivered_today_ml"]
                 .as_f64()
                 .unwrap_or_default()
-                <= 40.01,
+                <= SCENARIO_DOSE_ML + DOSE_EPSILON_ML,
             "more than one autonomous dose was delivered: {reconnected}"
         );
         for _ in 0..400 {
             let rows: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM watering_events WHERE plant_id='scenario-plant' AND origin='offline_autonomous' AND delivered_ml=40.0",
+                "SELECT count(*) FROM watering_events WHERE plant_id='scenario-plant' AND origin='offline_autonomous' AND abs(delivered_ml - ?) < ?",
             )
+            .bind(SCENARIO_DOSE_ML)
+            .bind(DOSE_EPSILON_ML)
             .fetch_one(&h.sqlite)
             .await?;
             if rows == 1 {
@@ -1837,7 +1993,7 @@ fn isolation_automation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        bail!("exactly one autonomous 40 ml watering event was not reconciled")
+        bail!("exactly one autonomous {SCENARIO_DOSE_ML} ml watering event was not reconciled")
     })
 }
 
@@ -1920,7 +2076,8 @@ fn reconnect_fresh_sync<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         fault(h, "clock-unsync", true).await?;
         fault(h, "disconnect:3600", true).await?;
         let autonomous = wait_simulator(h, 500, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
         ensure!(
@@ -1976,6 +2133,7 @@ fn isolation_corrupt_policy<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         tokio::time::sleep(Duration::from_millis(100)).await;
         h.corrupt_simulator_policy()?;
         h.start_service("device-simulator")?;
+        h.wait_simulator_ready().await?;
         wait_http_simulator(h).await?;
         let state = h
             .get_json(&format!("{}/sim/state", h.simulator_url))
@@ -2242,7 +2400,7 @@ fn isolated_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             "/api/v1/profiles/scenario-profile",
             json!({
                 "name":"Scenario profile", "target_min_vwc":28.0, "target_max_vwc":45.0,
-                "dose_ml":40.0, "max_doses_per_cycle":1, "max_daily_ml":300.0,
+                "dose_ml":SCENARIO_DOSE_ML, "max_doses_per_cycle":1, "max_daily_ml":300.0,
                 "dry_confirm_minutes":30, "cooldown_hours":6.0,
                 "absorption_minutes":15, "recovery_delta_vwc":3.0,
                 "tank_min_percent":15.0, "command_ttl_seconds":600
@@ -2257,7 +2415,8 @@ fn isolated_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         .await?;
         fault(h, "disconnect:43200", true).await?;
         let dosed = wait_simulator(h, 1_000, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
         let delivered = dosed["delivered_today_ml"].as_f64().unwrap_or_default();
@@ -2320,7 +2479,8 @@ fn isolated_no_wall_clock<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         h.clear_mqtt().await;
         fault(h, "disconnect:7200", true).await?;
         let dosed = wait_simulator(h, 1_200, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
         ensure!(dosed["clock_synced"] == false);
@@ -2390,10 +2550,15 @@ fn required_measurement<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         fault(h, "stale-tank", false).await?;
         fault(h, "stale-leak", false).await?;
         let allowed = wait_simulator(h, 1_500, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
-        ensure!(allowed["delivered_today_ml"].as_f64().unwrap_or_default() <= 40.01);
+        ensure!(
+            allowed["delivered_today_ml"].as_f64().unwrap_or_default()
+                <= SCENARIO_DOSE_ML + DOSE_EPSILON_ML,
+            "the restored measurement allowed more than one bounded dose"
+        );
         Ok(())
     })
 }
@@ -2489,7 +2654,7 @@ fn duplicate_replay<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             "/api/v1/profiles/scenario-profile",
             json!({
                 "name":"Scenario profile", "target_min_vwc":28.0, "target_max_vwc":45.0,
-                "dose_ml":40.0, "max_doses_per_cycle":1, "max_daily_ml":300.0,
+                "dose_ml":SCENARIO_DOSE_ML, "max_doses_per_cycle":1, "max_daily_ml":300.0,
                 "dry_confirm_minutes":30, "cooldown_hours":6.0,
                 "absorption_minutes":15, "recovery_delta_vwc":3.0,
                 "tank_min_percent":15.0, "command_ttl_seconds":600
@@ -2505,7 +2670,8 @@ fn duplicate_replay<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         .await?;
         fault(h, "disconnect:7200", true).await?;
         wait_simulator(h, 1_200, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
         h.clear_mqtt().await;
@@ -2583,7 +2749,7 @@ fn restart_mid_replay<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         );
         h.start_service("edge-controller")?;
         wait_edge_ready(h).await?;
-        h.arm_service_fault("edge-controller", "/tmp/rhizo-fault-exit-mid-replay")?;
+        h.arm_service_fault("edge-controller", "/var/lib/rhizo/fault-exit-mid-replay")?;
         h.clear_mqtt().await;
         h.publish(
             &format!("rhizo/v1/devices/{device}/events"),
@@ -2749,11 +2915,13 @@ fn advisory_measurement<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         .await?;
         fault(h, "disconnect:7200", true).await?;
         let state = wait_simulator(h, 1_500, |s| {
-            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+            s["delivered_today_ml"].as_f64().unwrap_or_default()
+                >= SCENARIO_DOSE_ML - DOSE_EPSILON_ML
         })
         .await?;
         ensure!(
-            state["delivered_today_ml"].as_f64().unwrap_or_default() <= 40.01,
+            state["delivered_today_ml"].as_f64().unwrap_or_default()
+                <= SCENARIO_DOSE_ML + DOSE_EPSILON_ML,
             "missing advisory measurement blocked or over-dosed"
         );
         Ok(())
@@ -2770,10 +2938,7 @@ fn sleeping_manual_water<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         ensure!(held["intent_expires_at"].as_str().is_some());
         tokio::time::sleep(Duration::from_millis(50)).await;
         ensure!(
-            h.mqtt()
-                .await
-                .iter()
-                .all(|m| !m.topic.contains("/commands/")),
+            h.mqtt().await.iter().all(|m| !is_edge_command(&m.topic)),
             "a command was published while the battery device slept"
         );
         // Stop the accelerated Edge clock immediately: waiting through a
@@ -2905,10 +3070,8 @@ fn sleeping_intent_expiry<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                 .await?;
         ensure!(expired == "expired_before_wake");
         ensure!(
-            h.mqtt()
-                .await
-                .iter()
-                .all(|m| !m.topic.contains("/commands/"))
+            h.mqtt().await.iter().all(|m| !is_edge_command(&m.topic)),
+            "a command was published for an intent that expired before the wake"
         );
 
         h.reset_scenario().await?;
@@ -2949,8 +3112,14 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     Box::pin(async move {
         setup_battery_plant(h).await?;
         wait_battery_sleep(h).await?;
-        request_battery_water(h, 40.0).await?;
+        // Cleared *before* the request, not after. The battery node wakes every
+        // 900 logical seconds, which at 3600x is every quarter of a real
+        // second — so the intent can be minted, delivered, and answered inside
+        // the gap between the request returning and a clear that follows it,
+        // and the result the scenario is about would be thrown away. This is
+        // the flake that failed one run in two.
         h.clear_mqtt().await;
+        request_battery_water(h, 40.0).await?;
         wait_mqtt(h, |m| m.topic.ends_with("/commands/result"), 800).await?;
         wait_mqtt(
             h,
@@ -3117,11 +3286,12 @@ async fn wait_simulator_url(
 }
 
 macro_rules! scenarios {
-    ($(($name:literal, [$($safety:literal),*], $run:expr)),+ $(,)?) => {
+    ($(($name:literal, [$($scen:literal),*], [$($safety:literal),*], $run:expr)),+ $(,)?) => {
         /// Complete M8 catalogue in deterministic execution order.
         pub fn catalogue() -> &'static [Scenario] {
             static SCENARIOS: &[Scenario] = &[$(Scenario {
                 name: $name,
+                covers: &[$($scen),*],
                 proves: &[$($safety),*],
                 run: $run,
             }),+];
@@ -3131,163 +3301,233 @@ macro_rules! scenarios {
 }
 
 scenarios!(
-    ("scenario_normal_telemetry", [], normal_telemetry),
+    (
+        "scenario_normal_telemetry",
+        ["SCEN-001"],
+        [],
+        normal_telemetry
+    ),
     (
         "scenario_full_watering_cycle",
+        ["SCEN-002"],
         ["SAFETY-006", "SAFETY-012"],
         full_watering_cycle
     ),
     (
         "scenario_recommendation_without_automation",
+        ["SCEN-003"],
         [],
         recommendation_without_automation
     ),
     (
         "scenario_duplicate_command",
+        ["SCEN-011"],
         ["SAFETY-001"],
         duplicate_command
     ),
-    ("scenario_broker_restart", ["SAFETY-008"], broker_restart),
-    ("scenario_stale_sensor", ["SAFETY-005"], stale_sensor),
+    (
+        "scenario_broker_restart",
+        ["SCEN-012"],
+        ["SAFETY-008"],
+        broker_restart
+    ),
+    (
+        "scenario_stale_sensor",
+        ["SCEN-022"],
+        ["SAFETY-005"],
+        stale_sensor
+    ),
     (
         "scenario_invalid_sensor",
+        ["SCEN-023"],
         ["SAFETY-005", "SAFETY-012"],
         invalid_sensor
     ),
     (
         "scenario_clock_unsynced",
+        ["SCEN-025"],
         ["SAFETY-002", "SAFETY-012"],
         clock_unsynced
     ),
     (
         "scenario_queued_command_expiry",
+        ["SCEN-031"],
         ["SAFETY-002"],
         queued_command_expiry
     ),
-    ("scenario_leak", ["SAFETY-003"], leak),
-    ("scenario_tank_empty", ["SAFETY-004"], tank_empty),
-    ("scenario_no_delivery", [], no_delivery),
+    ("scenario_leak", ["SCEN-040"], ["SAFETY-003"], leak),
+    (
+        "scenario_tank_empty",
+        ["SCEN-042"],
+        ["SAFETY-004"],
+        tank_empty
+    ),
+    ("scenario_no_delivery", ["SCEN-044"], [], no_delivery),
     (
         "scenario_restart_mid_command",
+        ["SCEN-051"],
         ["SAFETY-010"],
         restart_mid_command
     ),
     (
         "scenario_restart_mid_absorption",
+        ["SCEN-052"],
         ["SAFETY-010"],
         restart_mid_absorption
     ),
     (
         "scenario_cloud_unavailable",
+        ["SCEN-060"],
         ["SAFETY-008"],
         cloud_unavailable
     ),
     (
         "scenario_cloud_independence",
+        ["SCEN-061"],
         ["SAFETY-009"],
         cloud_independence
     ),
     (
         "scenario_cloud_outage_recovery",
+        ["SCEN-062"],
         ["SAFETY-008"],
         cloud_outage_recovery
     ),
     (
         "scenario_reconnect_fresh_sync",
+        ["SCEN-077"],
         ["SAFETY-002", "SAFETY-015"],
         reconnect_fresh_sync
     ),
     (
         "scenario_isolation_no_policy",
+        ["SCEN-090", "SCEN-093"],
         ["SAFETY-013"],
         isolation_no_policy
     ),
     (
         "scenario_isolation_automation",
+        ["SCEN-091"],
         ["SAFETY-013", "SAFETY-014"],
         isolation_automation
     ),
     (
         "scenario_isolation_mid_dose",
+        ["SCEN-092"],
         ["SAFETY-001", "SAFETY-016"],
         isolation_mid_dose
     ),
     (
         "scenario_isolation_corrupt_policy",
+        ["SCEN-094"],
         ["SAFETY-013", "SAFETY-019"],
         isolation_corrupt_policy
     ),
     (
         "scenario_long_isolation",
+        ["SCEN-107"],
         ["SAFETY-008", "SAFETY-013", "SAFETY-014"],
         long_isolation
     ),
     (
         "scenario_policy_activation",
+        ["SCEN-095"],
         ["SAFETY-019"],
         policy_activation
     ),
-    ("scenario_offline_budget", ["SAFETY-014"], offline_budget),
+    (
+        "scenario_offline_budget",
+        ["SCEN-096"],
+        ["SAFETY-014"],
+        offline_budget
+    ),
     (
         "scenario_isolated_restart",
+        ["SCEN-097"],
         ["SAFETY-014", "SAFETY-015"],
         isolated_restart
     ),
     (
         "scenario_isolated_no_wall_clock",
+        ["SCEN-098"],
         ["SAFETY-015", "SAFETY-002"],
         isolated_no_wall_clock
     ),
     (
         "scenario_required_measurement",
+        ["SCEN-099"],
         ["SAFETY-017"],
         required_measurement
     ),
-    ("scenario_reconciliation", ["SAFETY-016"], reconciliation),
+    (
+        "scenario_reconciliation",
+        ["SCEN-100"],
+        ["SAFETY-016"],
+        reconciliation
+    ),
     (
         "scenario_duplicate_replay",
+        ["SCEN-101"],
         ["SAFETY-016"],
         duplicate_replay
     ),
     (
         "scenario_restart_mid_replay",
+        ["SCEN-102"],
         ["SAFETY-016", "SAFETY-010"],
         restart_mid_replay
     ),
-    ("scenario_stale_policy", ["SAFETY-019"], stale_policy),
-    ("scenario_history_gap", ["SAFETY-020"], history_gap),
+    (
+        "scenario_stale_policy",
+        ["SCEN-103"],
+        ["SAFETY-019"],
+        stale_policy
+    ),
+    (
+        "scenario_history_gap",
+        ["SCEN-104"],
+        ["SAFETY-020"],
+        history_gap
+    ),
     (
         "scenario_advisory_measurement",
+        ["SCEN-105", "SCEN-106"],
         ["SAFETY-017"],
         advisory_measurement
     ),
     (
         "scenario_sleeping_manual_water",
+        ["SCEN-113"],
         ["SAFETY-001", "SAFETY-010"],
         sleeping_manual_water
     ),
     (
         "scenario_sleeping_safety_refusal",
+        ["SCEN-114"],
         ["SAFETY-003", "SAFETY-012"],
         sleeping_safety_refusal
     ),
     (
         "scenario_sleep_budget_cooldown",
+        ["SCEN-115"],
         ["SAFETY-014", "SAFETY-015"],
         sleep_budget_cooldown
     ),
     (
         "scenario_sleeping_intent_expiry",
+        ["SCEN-116"],
         ["SAFETY-002"],
         sleeping_intent_expiry
     ),
     (
         "scenario_battery_awake_cycle",
+        ["SCEN-117"],
         ["SAFETY-001", "SAFETY-011"],
         battery_awake_cycle
     ),
     (
         "scenario_first_demo",
+        [],
         ["SAFETY-006", "SAFETY-008"],
         first_demo
     ),
@@ -3322,7 +3562,7 @@ pub fn select(names: &[String]) -> Result<Vec<&'static Scenario>> {
             let scenario = catalogue()
                 .iter()
                 .find(|scenario| scenario.name == "scenario_reconciliation")
-                .expect("reconciliation scenario is catalogued");
+                .context("the reconciliation scenario is missing from the catalogue")?;
             selected.push(scenario);
             continue;
         }
@@ -3387,6 +3627,90 @@ pub fn select(names: &[String]) -> Result<Vec<&'static Scenario>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every `e2e` scenario the failure catalogue assigns to M8 is implemented,
+    /// exactly once, and no entry claims an id the catalogue does not define.
+    ///
+    /// Read out of `docs/testing/failure-scenarios.md` rather than duplicated
+    /// here, for the same reason the ADR-005 kind tests read their ADR: two
+    /// hand-maintained lists that are never compared will disagree, and the one
+    /// that disagrees silently is the coverage claim.
+    #[test]
+    fn every_m8_scenario_in_the_catalogue_is_implemented() {
+        let document = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/testing/failure-scenarios.md"),
+        )
+        .expect("the failure-scenario catalogue is part of the repository");
+
+        // A scenario is `### SCEN-NNN <title>` followed, within its section, by
+        // a bullet naming its level and milestone.
+        let mut required: Vec<String> = Vec::new();
+        let mut current: Option<String> = None;
+        for line in document.lines() {
+            if let Some(rest) = line.strip_prefix("### SCEN-") {
+                let id: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                current = (id.len() == 3).then(|| format!("SCEN-{id}"));
+            } else if line.starts_with("- **Level**")
+                && line.contains("e2e")
+                && line.contains("**Milestone** M8")
+                && let Some(id) = current.take()
+            {
+                required.push(id);
+            }
+        }
+        assert!(
+            required.len() >= 26,
+            "the catalogue parser found only {} M8 e2e scenarios, which means the document \
+             shape changed and this test stopped checking anything",
+            required.len()
+        );
+
+        let mut claimed: Vec<&str> = catalogue().iter().flat_map(|s| s.covers).copied().collect();
+        claimed.sort_unstable();
+        let mut deduped = claimed.clone();
+        deduped.dedup();
+        assert_eq!(
+            claimed, deduped,
+            "two catalogue entries claim the same numbered scenario"
+        );
+
+        let missing: Vec<&String> = required
+            .iter()
+            .filter(|id| !claimed.contains(&id.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "M8 e2e scenarios not implemented: {missing:?}"
+        );
+
+        for id in &claimed {
+            assert!(
+                document.contains(&format!("### {id} ")),
+                "{id} is claimed by a scenario but is not in the failure catalogue"
+            );
+        }
+    }
+
+    /// F-080-22: every scenario says what it proves, in metadata rather than in
+    /// a comment, so the claim can be read back by a person or a report.
+    #[test]
+    fn every_scenario_declares_its_coverage() {
+        for scenario in catalogue() {
+            assert!(
+                !scenario.covers.is_empty() || scenario.name == "scenario_first_demo",
+                "{} names no numbered scenario",
+                scenario.name
+            );
+            for invariant in scenario.proves {
+                assert!(
+                    invariant.starts_with("SAFETY-") && invariant.len() == 10,
+                    "{}: `{invariant}` is not a safety-invariant id",
+                    scenario.name
+                );
+            }
+        }
+    }
 
     #[test]
     fn catalogue_names_are_unique_and_selectable() {

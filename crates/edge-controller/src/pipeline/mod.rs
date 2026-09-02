@@ -288,13 +288,12 @@ async fn process(
                 crate::control::reconcile::begin(db, dev.as_ref(), clock.now()).await?;
             }
             let commit = retry_transient(m, || ingest::persist_replay(db, &e, at)).await?;
-            if replay
-                && !e.data.complete
-                && std::env::var("RHIZO_E2E_FAULTS").as_deref() == Ok("1")
-                && std::path::Path::new("/tmp/rhizo-fault-exit-mid-replay").exists()
-            {
-                let _ = std::fs::remove_file("/tmp/rhizo-fault-exit-mid-replay");
-                std::process::exit(86);
+            // M8's second process-boundary crash hook (SCEN-102): die after an
+            // *incomplete* replay batch has committed, so the restarted edge
+            // must resume a replay it has only partly absorbed. Compiled out
+            // without the `e2e-faults` feature.
+            if replay && !e.data.complete && crate::faults::armed(crate::faults::EXIT_MID_REPLAY) {
+                std::process::exit(crate::faults::FAULT_EXIT_CODE);
             }
             // No contiguous prefix means there is nothing truthful to say, so
             // the edge stays silent and the device replays again. `Some(0)` is

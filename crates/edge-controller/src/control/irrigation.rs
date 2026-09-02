@@ -45,6 +45,47 @@ pub struct Pass {
     pub lockout: Option<LockoutReason>,
 }
 
+/// Writes the pass's conclusion, unless another writer moved the plant first.
+///
+/// See [`put_irrigation_state_if_unchanged`](command_repo::put_irrigation_state_if_unchanged)
+/// for what the race is and why losing it is not an error.
+async fn persist(
+    commander: &Commander,
+    loaded: &Loaded,
+    gathered: &Gathered,
+    row: &command_repo::IrrigationStateRow,
+    now_ms: i64,
+) -> Result<bool, EdgeError> {
+    let applied = command_repo::put_irrigation_state_if_unchanged(
+        commander.db(),
+        loaded.plant.plant_id.as_str(),
+        state_name(gathered.state),
+        row,
+        now_ms,
+    )
+    .await?;
+    if !applied {
+        tracing::debug!(
+            plant_id = %loaded.plant.plant_id,
+            observed = state_name(gathered.state),
+            "a command result moved the plant during this pass; leaving it to the next tick"
+        );
+    }
+    Ok(applied)
+}
+
+/// The pass's report when another writer won the race: what the machine
+/// decided, and the state the *other* writer left behind rather than the one
+/// this pass would have written.
+fn lost_race(gathered: &Gathered, decision: IrrigationDecision) -> Pass {
+    Pass {
+        decision,
+        state: gathered.state,
+        command_id: None,
+        lockout: gathered.active_lockout,
+    }
+}
+
 /// Evaluates one plant and applies the result.
 ///
 /// `mode` is [`EvaluationMode::Automatic`] from the control loop; the REST
@@ -166,7 +207,9 @@ pub async fn apply(
                     "watering locked out"
                 );
             }
-            command_repo::put_irrigation_state(db, plant_id, &row, now_ms).await?;
+            if !persist(commander, loaded, gathered, &row, now_ms).await? {
+                return Ok(lost_race(gathered, decision));
+            }
         }
         IrrigationDecision::CycleComplete => {
             row.last_cycle_completed_at = Some(now_ms);
@@ -176,20 +219,26 @@ pub async fn apply(
             row.pre_dose_vwc = None;
             row.pre_dose_grams = None;
             row.active_command_id = None;
-            command_repo::put_irrigation_state(db, plant_id, &row, now_ms).await?;
+            if !persist(commander, loaded, gathered, &row, now_ms).await? {
+                return Ok(lost_race(gathered, decision));
+            }
             tracing::info!(plant_id = %plant_id, "watering cycle complete");
         }
         IrrigationDecision::Wait { until } => {
             if gathered.state == IrrigationState::WaitForAbsorption {
                 row.wait_until = Some(until.timestamp_millis());
             }
-            command_repo::put_irrigation_state(db, plant_id, &row, now_ms).await?;
+            if !persist(commander, loaded, gathered, &row, now_ms).await? {
+                return Ok(lost_race(gathered, decision));
+            }
         }
         IrrigationDecision::Idle | IrrigationDecision::Recommend { .. } => {
             if target != IrrigationState::WaitForAbsorption {
                 row.wait_until = None;
             }
-            command_repo::put_irrigation_state(db, plant_id, &row, now_ms).await?;
+            if !persist(commander, loaded, gathered, &row, now_ms).await? {
+                return Ok(lost_race(gathered, decision));
+            }
         }
     }
 

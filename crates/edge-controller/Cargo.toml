@@ -16,6 +16,23 @@ path = "src/lib.rs"
 name = "edge-controller"
 path = "src/main.rs"
 
+# Off by default, and never enabled in a production image (M8-003, M8-010).
+#
+# `e2e-faults` compiles the process-boundary crash hooks the scenario suite arms
+# to kill the edge at an exact instant — after a command publish and before the
+# publish is recorded, and midway through a replay. Those are the only honest
+# way to test SAFETY-010 and SCEN-102 across a real process boundary, and they
+# are also a `std::process::exit` inside the actuation path, so they are a
+# compile-time decision rather than an environment variable a production
+# deployment could set by accident.
+#
+# The scenario runner asserts at startup that the edge it is driving was built
+# with this feature, so a suite run against a production image fails loudly
+# instead of quietly skipping the two scenarios that need it.
+[features]
+default = []
+e2e-faults = []
+
 [dependencies]
 axum = { workspace = true }
 chrono = { workspace = true }

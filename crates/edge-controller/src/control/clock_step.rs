@@ -110,8 +110,19 @@ impl Detector {
     }
 
     /// Observes a clock whose intentional wall-time rate may be accelerated.
-    /// Test acceleration is not a wall-clock step and must not trigger the
-    /// conservative anomaly response on every control tick.
+    ///
+    /// Deliberate acceleration is not a wall-clock step and must not trigger
+    /// the conservative anomaly response on every control tick.
+    ///
+    /// `rate` is 1.0 in production, where the wall clock is
+    /// [`HostClock::Real`](crate::clock::HostClock::Real) and this method is
+    /// exactly [`Self::observe`]. Under M8's accelerated clock the wall reading
+    /// is *derived* from the same monotonic source this compares it against, so
+    /// no divergence can arise and no step can be detected — which is correct
+    /// for a virtual clock nothing can step, and is why acceleration is
+    /// confined to the test overlay. Detection of a real NTP step is a property
+    /// of real time, and it is preserved there because the production clock
+    /// reads the host afresh on every call rather than anchoring once.
     pub fn observe_at_rate(
         &mut self,
         wall: DateTime<Utc>,

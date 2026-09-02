@@ -86,6 +86,11 @@ impl Harness {
     }
 
     /// Proves Edge, simulator, and runner agree before any scenario executes.
+    ///
+    /// M8-004: asserted *before* the first scenario, because a mismatch found
+    /// halfway through a suite wastes the whole run and produces failures that
+    /// read like logic bugs. The message names both values and the variable,
+    /// since the fix is always a Compose change.
     pub async fn assert_time_scale_agreement(&self) -> Result<()> {
         let edge = self
             .get_json(&format!("{}/api/v1/overview", self.edge_url))
@@ -101,6 +106,109 @@ impl Harness {
                 self.expected_time_scale
             );
         }
+        Ok(())
+    }
+
+    /// Proves the edge under test can actually be crashed at an exact instant.
+    ///
+    /// SCEN-051 and SCEN-102 arm a marker and expect the process to die. The
+    /// hooks are a compile-time feature the production image does not carry, so
+    /// an overlay run against a production build would leave those two
+    /// scenarios asserting nothing in particular. Refusing to start is the only
+    /// honest answer: PRD 080's failure table says an environment that cannot
+    /// exercise its subject must fail loudly rather than report a pass.
+    pub async fn assert_fault_injection_available(&self) -> Result<()> {
+        let edge = self
+            .get_json(&format!("{}/api/v1/overview", self.edge_url))
+            .await?;
+        ensure!(
+            edge.get("fault_injection").and_then(Value::as_bool) == Some(true),
+            "the edge under test was not built with the `e2e-faults` feature, so SCEN-051 and \
+             SCEN-102 could not crash it; rebuild the overlay image so its CARGO_FEATURES build \
+             argument applies"
+        );
+        Ok(())
+    }
+
+    /// Proves each device authenticates as itself, not as the edge principal.
+    ///
+    /// ADR-012 makes the broker username the `device_id`, and the ACL's
+    /// `pattern readwrite rhizo/v1/devices/%u/#` is what turns that into a real
+    /// boundary. A topology that logged its devices in as `rhizo-edge` would
+    /// hand each one `readwrite rhizo/v1/#`, and every scenario that believes
+    /// it is exercising a confined device would be exercising a client with
+    /// fleet-wide rights instead.
+    ///
+    /// # Why this is a delivery test and not a subscribe test
+    ///
+    /// Mosquitto answers an unauthorised SUBSCRIBE with a perfectly ordinary
+    /// SUBACK and filters the traffic afterwards, message by message — measured
+    /// against this broker, not assumed. That is the same shape as the
+    /// documented PUBLISH case, where a denied publication is acknowledged and
+    /// discarded, so neither acknowledgement can serve as evidence. What *is*
+    /// observable is what arrives: subscribe as the device to a neighbour's
+    /// subtree and to its own, publish a marker to each as the edge principal,
+    /// and require the second to arrive while the first never does. The
+    /// ordering is the proof — the own-marker arriving is what makes the
+    /// negative result a refusal rather than a race.
+    pub async fn assert_device_identity_is_enforced(&self) -> Result<()> {
+        let device_id = self
+            .get_json(&format!("{}/sim/state", self.simulator_url))
+            .await?
+            .get("device_id")
+            .and_then(Value::as_str)
+            .context("simulator device_id")?
+            .to_owned();
+        ensure!(
+            device_id != env("RHIZO_SCENARIO__EDGE_PRINCIPAL", "rhizo-edge"),
+            "the simulator is authenticated as the edge principal, not as a device (ADR-012)"
+        );
+        let variable = format!(
+            "RHIZO_DEVICE_{}_PASSWORD",
+            device_id.to_uppercase().replace('-', "_")
+        );
+        let password = std::env::var(&variable)
+            .with_context(|| format!("{variable} is required to prove the ACL boundary"))?;
+
+        let neighbour = "acl-probe-neighbour";
+        let own_topic = format!("rhizo/v1/devices/{device_id}/acl-probe");
+        let neighbour_topic = format!("rhizo/v1/devices/{neighbour}/acl-probe");
+        let received = Arc::new(Mutex::new(Vec::<String>::new()));
+        let listener = listen_as(
+            &device_id,
+            &password,
+            &[
+                format!("rhizo/v1/devices/{device_id}/#"),
+                format!("rhizo/v1/devices/{neighbour}/#"),
+            ],
+            Arc::clone(&received),
+        )
+        .await
+        .context("connect as the device to probe the ACL boundary")?;
+
+        self.publish(&neighbour_topic, b"probe".to_vec()).await?;
+        self.publish(&own_topic, b"probe".to_vec()).await?;
+        let mut delivered_own = false;
+        for _ in 0..100 {
+            if received.lock().await.iter().any(|t| t == &own_topic) {
+                delivered_own = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let seen = received.lock().await.clone();
+        let _ = listener.disconnect().await;
+        ensure!(
+            delivered_own,
+            "{device_id} received nothing on its own subtree, so this probe proves nothing about \
+             the boundary"
+        );
+        ensure!(
+            !seen.iter().any(|t| t == &neighbour_topic),
+            "{device_id} received {neighbour_topic}; devices are authenticating with an account \
+             broader than ADR-012 allows, and every scenario relying on device confinement is \
+             vacuous"
+        );
         Ok(())
     }
 
@@ -183,6 +291,23 @@ impl Harness {
         wait_http(&self.http, &format!("{}/sim/state", self.battery_url)).await
     }
 
+    /// Waits until an HTTP endpoint answers.
+    ///
+    /// Tolerates the connection refusals a container emits between `docker
+    /// start` returning and its listener binding. A scenario that polled with
+    /// [`Self::get_json`] instead would abort on the first refusal, which is
+    /// not a failure of the thing under test — it is the scenario asking too
+    /// early.
+    pub async fn wait_ready(&self, url: &str) -> Result<()> {
+        wait_http(&self.http, url).await
+    }
+
+    /// Waits until the device simulator's control API answers again.
+    pub async fn wait_simulator_ready(&self) -> Result<()> {
+        self.wait_ready(&format!("{}/sim/state", self.simulator_url))
+            .await
+    }
+
     /// Returns MQTT captured since the last isolation boundary.
     pub async fn mqtt(&self) -> Vec<CapturedMqtt> {
         self.mqtt.lock().await.clone()
@@ -212,6 +337,18 @@ impl Harness {
     /// Stops a Compose service by its label-derived container id.
     pub fn stop_service(&self, service: &str) -> Result<()> {
         docker_service("stop", service)
+    }
+
+    /// Stops a Compose service that may not have been created.
+    ///
+    /// Used only where the harness deliberately does not care — a scenario that
+    /// asked for a service by name and found nothing should still fail loudly,
+    /// which is why this is a second method rather than a softer `stop_service`.
+    pub fn stop_service_if_present(&self, service: &str) -> Result<()> {
+        match docker_container_id(service) {
+            Ok(_) => docker_service("stop", service),
+            Err(_) => Ok(()),
+        }
     }
 
     /// Abruptly terminates a service for crash-recovery scenarios.
@@ -402,9 +539,9 @@ impl Harness {
         // running.  Stop it before deleting device rows and durable simulator
         // state; otherwise it can re-register between those operations and a
         // subsequent clean restart legitimately looks stale to the edge.
-        // `docker compose stop` is harmless when the profiled service has not
-        // been created.
-        self.stop_service("battery-simulator")?;
+        // Tolerated as absent: a `run --rm scenario-runner` against a partially
+        // started topology should still be able to reset itself.
+        self.stop_service_if_present("battery-simulator")?;
         self.stop_service("device-simulator")?;
         self.stop_service("edge-controller")?;
         for statement in [
@@ -506,6 +643,62 @@ fn number(value: &Value, field: &str) -> Result<f64> {
         .with_context(|| format!("response field {field} is missing or non-numeric"))
 }
 
+/// Connects as `user`, subscribes to `filters`, and records arriving topics.
+///
+/// Used only by the ACL probe. The returned client keeps the session alive; the
+/// caller disconnects it.
+async fn listen_as(
+    user: &str,
+    password: &str,
+    filters: &[String],
+    received: Arc<Mutex<Vec<String>>>,
+) -> Result<AsyncClient> {
+    let broker = env("RHIZO_SCENARIO__MQTT_HOST", "mosquitto");
+    let mut options = MqttOptions::new(format!("rhizo-acl-probe-{user}"), broker, 1883);
+    options.set_credentials(user, password);
+    options.set_clean_session(true);
+    let (client, mut events) = AsyncClient::new(options, 32);
+    let subscriber = client.clone();
+    let filters = filters.to_vec();
+    let expected = filters.len();
+    // Returning before the broker has acknowledged every SUBSCRIBE would make
+    // the probe a race: the caller publishes immediately, and a marker sent
+    // before the subscription exists is simply never delivered — which reads
+    // exactly like the refusal the probe is looking for.
+    let (ready, subscribed) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let mut ready = Some(ready);
+        let mut acknowledged = 0usize;
+        loop {
+            match events.poll().await {
+                Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                    for filter in &filters {
+                        let _ = subscriber.subscribe(filter.clone(), QoS::AtLeastOnce).await;
+                    }
+                }
+                Ok(Event::Incoming(Packet::SubAck(_))) => {
+                    acknowledged += 1;
+                    if acknowledged == expected
+                        && let Some(signal) = ready.take()
+                    {
+                        let _ = signal.send(());
+                    }
+                }
+                Ok(Event::Incoming(Packet::Publish(publication))) => {
+                    received.lock().await.push(publication.topic);
+                }
+                Ok(_) => {}
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(15), subscribed)
+        .await
+        .map_err(|_| anyhow::anyhow!("the broker did not acknowledge {user}'s subscriptions"))?
+        .map_err(|_| anyhow::anyhow!("the {user} probe listener stopped before subscribing"))?;
+    Ok(client)
+}
+
 fn start_mqtt_spy(messages: Arc<Mutex<Vec<CapturedMqtt>>>) -> Result<AsyncClient> {
     let broker = env("RHIZO_SCENARIO__MQTT_HOST", "mosquitto");
     let password = std::env::var("RHIZO_EDGE__MQTT__PASSWORD")
@@ -545,9 +738,15 @@ fn start_mqtt_spy(messages: Arc<Mutex<Vec<CapturedMqtt>>>) -> Result<AsyncClient
 
 fn docker_service(action: &str, service: &str) -> Result<()> {
     let id = docker_container_id(service)?;
-    let status = Command::new("docker").args([action, &id]).status()?;
-    if !status.success() {
-        bail!("docker {action} failed for Compose service {service}");
+    // `docker start`/`stop` echo the container id. Captured rather than
+    // inherited, so the suite's own output stays a readable list of scenarios
+    // and their verdicts (F-080-06) instead of a column of hex.
+    let output = Command::new("docker").args([action, &id]).output()?;
+    if !output.status.success() {
+        bail!(
+            "docker {action} failed for Compose service {service}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     Ok(())
 }

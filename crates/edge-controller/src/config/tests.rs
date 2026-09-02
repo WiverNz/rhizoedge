@@ -68,6 +68,7 @@ fn defaults_load_with_no_file_and_no_environment() {
     assert_eq!(c.time_scale, 1.0);
     assert_eq!(c.mqtt.broker_url, "mqtt://localhost:1883");
     assert_eq!(c.mqtt.username, "rhizo-edge");
+    assert_eq!(c.cloud.batch_size, 500);
     assert_eq!(c.control.tick_interval_seconds, 30);
     assert_eq!(c.control.command_ttl_seconds, 120);
     assert_eq!(c.log.level, "info");

@@ -196,21 +196,16 @@ impl Commander {
 
         match self.publish_with_retry(&topic, payload).await {
             Ok(()) => {
-                // M8's process-boundary crash hook. It is inert unless the
-                // test-only Compose overlay opts in *and* the runner plants a
-                // one-shot marker in the edge data directory.
-                if std::env::var("RHIZO_E2E_FAULTS").as_deref() == Ok("1") {
-                    let marker =
-                        std::path::Path::new("/var/lib/rhizo/fault-exit-after-command-publish");
-                    if marker.exists() {
-                        let _ = std::fs::remove_file(marker);
-                        // The publish future confirms enqueueing to rumqttc's
-                        // event loop, not broker receipt. Give that loop one
-                        // scheduling quantum to put the QoS packet on the
-                        // socket, then crash before the result is consumed.
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        std::process::exit(86);
-                    }
+                // M8's process-boundary crash hook (SCEN-051). Compiled out
+                // entirely without the `e2e-faults` feature; inert even then
+                // until the runner plants its one-shot marker.
+                if crate::faults::armed(crate::faults::EXIT_AFTER_COMMAND_PUBLISH) {
+                    // The publish future confirms enqueueing to rumqttc's event
+                    // loop, not broker receipt. Give that loop one scheduling
+                    // quantum to put the QoS packet on the socket, then crash
+                    // before the result is consumed.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    std::process::exit(crate::faults::FAULT_EXIT_CODE);
                 }
                 command_repo::mark_published(
                     &self.db,
@@ -249,6 +244,7 @@ impl Commander {
                     // No watering event. A failed publish delivered nothing.
                     None,
                     Some((&request.plant_id, &recheck)),
+                    &command_repo::SettleExtras::default(),
                     self.clock.now().timestamp_millis(),
                 )
                 .await?;
@@ -322,6 +318,7 @@ impl Commander {
                     Some("publish_failed"),
                     None,
                     None,
+                    &command_repo::SettleExtras::default(),
                     self.clock.now().timestamp_millis(),
                 )
                 .await?;
@@ -421,6 +418,55 @@ impl Commander {
             .and_then(|r| serde_json::to_value(r).ok())
             .and_then(|v| v.as_str().map(ToOwned::to_owned));
 
+        // A device that refused because its clock is unsynchronised has told the
+        // edge something about the *plant*, not only about the command: nothing
+        // it commands there can execute until the device resynchronises
+        // (SAFETY-002, whose enforcement point stays the device).
+        //
+        // The lockout is **held** for one command TTL rather than left to clear
+        // on the next pass. `clock_unsynced` is auto-clearing, and the gate has
+        // no clock-sync input to re-derive it from — so without a hold it lifts
+        // within one tick and the operator is shown the specific remedy for a
+        // fraction of a second. SCEN-025 asks for a lockout that "names the
+        // specific remedy rather than a generic error", and a lockout nobody can
+        // observe names nothing.
+        //
+        // One TTL, because that is how long it takes to learn the answer by
+        // trying again: when the hold lapses the plant is eligible, the next
+        // command goes out, and a device that is still unsynchronised refuses it
+        // and re-arms the hold. The edge never has to guess at the condition.
+        //
+        // The hold and the transition go into the settling transaction rather
+        // than after it — a crash in between would leave `state='locked'` with
+        // no recorded reason, and a transition nothing records is the one entry
+        // missing from the history someone reads after a plant dies.
+        let clock_unsynced = result.status == CommandStatus::Rejected
+            && result.reason == Some(rhizo_mqtt_contract::payload::RejectReason::ClockUnsynced);
+        // The refused command's own TTL, so the hold matches the window the
+        // operator already understands and needs no separate setting.
+        let ttl_ms = row.expires_at.saturating_sub(row.issued_at).max(0);
+        let hold_until = now_ms.saturating_add(ttl_ms);
+        let extras = command_repo::SettleExtras {
+            lockout: clock_unsynced
+                .then_some(row.plant_id.as_deref())
+                .flatten()
+                .map(|plant_id| command_repo::SettleLockout {
+                    plant_id,
+                    reason: Some("clock_unsynced"),
+                    since: Some(now_ms),
+                    hold_until: Some(hold_until),
+                }),
+            transition: next
+                .as_ref()
+                .filter(|(_, previous, state)| previous != &state.state)
+                .map(
+                    |(plant_id, previous, state)| command_repo::SettleTransition {
+                        plant_id,
+                        from: previous,
+                        to: &state.state,
+                    },
+                ),
+        };
         let applied = command_repo::settle(
             &self.db,
             &command_id,
@@ -428,38 +474,12 @@ impl Commander {
             reason.as_deref(),
             watering.as_ref(),
             next.as_ref().map(|(id, _, state)| (id.as_str(), state)),
+            &extras,
             now_ms,
         )
         .await?;
         if !applied {
             return Ok(Settled::AlreadyTerminal);
-        }
-        if result.status == CommandStatus::Rejected
-            && result.reason == Some(rhizo_mqtt_contract::payload::RejectReason::ClockUnsynced)
-            && let Some(plant_id) = row.plant_id.as_deref()
-        {
-            command_repo::set_lockout(
-                &self.db,
-                plant_id,
-                Some("clock_unsynced"),
-                Some(now_ms),
-                None,
-                None,
-                now_ms,
-            )
-            .await?;
-        }
-        if let Some((plant_id, previous, state)) = &next
-            && previous != &state.state
-        {
-            crate::plant::record_irrigation_transition(
-                &self.db,
-                plant_id,
-                rhizo_domain::irrigation::types::state_from_str(previous),
-                rhizo_domain::irrigation::types::state_from_str(&state.state),
-                now_ms,
-            )
-            .await?;
         }
 
         self.metrics
@@ -524,6 +544,7 @@ impl Commander {
                     Some("expired_before_result"),
                     None,
                     next.as_ref().map(|(id, state)| (id.as_str(), state)),
+                    &command_repo::SettleExtras::default(),
                     now_ms,
                 )
                 .await?;

@@ -114,6 +114,10 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
         }
     };
 
+    // M8-001 verifies the container's signal handling by looking for these two
+    // lines: `docker compose stop` sends SIGTERM to PID 1, and whether that
+    // reached the binary or only a shell wrapper is invisible from outside.
+    tracing::info!(reason = signal.reason(), "graceful shutdown requested");
     connection.shutdown().await;
     if let (Some(capture), Some(directory)) = (connection.capture(), cli.capture_fixtures.as_ref())
     {
@@ -129,6 +133,7 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
     if let Some(control) = control {
         control.abort();
     }
+    tracing::info!("graceful shutdown complete");
     Ok(signal)
 }
 

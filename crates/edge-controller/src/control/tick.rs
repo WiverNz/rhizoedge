@@ -384,11 +384,19 @@ pub async fn irrigation_pass(
         let Some(loaded) = plant::load(db, &row.plant_id).await? else {
             continue;
         };
-        // Recommendation-only plants belong to the M5 evaluation pass. Running
-        // the actuation state machine for an opted-out plant can turn a valid
-        // WaterRecommended result into a safety lockout despite there being no
-        // automatic actuation path to gate.
-        if !loaded.plant.auto_watering_enabled {
+        // SAFETY-018: a plant with no actuator has no actuation path, so there
+        // is no actuation state machine to run for it. The gate's first check
+        // answers `NoActuator` for such a plant, and persisting that as a
+        // lockout would mark every monitoring-only plant as locked out and
+        // count it in `plants_locked_out` — while `POST /water` correctly
+        // answers 422 rather than 409. The M5 evaluation pass still runs, so a
+        // monitoring plant keeps its recommendations and its `blocked_by`.
+        //
+        // `auto_watering_enabled` is deliberately *not* the condition here. A
+        // plant with a pump and automation switched off must still have its
+        // leak, tank, and staleness lockouts evaluated and recorded every tick;
+        // the machine answers `Recommend` for it and publishes nothing.
+        if loaded.actuator.is_none() {
             continue;
         }
         let analysis = plant::analyse(db, &loaded, now).await?;

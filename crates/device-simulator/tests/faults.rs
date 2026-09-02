@@ -127,6 +127,17 @@ fn results(published: &[Publication]) -> Vec<CommandResult> {
         .collect()
 }
 
+/// One complete telemetry batch.
+fn one_batch(device: &mut Device) -> TelemetryBatch {
+    for _ in 0..200 {
+        let published = device.tick(10_000);
+        if let Some(batch) = batches(&published).into_iter().next() {
+            return batch;
+        }
+    }
+    panic!("no sampling cycle produced a batch");
+}
+
 /// One sampling cycle's soil-moisture sample.
 fn moisture(device: &mut Device) -> rhizo_mqtt_contract::payload::MeasurementSample {
     for _ in 0..200 {
@@ -493,6 +504,99 @@ fn no_fault_can_cause_a_dose() {
     }
 }
 
+/// The four `stale-*` faults withhold exactly one measurement kind and leave
+/// every other stream running.
+///
+/// The point of the fault is a device that is *present and reporting* while one
+/// input silently ages out — which is what SAFETY-005 and SAFETY-017 are about.
+/// A fault that stopped telemetry altogether would exercise the offline path
+/// instead, and the scenarios built on it would prove the wrong thing.
+#[test]
+fn stale_kind_faults_withhold_one_measurement_and_leave_the_rest_reporting() {
+    for (fault, name, withheld) in [
+        (
+            Fault::StaleSoil,
+            "stale-soil",
+            MeasurementKind::SoilMoisture,
+        ),
+        (Fault::StaleTank, "stale-tank", MeasurementKind::TankLevel),
+        (Fault::StaleLeak, "stale-leak", MeasurementKind::LeakState),
+        (
+            Fault::StaleWeight,
+            "stale-weight",
+            MeasurementKind::PotWeight,
+        ),
+    ] {
+        let mut device = ready(&[]);
+        let before = one_batch(&mut device);
+        assert!(
+            before.samples.iter().any(|s| s.kind == withheld),
+            "{name}: the kind must be present before the fault"
+        );
+
+        device.enable_fault(fault);
+        let during = one_batch(&mut device);
+        assert!(
+            !during.samples.iter().any(|s| s.kind == withheld),
+            "{name} did not withhold {withheld:?}"
+        );
+        assert!(
+            !during.samples.is_empty(),
+            "{name} stopped telemetry entirely; that is the offline fault, not this one"
+        );
+        for other in before.samples.iter().map(|s| s.kind.clone()) {
+            if other == withheld {
+                continue;
+            }
+            assert!(
+                during.samples.iter().any(|s| s.kind == other),
+                "{name} also withheld {other:?}"
+            );
+        }
+        assert!(!device.pump_running(), "{name} moved water");
+
+        device.disable_fault(name);
+        let after = one_batch(&mut device);
+        assert!(
+            after.samples.iter().any(|s| s.kind == withheld),
+            "{name}: disabling the fault must restore the stream"
+        );
+    }
+}
+
+/// `disconnect-mid-dose` accepts the dose, energises the pump, and then loses
+/// the socket before the result can be published.
+///
+/// The interesting part is the ordering. The in-flight record must already be
+/// durable and the pump already running when the link drops, because the
+/// failure being modelled is an edge that never learns what the dose did — not
+/// a device that refused it.
+#[test]
+fn disconnect_mid_dose_accepts_the_dose_then_loses_the_link() {
+    let mut device = ready(&[]);
+    device.enable_fault(Fault::DisconnectMidDose);
+
+    let published = device.on_message(&Topic::CommandWater(id()), &water(7, 40.0));
+
+    assert!(
+        published.is_empty(),
+        "nothing can reach the broker once the socket has gone: {published:?}"
+    );
+    assert!(device.pump_running(), "the dose must have actually started");
+    assert!(
+        device.is_isolated_by_fault(),
+        "the run loop has to observe the injected isolation and drop the socket"
+    );
+    assert!(device.isolation_remaining_ms() > 0);
+    assert!(
+        !device
+            .faults()
+            .active()
+            .any(|f| f.name() == "disconnect-mid-dose"),
+        "the fault is one-shot; leaving it armed would re-isolate on every dose"
+    );
+}
+
 #[test]
 fn every_fault_in_the_catalogue_has_a_test_here() {
     // The catalogue and this file must not drift apart: a fault added without
@@ -502,6 +606,10 @@ fn every_fault_in_the_catalogue_has_a_test_here() {
         "duplicate",
         "reorder",
         "invalid-soil",
+        "stale-soil",
+        "stale-tank",
+        "stale-leak",
+        "stale-weight",
         "stuck-sensor",
         "clock-unsync",
         "clock-skew",
@@ -510,6 +618,7 @@ fn every_fault_in_the_catalogue_has_a_test_here() {
         "pump-no-delivery",
         "pump-stuck-on",
         "restart-mid-dose",
+        "disconnect-mid-dose",
         "restart",
         "policy-interrupt",
         "miss-wake",

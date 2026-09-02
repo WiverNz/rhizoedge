@@ -73,29 +73,38 @@ async fn start() -> Result<(), String> {
     let (tx, rx) = tokio::sync::mpsc::channel(128);
     #[allow(
         clippy::disallowed_methods,
-        reason = "the binary anchors the host-clock adapter once at startup"
+        reason = "the binary is the host-clock boundary the domain is kept pure of"
     )]
     let host_utc = chrono::Utc::now();
-    // Accelerated time can run far ahead of the host. Restarting from host time
-    // would move the logical clock backwards, causing devices to reject the
-    // next `edge.time` and every safety-dated command after it. Anchor beyond
-    // the last durable ingress receipt instead; at production scale this is
-    // simply the host clock, while E2E restarts remain monotonic.
-    let durable_high_water: Option<i64> =
-        sqlx::query_scalar("SELECT max(received_at) FROM processed_messages")
-            .fetch_one(db.pool())
-            .await
-            .map_err(|e| e.to_string())?;
-    let base_utc = durable_high_water
-        .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis.saturating_add(1)))
-        .map_or(host_utc, |durable| durable.max(host_utc));
-    let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(
-        edge_controller::clock::AcceleratedClock::new(base_utc, c.time_scale),
-    );
+    // Only accelerated time needs an anchor, and only accelerated time needs
+    // this: virtual time runs far ahead of the host, so restarting from the
+    // host would move the logical clock *backwards* — devices would reject the
+    // next `edge.time` and every safety-dated command after it. Anchoring past
+    // the last durable ingress receipt keeps a restart monotonic.
+    //
+    // At production scale the clock is the host clock and reads it afresh every
+    // time, so there is no anchor to compute and this query is not run.
+    let base_utc = if c.time_scale == 1.0 {
+        host_utc
+    } else {
+        let durable_high_water: Option<i64> =
+            sqlx::query_scalar("SELECT max(received_at) FROM processed_messages")
+                .fetch_one(db.pool())
+                .await
+                .map_err(|e| e.to_string())?;
+        durable_high_water
+            .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis.saturating_add(1)))
+            .map_or(host_utc, |durable| durable.max(host_utc))
+    };
+    let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(edge_controller::clock::HostClock::new(
+        base_utc,
+        c.time_scale,
+    ));
     tracing::info!(
         time_scale = c.time_scale,
-        variable = "RHIZO_TIME_SCALE",
-        "edge logical clock configured"
+        variable = "RHIZO_EDGE__TIME_SCALE",
+        accelerated = c.time_scale != 1.0,
+        "edge wall clock configured"
     );
     // The M6 commander. Unlike M5's evaluation pass it holds a transport, so the
     // control plane can move water — and every path from a decision to the wire
@@ -134,6 +143,7 @@ async fn start() -> Result<(), String> {
                 cloud_client,
                 clock.clone(),
                 metrics.clone(),
+                c.cloud.batch_size,
                 supervisor.shutdown_receiver(),
             ),
         );

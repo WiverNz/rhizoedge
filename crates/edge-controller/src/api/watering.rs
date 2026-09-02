@@ -1068,16 +1068,34 @@ mod water {
 
     /// The whole point of the opt-in: with it off, a bone-dry confirmed plant
     /// produces advice and no command.
+    ///
+    /// Two passes, not one, and deliberately so. PRD 060's transition table is
+    /// `Normal -> Drying -> DryConfirmed -> DoseIssued`, and `DryConfirmed` is
+    /// an observable persisted state rather than a predicate evaluated in
+    /// passing: the pass that *confirms* dryness records it and does nothing
+    /// else, and the pass after it acts. Asserting the intermediate state is
+    /// what stops a machine that reached the right answer by skipping a step
+    /// from passing.
     #[tokio::test]
     async fn automation_off_means_a_recommendation_and_no_command() {
+        use rhizo_domain::irrigation::types::IrrigationDecision;
+        use rhizo_domain::state::IrrigationState;
+
         let api = TestApi::start().await;
         api.waterable("monstera-01").await;
         api.device_connected().await;
+
+        let confirming = api.irrigate("monstera-01").await;
+        assert_eq!(confirming.decision, IrrigationDecision::Idle);
+        assert_eq!(confirming.state, IrrigationState::DryConfirmed);
+        assert!(api.transport.commands().is_empty());
+
         let pass = api.irrigate("monstera-01").await;
-        assert!(matches!(
-            pass.decision,
-            rhizo_domain::irrigation::types::IrrigationDecision::Recommend { .. }
-        ));
+        assert!(
+            matches!(pass.decision, IrrigationDecision::Recommend { .. }),
+            "{:?}",
+            pass.decision
+        );
         assert!(api.transport.commands().is_empty());
 
         // Turned on, the same plant doses.

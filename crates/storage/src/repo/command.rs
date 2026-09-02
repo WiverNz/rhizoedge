@@ -163,6 +163,75 @@ async fn put_state_in_tx(
     Ok(())
 }
 
+/// Writes the irrigation state only if it still reads as `expected`.
+///
+/// # There are two writers, and one of them evaluates before it writes
+///
+/// The control pass reads the plant's state, evaluates the pure machine, and
+/// writes the result — and a `command.result` arriving from the pipeline in
+/// between settles the same plant from a different task. Both writers are
+/// correct in isolation; together they lose an update, because the pass writes
+/// a row derived from a read that is no longer true.
+///
+/// The observed failure is specific and worth recording. A dose settles, the
+/// pipeline moves the plant `dose_issued -> wait_for_absorption`, and the pass —
+/// which read `dose_issued` a moment earlier — writes `dose_issued` back. It
+/// records no transition, because from its own point of view nothing changed.
+/// The plant is then held in `dose_issued` against a command that has already
+/// completed, and the machine answers `Wait` for ever: fail-safe, since no
+/// second dose can be issued, but the plant stops being watered until the
+/// process restarts and `reconcile_ledger` clears it.
+///
+/// Compare-and-set is the smallest fix that keeps both writers independent.
+/// Returns `false` when the row moved underneath the caller, which is not an
+/// error: the other writer's view was the newer one, and the next tick re-reads
+/// everything from storage anyway (F-060-13).
+///
+/// # Errors
+///
+/// Returns [`StorageError`] if the write fails.
+pub async fn put_irrigation_state_if_unchanged(
+    db: &EdgeDb,
+    plant_id: &str,
+    expected: &str,
+    state: &IrrigationStateRow,
+    now: i64,
+) -> Result<bool, StorageError> {
+    // One statement, not a read-modify-write transaction. SQLite serialises
+    // writers even under WAL, and the control loop runs this once per plant per
+    // tick — beside a telemetry pipeline and an API on the same file. A
+    // `BEGIN; SELECT; UPSERT; COMMIT` holds the write lock across two round
+    // trips and pushed the other two into `SQLITE_BUSY` past their five-second
+    // timeout under the M8 overlay's accelerated clock, which surfaced as 500s
+    // from the REST API. `ON CONFLICT ... DO UPDATE ... WHERE` is the same
+    // compare-and-set in a single implicit transaction.
+    //
+    // `rows_affected() == 0` means the guard failed: the row exists and its
+    // state is no longer `expected`.
+    let affected = sqlx::query(
+        "INSERT INTO irrigation_state(plant_id,state,state_since,doses_this_cycle,cycle_started_at,last_cycle_completed_at,wait_until,active_command_id,pre_dose_vwc,pre_dose_grams,updated_at) \
+         VALUES(?,?,?,?,?,?,?,?,?,?,?) \
+         ON CONFLICT(plant_id) DO UPDATE SET state=excluded.state,state_since=excluded.state_since,doses_this_cycle=excluded.doses_this_cycle,cycle_started_at=excluded.cycle_started_at,last_cycle_completed_at=excluded.last_cycle_completed_at,wait_until=excluded.wait_until,active_command_id=excluded.active_command_id,pre_dose_vwc=excluded.pre_dose_vwc,pre_dose_grams=excluded.pre_dose_grams,updated_at=excluded.updated_at \
+         WHERE irrigation_state.state=?",
+    )
+    .bind(plant_id)
+    .bind(&state.state)
+    .bind(state.state_since)
+    .bind(state.doses_this_cycle)
+    .bind(state.cycle_started_at)
+    .bind(state.last_cycle_completed_at)
+    .bind(state.wait_until)
+    .bind(&state.active_command_id)
+    .bind(state.pre_dose_vwc)
+    .bind(state.pre_dose_grams)
+    .bind(now)
+    .bind(expected)
+    .execute(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(affected.rows_affected() > 0)
+}
+
 /// Writes the irrigation state outside a command transaction.
 pub async fn put_irrigation_state(
     db: &EdgeDb,
@@ -277,6 +346,7 @@ pub async fn settle(
     reason: Option<&str>,
     watering: Option<&NewWateringEvent>,
     next_state: Option<(&str, &IrrigationStateRow)>,
+    extras: &SettleExtras<'_>,
     now: i64,
 ) -> Result<bool, StorageError> {
     let mut tx = db.begin().await?;
@@ -333,10 +403,95 @@ pub async fn settle(
         put_state_in_tx(&mut tx, plant_id, state, now).await?;
     }
 
+    // Both extras belong to *this* transaction, not to a follow-up statement.
+    // A settle that wrote `state='locked'` and then failed before its lockout
+    // reason landed would leave a plant held for a reason nothing records, and
+    // an unrecorded transition would leave "what did the system think, and
+    // when" unanswerable for the one transition most worth reconstructing.
+    if let Some(lockout) = extras.lockout.as_ref() {
+        set_lockout_in_tx(
+            &mut tx,
+            lockout.plant_id,
+            lockout.reason,
+            lockout.since,
+            lockout.hold_until,
+            None,
+            now,
+        )
+        .await?;
+    }
+    if let Some(transition) = extras.transition.as_ref() {
+        record_transition_in_tx(
+            &mut tx,
+            transition.plant_id,
+            transition.from,
+            transition.to,
+            now,
+        )
+        .await?;
+    }
+
     crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::COMMAND_SETTLED,&serde_json::json!({"command_id":command_id,"status":status,"reason":reason,"occurred_at":now}),now).await?;
 
     tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(true)
+}
+
+/// A lockout to apply in the settling transaction.
+#[derive(Clone, Copy, Debug)]
+pub struct SettleLockout<'a> {
+    /// The plant to hold.
+    pub plant_id: &'a str,
+    /// The stable lockout name, or `None` to clear.
+    pub reason: Option<&'a str>,
+    /// When the lockout began.
+    pub since: Option<i64>,
+    /// A deadline the lockout is held to regardless of its condition.
+    pub hold_until: Option<i64>,
+}
+
+/// An irrigation transition to record in the settling transaction.
+#[derive(Clone, Copy, Debug)]
+pub struct SettleTransition<'a> {
+    /// The plant that moved.
+    pub plant_id: &'a str,
+    /// The state it left.
+    pub from: &'a str,
+    /// The state it entered.
+    pub to: &'a str,
+}
+
+/// Consequences a settlement must commit atomically with itself.
+///
+/// Empty for every settlement that has none, which is most of them.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SettleExtras<'a> {
+    /// A lockout the result implies, such as a device's `clock_unsynced`.
+    pub lockout: Option<SettleLockout<'a>>,
+    /// The irrigation transition the new state represents.
+    pub transition: Option<SettleTransition<'a>>,
+}
+
+/// Records an irrigation transition inside an open transaction.
+async fn record_transition_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+    from: &str,
+    to: &str,
+    at: i64,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        "INSERT INTO plant_events(event_id,plant_id,kind,severity,detail_json,occurred_at) \
+         VALUES(?,?,'irrigation_state_changed','info',?,?) ON CONFLICT(event_id) DO NOTHING",
+    )
+    .bind(format!("irrigation:{plant_id}:{at}:{to}"))
+    .bind(plant_id)
+    .bind(serde_json::json!({ "from": from, "to": to }).to_string())
+    .bind(at)
+    .execute(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(())
 }
 
 /// A watering event a completed command produced.
@@ -431,13 +586,34 @@ pub async fn set_lockout(
     now: i64,
 ) -> Result<(), StorageError> {
     let mut tx = db.begin().await?;
+    set_lockout_in_tx(
+        &mut tx, plant_id, reason, since, hold_until, cleared_by, now,
+    )
+    .await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(())
+}
+
+/// The body of [`set_lockout`], inside a caller's transaction.
+///
+/// Exists so a settlement can hold a plant in the *same* transaction that
+/// records why (see [`SettleExtras`]).
+async fn set_lockout_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+    reason: Option<&str>,
+    since: Option<i64>,
+    hold_until: Option<i64>,
+    cleared_by: Option<&str>,
+    now: i64,
+) -> Result<(), StorageError> {
     // Read before write: the update destroys the answer. `None` here means no
     // live plant row, which is not a transition and gets no event.
     let previous: Option<Option<String>> = sqlx::query_scalar(
         "SELECT lockout_reason FROM plants WHERE plant_id=? AND deleted_at IS NULL",
     )
     .bind(plant_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
     sqlx::query(
@@ -450,7 +626,7 @@ pub async fn set_lockout(
     .bind(cleared_by)
     .bind(if reason.is_none() { Some(now) } else { None })
     .bind(plant_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
     if let Some(prior) = previous.as_ref().filter(|p| p.as_deref() != reason) {
@@ -478,7 +654,7 @@ pub async fn set_lockout(
         .bind(severity)
         .bind(detail)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(StorageError::from_sqlx)?;
     }
@@ -487,8 +663,7 @@ pub async fn set_lockout(
     } else {
         crate::repo::outbox::EventKind::LOCKOUT_CLEARED
     };
-    crate::repo::outbox::emit(&mut tx, kind, &serde_json::json!({"plant_id":plant_id,"reason":reason,"since":since,"hold_until":hold_until,"cleared_by":cleared_by}), now).await?;
-    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    crate::repo::outbox::emit(tx, kind, &serde_json::json!({"plant_id":plant_id,"reason":reason,"since":since,"hold_until":hold_until,"cleared_by":cleared_by}), now).await?;
     Ok(())
 }
 
@@ -513,6 +688,76 @@ pub async fn lockout(
             )
         })
     }))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod cas {
+    use super::*;
+    use crate::EdgeDb;
+
+    async fn db() -> EdgeDb {
+        let db = EdgeDb::in_memory().await.unwrap();
+        db.migrate().await.unwrap();
+        sqlx::query("INSERT INTO plants(plant_id,name,created_at) VALUES('p','P',0)")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db
+    }
+
+    fn row(state: &str) -> IrrigationStateRow {
+        IrrigationStateRow {
+            state: state.to_owned(),
+            ..IrrigationStateRow::default()
+        }
+    }
+
+    /// The first writer inserts; the second, holding a stale view, is refused.
+    ///
+    /// This is the lost update the control pass and the result pipeline can
+    /// produce between them: a settled dose moves the plant on, and the pass —
+    /// which read the older state — would otherwise write it back and hold the
+    /// plant against a command that has already completed.
+    #[tokio::test]
+    async fn a_stale_writer_is_refused_and_the_row_is_left_alone() {
+        let db = db().await;
+
+        assert!(
+            put_irrigation_state_if_unchanged(&db, "p", "normal", &row("dose_issued"), 1)
+                .await
+                .unwrap(),
+            "a plant with no row yet reads as the caller's default"
+        );
+
+        // The other writer settles the command and moves the plant on.
+        put_irrigation_state(&db, "p", &row("wait_for_absorption"), 2)
+            .await
+            .unwrap();
+
+        assert!(
+            !put_irrigation_state_if_unchanged(&db, "p", "dose_issued", &row("dose_issued"), 3)
+                .await
+                .unwrap(),
+            "a writer whose read is stale must not win"
+        );
+        assert_eq!(
+            irrigation_state(&db, "p").await.unwrap().unwrap().state,
+            "wait_for_absorption",
+            "the newer writer's state survives"
+        );
+
+        assert!(
+            put_irrigation_state_if_unchanged(&db, "p", "wait_for_absorption", &row("recheck"), 4)
+                .await
+                .unwrap(),
+            "a writer with a current read still wins"
+        );
+        assert_eq!(
+            irrigation_state(&db, "p").await.unwrap().unwrap().state,
+            "recheck"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -630,14 +875,32 @@ mod tests {
             reason_json: None,
         };
         assert!(
-            settle(&db, "cmd-1", "completed", None, Some(&event), None, 5_000)
-                .await
-                .unwrap()
+            settle(
+                &db,
+                "cmd-1",
+                "completed",
+                None,
+                Some(&event),
+                None,
+                &SettleExtras::default(),
+                5_000
+            )
+            .await
+            .unwrap()
         );
         assert!(
-            !settle(&db, "cmd-1", "failed", Some("late"), None, None, 9_000)
-                .await
-                .unwrap(),
+            !settle(
+                &db,
+                "cmd-1",
+                "failed",
+                Some("late"),
+                None,
+                None,
+                &SettleExtras::default(),
+                9_000
+            )
+            .await
+            .unwrap(),
             "a second result settles nothing"
         );
         let row = get(&db, "cmd-1").await.unwrap().unwrap();
@@ -653,9 +916,18 @@ mod tests {
     async fn an_unknown_command_id_settles_nothing() {
         let db = db().await;
         assert!(
-            !settle(&db, "never-issued", "completed", None, None, None, 1)
-                .await
-                .unwrap()
+            !settle(
+                &db,
+                "never-issued",
+                "completed",
+                None,
+                None,
+                None,
+                &SettleExtras::default(),
+                1
+            )
+            .await
+            .unwrap()
         );
         let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM commands")
             .fetch_one(db.pool())
@@ -681,17 +953,35 @@ mod tests {
             delivered_ml: Some(38.0),
             reason_json: None,
         };
-        settle(&db, "cmd-1", "completed", None, Some(&event), None, 5_000)
-            .await
-            .unwrap();
+        settle(
+            &db,
+            "cmd-1",
+            "completed",
+            None,
+            Some(&event),
+            None,
+            &SettleExtras::default(),
+            5_000,
+        )
+        .await
+        .unwrap();
         assert!((delivered_in_window(&db, "monstera-01", 0).await.unwrap() - 38.0).abs() < 1e-9);
 
         let mut second = command();
         second.command_id = "cmd-2".into();
         issue(&db, &second, &dose_issued(), 6_000).await.unwrap();
-        settle(&db, "cmd-2", "interrupted", None, None, None, 7_000)
-            .await
-            .unwrap();
+        settle(
+            &db,
+            "cmd-2",
+            "interrupted",
+            None,
+            None,
+            None,
+            &SettleExtras::default(),
+            7_000,
+        )
+        .await
+        .unwrap();
         assert!(
             (delivered_in_window(&db, "monstera-01", 0).await.unwrap() - 78.0).abs() < 1e-9,
             "an interrupted dose charges its full request"
@@ -715,6 +1005,7 @@ mod tests {
             None,
             Some(&manual_event),
             None,
+            &SettleExtras::default(),
             9_000,
         )
         .await

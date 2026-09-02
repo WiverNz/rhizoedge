@@ -83,6 +83,14 @@ uuid = { version = "1.25.0", default-features = false, features = ["serde"] }
 # scaffolding to reach main looking like finished work.
 #
 # Every member writes `lints.workspace = true`.
+# M8-001 requires the service images to stay under 100 MB, and a debian-slim
+# base leaves roughly 25 MB for the binary. Symbols are most of an unstripped
+# Rust release build and nothing in this project reads them from the image: a
+# backtrace is produced by the host toolchain against the same commit, and the
+# `debug = false` default already means there is no DWARF to lose.
+[profile.release]
+strip = "symbols"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"

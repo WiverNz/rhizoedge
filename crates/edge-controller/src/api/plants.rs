@@ -64,10 +64,20 @@ fn plant_json(plant: &plant_repo::PlantRow, derived: &Derived) -> serde_json::Va
         "pending_intent": pending_intent,
         "auto_watering_enabled": plant.auto_watering_enabled,
         "has_actuator": has_actuator,
+        // `clearable` is derived, not asserted. F-060-40 and F-060-41 draw the
+        // line between a lockout that lifts itself once its condition resolves
+        // and one that needs a person, and `POST /water`'s 409 body already
+        // reports the real answer — a hardcoded `false` here told an operator
+        // that a stale reading needed their intervention when it did not, and
+        // disagreed with the other endpoint about the same plant.
         "lockout": plant.lockout_reason.as_ref().map(|reason| serde_json::json!({
             "reason": reason,
             "since": plant.lockout_since.and_then(timestamp),
-            "clearable": false,
+            // An unreadable lockout name resolves to `Unknown`, which needs a
+            // person — the same fail-closed reading `lockout_from_str` documents.
+            "clearable": plant::lockout_from_str(reason).is_some_and(
+                rhizo_domain::irrigation::is_auto_clearable,
+            ),
             "message": "watering is locked out",
         })),
         "latest": latest,

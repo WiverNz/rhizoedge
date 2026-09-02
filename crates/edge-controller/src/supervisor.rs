@@ -38,10 +38,17 @@ impl Supervisor {
             (name, result)
         });
     }
+    /// Runs until a signal arrives or a supervised task fails.
+    ///
+    /// The two `graceful shutdown` log lines are not decoration: `docker compose
+    /// stop` sends SIGTERM to PID 1, and whether that reached the *binary* or
+    /// only a shell wrapper is invisible from the outside. M8-001 verifies the
+    /// container's signal handling by looking for them, which is why they
+    /// bracket the drain rather than sitting inside it.
     pub async fn run(mut self) -> Result<(), String> {
         let requested = self.shutdown.subscribe();
         tokio::select! {
-         _=shutdown_signal(requested)=>{let _=self.shutdown.send(true);let drain=async{while let Some(result)=self.tasks.join_next().await{match result{Ok((_name,Ok(())))=>{},Ok((name,Err(e)))=>return task_error(&self.metrics,name,e),Err(e)=>return Err(e.to_string())}}Ok(())};match tokio::time::timeout(self.timeout,drain).await{Ok(result)=>result,Err(_)=>{tracing::warn!("shutdown timeout reached; aborting remaining tasks at transaction boundary");Ok(())}}}
+         _=shutdown_signal(requested)=>{tracing::info!("graceful shutdown requested; draining supervised tasks");let _=self.shutdown.send(true);let drain=async{while let Some(result)=self.tasks.join_next().await{match result{Ok((_name,Ok(())))=>{},Ok((name,Err(e)))=>return task_error(&self.metrics,name,e),Err(e)=>return Err(e.to_string())}}Ok(())};match tokio::time::timeout(self.timeout,drain).await{Ok(result)=>{tracing::info!(clean=result.is_ok(),"graceful shutdown complete");result},Err(_)=>{tracing::warn!("shutdown timeout reached; aborting remaining tasks at transaction boundary");Ok(())}}}
          result=self.tasks.join_next()=>{match result{Some(Ok((name,Err(e))))=>task_error(&self.metrics,name,e),Some(Ok((name,Ok(()))))=>Err(format!("task {name} exited unexpectedly")),Some(Err(join))=>Err(format!("supervisor join failure: {join}")),None=>Err("no supervised tasks".into())}}
         }
     }

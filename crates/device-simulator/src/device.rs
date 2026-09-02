@@ -954,25 +954,19 @@ impl Device {
             },
         );
         let mut batch = batch;
-        if self.faults.is_enabled("stale-soil") {
-            batch
-                .samples
-                .retain(|sample| sample.kind != MeasurementKind::SoilMoisture);
-        }
-        if self.faults.is_enabled("stale-tank") {
-            batch
-                .samples
-                .retain(|sample| sample.kind != MeasurementKind::TankLevel);
-        }
-        if self.faults.is_enabled("stale-leak") {
-            batch
-                .samples
-                .retain(|sample| sample.kind != MeasurementKind::LeakState);
-        }
-        if self.faults.is_enabled("stale-weight") {
-            batch
-                .samples
-                .retain(|sample| sample.kind != MeasurementKind::PotWeight);
+        // The `stale-*` faults withhold one kind while every other stream keeps
+        // reporting, which is the shape SAFETY-005 and SAFETY-017 care about: a
+        // device that is plainly present with one input quietly ageing out.
+        // Withholding everything would be the offline fault instead.
+        for (fault, kind) in [
+            ("stale-soil", MeasurementKind::SoilMoisture),
+            ("stale-tank", MeasurementKind::TankLevel),
+            ("stale-leak", MeasurementKind::LeakState),
+            ("stale-weight", MeasurementKind::PotWeight),
+        ] {
+            if self.faults.is_enabled(fault) {
+                batch.samples.retain(|sample| sample.kind != kind);
+            }
         }
         if invalid_soil_rate > 0.0 {
             self.spoil_soil_readings(&mut batch);

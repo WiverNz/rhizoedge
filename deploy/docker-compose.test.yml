@@ -4,11 +4,33 @@ services:
 
   edge-controller:
     restart: "no"
+    # The scenario suite needs an edge that can kill itself at an exact instant
+    # (SCEN-051, SCEN-102). That is a compile-time feature, never an
+    # environment variable, so the overlay builds its own image; the runner
+    # asserts at startup that the edge it drives reports `fault_injection: true`
+    # and refuses to run at all otherwise.
+    #
+    # A distinct tag, because this is a *different binary* from the one the base
+    # topology builds. Compose derives an image name from the project and the
+    # service, so without this the fault-injection build would overwrite the
+    # production image under the same tag and `docker compose up` on the base
+    # file alone would silently start an edge that can kill itself.
+    image: rhizo-edge-edge-controller:e2e
+    build:
+      args:
+        CARGO_FEATURES: e2e-faults
     environment:
-      RHIZO_E2E_FAULTS: "1"
-      RHIZO_E2E_CLOUD_BATCH_SIZE: "10"
+      RHIZO_EDGE__CLOUD__BATCH_SIZE: "10"
       RHIZO_EDGE__TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
-      RHIZO_EDGE__CONTROL__TICK_INTERVAL_SECONDS: "30"
+      # 120 *logical* seconds, which at 3600x is a pass every 33 ms of real
+      # time. The production default of 30 becomes a pass every 8 ms, and at
+      # that rate the control loop, the telemetry pipeline, and the REST API
+      # contend for the same SQLite file hard enough to exhaust the five-second
+      # busy timeout — the API starts answering 500 and the suite fails on an
+      # artefact of its own acceleration. Every threshold the loop watches is
+      # far coarser than two virtual minutes: dry-confirm is 30, absorption 15,
+      # and the cooldown six virtual hours.
+      RHIZO_EDGE__CONTROL__TICK_INTERVAL_SECONDS: "120"
       RHIZO_EDGE__CONTROL__COMMAND_TTL_SECONDS: "600"
       RHIZO_EDGE__CLOUD__REQUEST_TIMEOUT_SECONDS: "10"
 
@@ -17,18 +39,24 @@ services:
     environment:
       RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
       RHIZO_SIMULATOR__CONTROL_BIND: 0.0.0.0:9090
+    # Published so M8-004's documented check — `curl localhost:9090/sim/scale`
+    # — works from the host. The bind is routable only because
+    # `--allow-remote-control-api` says so, and only on this isolated overlay.
+    ports:
+      - "9090:9090"
+    # Identity and credentials stay exactly as the base topology defines them
+    # (ADR-012); the overlay changes the clock and the control-API bind, and
+    # nothing about who the device is to the broker.
     command:
-      - >-
-        exec /usr/local/bin/device-simulator
-        --device-id "sim-$${HOSTNAME}"
-        --username rhizo-edge
-        --password "$${RHIZO_EDGE__MQTT__PASSWORD}"
-        --broker mqtt://mosquitto:1883
-        --telemetry-interval 300
-        --time-scale "$${RHIZO_TIME_SCALE}"
-        --state-file "/var/lib/rhizo/sim-$${HOSTNAME}.state.json"
-        --allow-remote-control-api
-        --log-format json
+      - --broker
+      - mqtt://mosquitto:1883
+      - --telemetry-interval
+      - "300"
+      - --time-scale
+      - ${RHIZO_TIME_SCALE:-3600}
+      - --allow-remote-control-api
+      - --log-format
+      - json
 
   postgres:
     restart: "no"
@@ -37,6 +65,13 @@ services:
     restart: "no"
 
   scenario-runner:
+    # Behind a profile so `up` brings up the *topology* and nothing else. The
+    # runner is a one-shot process, started by `docker compose run` — which
+    # enables its profile automatically — and it stops and starts the other
+    # services as it works. Left in the default set, `up --wait` would launch it
+    # alongside the services it is about to stop, and then fail because a
+    # container it stopped is no longer running.
+    profiles: ["runner"]
     build:
       context: ..
       dockerfile: deploy/scenario-runner.Dockerfile
@@ -72,8 +107,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [rhizo]
 
+  # Not behind a Compose profile, deliberately. Five scenarios (SCEN-113…117)
+  # need a sleeping device, and PRD 080's headline command is a single
+  # `up --abort-on-container-exit --exit-code-from scenario-runner` that must
+  # exit 0 — so a topology whose default form cannot run part of its own suite
+  # would make that command false. The base topology still has no battery node:
+  # this service exists only in the test overlay.
   battery-simulator:
-    profiles: ["battery"]
     build:
       context: ..
       dockerfile: deploy/device-simulator.Dockerfile
@@ -89,27 +129,55 @@ services:
     environment:
       RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
       RHIZO_SIMULATOR__CONTROL_BIND: 0.0.0.0:9090
-    entrypoint: ["/bin/sh", "-c"]
+      # A fixed node rather than a replica, so the entrypoint is told its
+      # identity instead of deriving one. Its broker account is in `DEVICE_IDS`
+      # like any other device's (ADR-012).
+      RHIZO_SIM_DEVICE_ID: battery-node-01
     command:
-      - >-
-        exec /usr/local/bin/device-simulator
-        --device-id battery-node-01
-        --username rhizo-edge
-        --password "$${RHIZO_EDGE__MQTT__PASSWORD}"
-        --broker mqtt://mosquitto:1883
-        --power-mode battery
-        --wake-interval-seconds 900
-        --telemetry-interval 900
-        --awake-budget-seconds 1
-        --time-scale "$${RHIZO_TIME_SCALE}"
-        --state-file /var/lib/rhizo/battery-node-01.state.json
-        --allow-remote-control-api
-        --log-format json
+      - --broker
+      - mqtt://mosquitto:1883
+      - --power-mode
+      - battery
+      # These are *logical* seconds, and the overlay runs at 3600x — so the
+      # numbers have to be chosen for the real-time windows they produce, not
+      # for how they read. A 900/1 pair looks like a device that wakes every
+      # fifteen minutes and is awake for a second; in real time it is awake for
+      # 0.3 ms, which is less than one control tick, and the Edge cannot mint,
+      # publish, and have a held intent delivered inside it. SCEN-113 and
+      # SCEN-117 failed roughly one run in three on exactly that.
+      #
+      # 1800/1200 is 167 ms asleep and 333 ms awake per cycle.
+      #
+      # The awake window has to cover the whole delivery path — the wake status
+      # reaching the Edge, a control tick noticing it, `edge.time` and then the
+      # command going out, and the device acting. At a 120-logical-second tick
+      # that is ten ticks of margin. An earlier 900/1 pair gave *less than one*
+      # tick (0.3 ms of real time) and SCEN-113 lost the command to a device
+      # that slept between the tick and the publish, roughly one run in three.
+      #
+      # The cycle length is bounded from the other side by SCEN-115, which needs
+      # about 190 sleep/wake cycles: at half a second each that is 95 seconds of
+      # the suite's ten-minute budget, and a 3600-second interval doubled it.
+      #
+      # And the sleep window has to be observable: SCEN-113 asserts that
+      # *nothing* is published while the device sleeps, and that observation has
+      # to fit inside one sleep.
+      - --wake-interval-seconds
+      - "1800"
+      - --telemetry-interval
+      - "900"
+      - --awake-budget-seconds
+      - "1200"
+      - --time-scale
+      - ${RHIZO_TIME_SCALE:-3600}
+      - --allow-remote-control-api
+      - --log-format
+      - json
     volumes:
       - device-simulator-state:/var/lib/rhizo
     networks: [rhizo]
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD", "busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/sim/state"]
       interval: 2s
       timeout: 2s
       retries: 20

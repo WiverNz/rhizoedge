@@ -100,18 +100,21 @@ async fn sweep_and_select(
         .map_err(|e| e.to_string())
 }
 
+/// The `cloud.batch_size` default, and the value the drain's own tests use.
+pub const DEFAULT_BATCH_SIZE: u32 = 500;
+
 pub async fn run(
     db: rhizo_storage::EdgeDb,
     client: CloudClient,
     clock: std::sync::Arc<dyn rhizo_domain::Clock>,
     metrics: Metrics,
+    batch_size: u32,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), String> {
-    let initial_batch = std::env::var("RHIZO_E2E_CLOUD_BATCH_SIZE")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .map_or(500, |value| value.clamp(10, 500));
-    let mut size = BatchSize::new(initial_batch);
+    // `cloud.batch_size` is ordinary configuration, validated to 10..=500 by
+    // `config::validate`. It is the *ceiling*: the adaptive halving below still
+    // owns the size from here on.
+    let mut size = BatchSize::new(batch_size);
     let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(300));
     let mut outage = false;
     loop {
@@ -541,6 +544,7 @@ mod tests {
             .unwrap(),
             clock.clone(),
             metrics.clone(),
+            DEFAULT_BATCH_SIZE,
             down_rx,
         ));
         for _ in 0..100 {
@@ -574,6 +578,7 @@ mod tests {
             CloudClient::new(&cloud_url, "recovery-01", Duration::from_secs(5)).unwrap(),
             clock.clone(),
             metrics,
+            DEFAULT_BATCH_SIZE,
             up_rx,
         ));
         for _ in 0..200 {

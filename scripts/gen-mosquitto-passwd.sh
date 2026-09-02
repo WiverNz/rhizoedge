@@ -61,19 +61,28 @@ reject_placeholder() {
     esac
 }
 
-# Adds one account. `-c` on the first call creates and truncates the file,
-# which is what makes the whole script idempotent.
+# Accounts are collected first and hashed in ONE pass at the end, as
+# tab-separated `user<TAB>password` records fed on stdin. Two reasons:
+#
+#   - `mosquitto_passwd -c` fails on a Windows or macOS bind mount with
+#     "Unable to open file /config/passwd for writing. File exists." even when
+#     it does not exist. The tool creates a scratch file with `O_EXCL` beside
+#     the target and the host filesystem shim answers that call wrongly.
+#     Building the file on the container's own filesystem and copying it into
+#     `/config` once sidesteps the shim entirely.
+#   - one container invocation instead of one per account is also much faster.
+#
+# A tab cannot occur in a base64 password, which is what ADR-012 §Credentials
+# recommends, and no password ever reaches a process argument list or the host
+# filesystem — the records are piped.
+accounts=""
 add_account() {
-    local user="$1" pass="$2" create="${3:-}"
-    if [ -n "${MOSQUITTO_PASSWD:-}" ]; then
-        "$MOSQUITTO_PASSWD" ${create:+-c} -b "$out_file" "$user" "$pass"
-    else
-        docker run --rm \
-            -v "$config_dir:/config" \
-            "$image" mosquitto_passwd ${create:+-c} -b /config/passwd "$user" "$pass"
-    fi
+    local user="$1" pass="$2"
+    accounts="${accounts}${user}${tab}${pass}${newline}"
     echo "  + $user"
 }
+tab="$(printf '\t')"
+newline="$(printf '\nx')"; newline="${newline%x}"
 
 edge_user="$(get MQTT_USERNAME || true)"
 edge_pass="$(get MQTT_PASSWORD || true)"
@@ -85,7 +94,7 @@ reject_placeholder MQTT_PASSWORD "$edge_pass"
 mkdir -p "$config_dir"
 echo "generating $out_file from $(basename "$env_file")"
 
-add_account "$edge_user" "$edge_pass" create
+add_account "$edge_user" "$edge_pass"
 
 if [ -n "$device_ids" ]; then
     IFS=',' read -r -a ids <<<"$device_ids"
@@ -102,6 +111,48 @@ if [ -n "$device_ids" ]; then
         add_account "$id" "$pass"
     done
 fi
+
+# One hashing pass over every collected account, then the copy into the mount.
+if [ -n "${MOSQUITTO_PASSWD:-}" ]; then
+    rm -f "$out_file"
+    printf '%s' "$accounts" | while IFS="$tab" read -r user pass; do
+        [ -n "$user" ] || continue
+        # `-c` creates; without it the file must already exist.
+        if [ -f "$out_file" ]; then
+            "$MOSQUITTO_PASSWD" -b "$out_file" "$user" "$pass"
+        else
+            "$MOSQUITTO_PASSWD" -c -b "$out_file" "$user" "$pass"
+        fi
+    done
+else
+    # Create the destination from the host before the container truncates it.
+    # A Windows bind mount caches a negative lookup for a path deleted on the
+    # host side and then answers the container's `O_CREAT` with ENOENT
+    # ("can't create /config/passwd: nonexistent directory") for a directory
+    # that plainly exists. Creating it here means the container only ever
+    # truncates a file the mount already knows about.
+    : > "$out_file" 2>/dev/null || true
+    printf '%s' "$accounts" | docker run --rm -i \
+        -v "$config_dir:/config" \
+        "$image" sh -c '
+            set -e
+            rm -f /tmp/passwd
+            while IFS="$(printf "\t")" read -r user pass; do
+                [ -n "$user" ] || continue
+                if [ -f /tmp/passwd ]; then
+                    mosquitto_passwd -b /tmp/passwd "$user" "$pass"
+                else
+                    mosquitto_passwd -c -b /tmp/passwd "$user" "$pass"
+                fi
+            done
+            # A redirect, not `cp`: BusyBox `cp` opens the destination with
+            # `O_EXCL` and a Windows bind mount answers that with a spurious
+            # EEXIST for a path that does not exist.
+            cat /tmp/passwd > /config/passwd
+        '
+fi
+
+[ -s "$out_file" ] || die "no accounts were written to $out_file"
 
 # `mosquitto_passwd` creates the file 0600 owned by whoever ran it. In the
 # Docker path that is root inside the container, and the broker runs as

@@ -133,6 +133,7 @@ enabled  = false
 base_url = "http://localhost:8081"
 outbox_max_rows = 500000
 request_timeout_seconds = 10
+batch_size = 500
 
 [api]
 bind = "127.0.0.1:8080"
@@ -222,6 +223,12 @@ pub struct CloudConfig {
     pub outbox_max_rows: u64,
     /// Whole request timeout used by the independent drain task.
     pub request_timeout_seconds: u64,
+    /// Rows the drain asks for in one batch before adaptive halving.
+    ///
+    /// Lower it to make a drain observable event by event, which is what the
+    /// M8 overlay does; the drain still halves and recovers on its own, so this
+    /// sets the ceiling rather than the size.
+    pub batch_size: u32,
 }
 
 /// The edge's own HTTP surface.
@@ -576,6 +583,12 @@ fn validate(c: &EdgeConfig) -> Result<(), ConfigError> {
         return Err(ConfigError::invalid(
             "cloud.outbox_max_rows",
             "must be greater than zero",
+        ));
+    }
+    if !(10..=500).contains(&c.cloud.batch_size) {
+        return Err(ConfigError::invalid(
+            "cloud.batch_size",
+            "must be between 10 and 500",
         ));
     }
     if c.cloud.request_timeout_seconds == 0 {

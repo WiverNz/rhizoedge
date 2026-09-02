@@ -289,12 +289,16 @@ mod accelerated_clock_tests {
         let _ = first;
     }
 
+    /// Expressed in terms of the bound rather than against a literal, so
+    /// retuning `MAX_VIRTUAL_STEP_MS` cannot leave the test asserting a step
+    /// count the constant no longer produces.
     #[test]
     fn a_large_interval_is_split_into_bounded_steps() {
-        let steps = AcceleratedClock::steps(60_000);
+        let interval = MAX_VIRTUAL_STEP_MS * 6;
+        let steps = AcceleratedClock::steps(interval);
         assert_eq!(steps.len(), 6);
         assert!(steps.iter().all(|s| *s <= MAX_VIRTUAL_STEP_MS));
-        assert_eq!(steps.iter().sum::<u64>(), 60_000, "nothing is lost");
+        assert_eq!(steps.iter().sum::<u64>(), interval, "nothing is lost");
     }
 
     #[test]
@@ -307,11 +311,22 @@ mod accelerated_clock_tests {
         assert!(AcceleratedClock::steps(0).is_empty());
     }
 
+    /// A remainder is carried as a final short step rather than dropped or
+    /// rounded up: the models integrate each step, so a lost 500 ms is water
+    /// that never moved and moisture that never fell.
     #[test]
     fn an_odd_interval_keeps_its_remainder() {
-        let steps = AcceleratedClock::steps(25_000);
-        assert_eq!(steps, vec![25_000]);
-        assert_eq!(steps.iter().sum::<u64>(), 25_000);
+        let interval = MAX_VIRTUAL_STEP_MS * 2 + MAX_VIRTUAL_STEP_MS / 2;
+        let steps = AcceleratedClock::steps(interval);
+        assert_eq!(
+            steps,
+            vec![
+                MAX_VIRTUAL_STEP_MS,
+                MAX_VIRTUAL_STEP_MS,
+                MAX_VIRTUAL_STEP_MS / 2
+            ]
+        );
+        assert_eq!(steps.iter().sum::<u64>(), interval);
     }
 }
 

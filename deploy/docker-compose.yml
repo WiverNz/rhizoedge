@@ -53,7 +53,7 @@ services:
       - "8080:8080"
     networks: [rhizo]
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD", "busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/live"]
       interval: 5s
       timeout: 2s
       retries: 12
@@ -75,23 +75,34 @@ services:
         required: false
     environment:
       RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-1}
-    entrypoint: ["/bin/sh", "-c"]
+    # The username the broker authenticates IS the device id (ADR-012), so the
+    # id and the account in `deploy/mosquitto/passwd` must be the same string,
+    # and `--password` is never passed: the simulator reads
+    # `RHIZO_DEVICE_<ID>_PASSWORD` from the environment `env_file` supplies.
+    # Authenticating a device as `rhizo-edge` would hand it `readwrite
+    # rhizo/v1/#` and leave the ACL's `pattern .../%u/#` boundary untested.
+    #
+    # `--device-id` and `--state-file` come from the image's entrypoint, which
+    # resolves this replica's identity so `--scale device-simulator=3` produces
+    # three distinct, separately authenticated devices rather than three clients
+    # fighting over one client id. See `deploy/device-simulator-entrypoint.sh`.
     command:
-      - >-
-        exec /usr/local/bin/device-simulator
-        --device-id "sim-$${HOSTNAME}"
-        --username rhizo-edge
-        --password "$${RHIZO_EDGE__MQTT__PASSWORD}"
-        --broker mqtt://mosquitto:1883
-        --telemetry-interval 300
-        --time-scale "$${RHIZO_TIME_SCALE:-1}"
-        --state-file "/var/lib/rhizo/sim-$${HOSTNAME}.state.json"
-        --log-format json
+      - --broker
+      - mqtt://mosquitto:1883
+      - --telemetry-interval
+      - "300"
+      - --time-scale
+      - ${RHIZO_TIME_SCALE:-1}
+      - --log-format
+      - json
     volumes:
       - device-simulator-state:/var/lib/rhizo
     networks: [rhizo]
+    # The control API answers only what it is actually serving. `kill -0 1`
+    # would report a wedged process as healthy, which is the failure a health
+    # gate exists to catch.
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD", "busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/sim/state"]
       interval: 5s
       timeout: 2s
       retries: 12
@@ -132,7 +143,7 @@ services:
       - "8081:8081"
     networks: [rhizo]
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test: ["CMD", "busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health/live"]
       interval: 5s
       timeout: 2s
       retries: 12

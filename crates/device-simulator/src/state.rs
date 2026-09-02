@@ -389,10 +389,11 @@ impl PersistentState {
 ///
 /// Returns the encoding failure.
 pub fn encode_state(state: &PersistentState) -> Result<Vec<u8>, serde_json::Error> {
-    let state = serde_json::to_value(state)?;
+    // Hashed from the typed state, exactly as `decode_state_file` verifies it.
+    let checksum = checksum_of(state);
     serde_json::to_vec_pretty(&serde_json::json!({
-        "checksum": checksum_of(&state),
-        "state": state,
+        "checksum": checksum,
+        "state": serde_json::to_value(state)?,
     }))
 }
 
@@ -595,6 +596,18 @@ enum StateDecode {
     Checksum { stored: String, computed: String },
 }
 
+/// Decodes and checksum-verifies an on-disk state file.
+///
+/// # The checksum covers the *decoded* state, never the raw bytes
+///
+/// The payload is deserialised into [`PersistentState`] first and the checksum
+/// is computed from that. A field this build does not know about is therefore
+/// dropped before hashing and cannot make a perfectly good file look corrupt —
+/// protocol §9's forward-compatibility rule applied to storage, and what lets a
+/// device downgrade without its budget and cooldown being quarantined. Any
+/// change to a value this build *does* act on still fails the check, which is
+/// the half that matters: `delivered_today_ml` edited by hand is corruption,
+/// and an unrecognised key is not.
 fn decode_state_file(bytes: &[u8]) -> Result<PersistentState, StateDecode> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(StateDecode::Json)?;
     let stored = value
@@ -606,16 +619,18 @@ fn decode_state_file(bytes: &[u8]) -> Result<PersistentState, StateDecode> {
             ))
         })?
         .to_owned();
-    let state = value.get("state").ok_or_else(|| {
+    let payload = value.get("state").ok_or_else(|| {
         StateDecode::Json(<serde_json::Error as serde::de::Error>::custom(
             "missing state payload",
         ))
     })?;
-    let computed = checksum_of(state);
+    let state: PersistentState =
+        serde_json::from_value(payload.clone()).map_err(StateDecode::Json)?;
+    let computed = checksum_of(&state);
     if stored != computed {
         return Err(StateDecode::Checksum { stored, computed });
     }
-    serde_json::from_value(state.clone()).map_err(StateDecode::Json)
+    Ok(state)
 }
 
 /// Moves an untrusted state file aside, returning where it went.
