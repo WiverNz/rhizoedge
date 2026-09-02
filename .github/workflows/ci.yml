@@ -181,6 +181,25 @@ jobs:
       - name: Validate the Compose topology
         run: docker compose -f deploy/docker-compose.yml config
 
+      # A shell script committed without its executable bit is a job that dies
+      # with `Permission denied` and exit 126 before it runs anything, and the
+      # bit is easy to lose: a file created on Windows has none to preserve.
+      # The mode lives in the index, so this reads it from there rather than
+      # from the working tree, and names the fix.
+      - name: Every script is executable
+        run: |
+          set -euo pipefail
+          not_executable="$(git ls-files -s scripts/ |
+            awk '$1 != "100755" { print $4 }')"
+          if [ -n "$not_executable" ]; then
+            echo "these scripts are committed without the executable bit:" >&2
+            echo "$not_executable" >&2
+            echo >&2
+            echo "fix with:  git update-index --chmod=+x <path>" >&2
+            exit 1
+          fi
+          echo "all $(git ls-files scripts/ | wc -l) scripts are executable"
+
   # ---------------------------------------------------------------------------
   # Jobs added by later milestones. Listed so their absence is visible rather
   # than merely unnoticed:
