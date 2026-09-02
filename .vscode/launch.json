@@ -7,11 +7,13 @@
   //
   // Before the first launch:
   //
-  //   1. cp .env.example .env          (credentials; .env is gitignored)
+  //   1. ./scripts/gen-dev-env.sh      (or cp .env.example .env and fill it in)
   //   2. ./scripts/gen-mosquitto-passwd.sh
-  //   3. docker compose -f deploy/docker-compose.yml up -d mosquitto
   //
-  // Step 3 is also the "Mosquitto: up" task (Ctrl+Shift+P → Run Task).
+  // The broker is started for you: every configuration that needs it has the
+  // "Mosquitto: up" task as its `preLaunchTask`. The first two steps are not
+  // automated because they write credentials, and a task that silently
+  // generated secrets would be a task that silently replaced yours.
   //
   // Debugger: all configurations require the vadimcn.vscode-lldb extension
   // (CodeLLDB). CodeLLDB builds and locates each binary through Cargo, making
@@ -24,9 +26,27 @@
     {
       // The control plane. Bind loopback, talk to the containerised broker,
       // keep the cloud off — the normal way to work on M0-M6 (ADR-003).
+      //
+      // `preLaunchTask` starts the broker and waits for it to be healthy.
+      //
+      // Every *edge* configuration carries it — there are four, and the
+      // compounds below use all four. The simulators deliberately do not: a
+      // simulator launched on its own is then independent of Docker, and every
+      // compound pairs its simulators with an edge that has already waited.
+      //
+      // Without it the edge and the simulator both come up against a refused
+      // socket and retry with backoff, which reads like a configuration problem
+      // rather than "the broker is not running". Neither is wrong to do that —
+      // the edge starting without a broker is SAFETY-008's structural half, and
+      // the simulator buffering and recording `history.gap` markers is
+      // SAFETY-020 — but it is a poor way to find out the container is down.
+      //
+      // `docker compose up -d --wait` is idempotent, so this costs a second or
+      // two when the broker is already running.
       "name": "Edge controller",
       "type": "lldb",
       "request": "launch",
+      "preLaunchTask": "Mosquitto: up",
       "cargo": {
         "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
         "filter": { "name": "edge-controller", "kind": "bin" }
@@ -50,6 +70,8 @@
       "name": "Edge controller (storage debug)",
       "type": "lldb",
       "request": "launch",
+      // The broker, as for every edge configuration.
+      "preLaunchTask": "Mosquitto: up",
       "cargo": {
         "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
         "filter": { "name": "edge-controller", "kind": "bin" }
@@ -246,6 +268,8 @@
       "name": "Edge controller (MQTT debug)",
       "type": "lldb",
       "request": "launch",
+      // The broker, as for every edge configuration.
+      "preLaunchTask": "Mosquitto: up",
       "cargo": {
         "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
         "filter": { "name": "edge-controller", "kind": "bin" }
@@ -293,6 +317,8 @@
       "name": "Edge controller (full debug)",
       "type": "lldb",
       "request": "launch",
+      // The broker, as for every edge configuration.
+      "preLaunchTask": "Mosquitto: up",
       "cargo": {
         "args": ["build", "--package", "edge-controller", "--bin", "edge-controller"],
         "filter": { "name": "edge-controller", "kind": "bin" }
@@ -338,7 +364,7 @@
   ],
   "compounds": [
     {
-      // The usual pair. Start the broker first ("Mosquitto: up" task).
+      // The usual pair. The broker starts with the edge configuration.
       "name": "Edge + one plant node",
       "configurations": [
         "Edge controller",
