@@ -257,11 +257,15 @@ async fn wait_battery_sleep(h: &Harness) -> Result<()> {
 }
 
 async fn request_battery_water(h: &Harness, ml: f64) -> Result<Value> {
+    request_battery_water_mode(h, ml, "manual").await
+}
+
+async fn request_battery_water_mode(h: &Harness, ml: f64, mode: &str) -> Result<Value> {
     let (status, body) = h
         .json(
             Method::POST,
             &format!("{}/api/v1/plants/battery-plant/water", h.edge_url),
-            json!({"ml":ml}),
+            json!({"ml":ml,"mode":mode}),
         )
         .await?;
     ensure!(status == reqwest::StatusCode::ACCEPTED, "{status}: {body}");
@@ -2772,12 +2776,11 @@ fn sleeping_manual_water<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                 .all(|m| !m.topic.contains("/commands/")),
             "a command was published while the battery device slept"
         );
-        h.stop_service("battery-simulator")?;
-        h.stop_service("edge-controller")?;
-        // Restart both accelerated clocks together. The device is started
-        // first so the edge cannot consume the held intent until their anchors
-        // are aligned and the battery has joined the broker.
-        h.start_service("battery-simulator")?;
+        // Stop the accelerated Edge clock immediately: waiting through a
+        // graceful container timeout would itself consume hours of virtual
+        // intent lifetime and turn this crash-recovery case into an expiry
+        // case. The sleeping simulator remains alive and wakes normally.
+        h.kill_service("edge-controller")?;
         h.start_service("edge-controller")?;
         wait_edge_ready(h).await?;
         h.clear_mqtt().await;
@@ -2821,17 +2824,22 @@ fn sleeping_safety_refusal<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                     h.battery_post("/sim/fault", json!({"fault":"tank-empty","enabled":true}))
                         .await?;
                 }
-                _ => {
-                    let now: i64 = sqlx::query_scalar("SELECT max(received_at) FROM measurements")
-                        .fetch_one(&h.sqlite)
-                        .await?;
-                    sqlx::query("INSERT INTO watering_events(watering_event_id,plant_id,device_id,mode,origin,started_at,completed_at,requested_ml,delivered_ml,status) VALUES('battery-cap','battery-plant','battery-node-01','manual','edge_command',?,?,500,500,'completed')")
-                        .bind(now).bind(now).execute(&h.sqlite).await?;
-                }
+                _ => {}
             }
             h.pause_service("battery-simulator")?;
-            let held = request_battery_water(h, 30.0).await?;
+            let held = if variant == "budget" {
+                request_battery_water_mode(h, 30.0, "recommended").await?
+            } else {
+                request_battery_water(h, 30.0).await?
+            };
             let intent = held["intent_id"].as_str().context("intent_id")?;
+            if variant == "budget" {
+                let now: i64 = sqlx::query_scalar("SELECT max(received_at) FROM measurements")
+                    .fetch_one(&h.sqlite)
+                    .await?;
+                sqlx::query("INSERT INTO watering_events(watering_event_id,plant_id,device_id,mode,origin,started_at,completed_at,requested_ml,delivered_ml,status) VALUES('battery-cap','battery-plant','battery-node-01','recommended','edge_command',?,?,300,300,'completed')")
+                    .bind(now).bind(now).execute(&h.sqlite).await?;
+            }
             h.clear_mqtt().await;
             h.unpause_service("battery-simulator")?;
             let mut refusal = None;
@@ -2849,6 +2857,16 @@ fn sleeping_safety_refusal<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             }
             let refusal = refusal.context("intent row")?;
             ensure!(refusal.0 == "refused", "{variant} intent was not refused");
+            let expected = match variant {
+                "leak" => "leak",
+                "tank" => "tank_low",
+                _ => "daily_limit",
+            };
+            ensure!(
+                refusal.1.as_deref() == Some(expected),
+                "{variant} refusal was {:?}, expected {expected}",
+                refusal.1
+            );
             ensure!(
                 h.mqtt()
                     .await
@@ -2958,6 +2976,38 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             })
             .context("sleep announcement")?;
         ensure!(result < sleep, "device slept before publishing its result");
+
+        // Repeat the cycle with a power cut after the in-flight marker is
+        // durable. The simulator's one-shot restart fault models loss of power,
+        // and the next boot must converge pump-off and report uncertainty.
+        h.reset_scenario().await?;
+        setup_battery_plant(h).await?;
+        wait_battery_sleep(h).await?;
+        h.battery_post(
+            "/sim/fault",
+            json!({"fault":"restart-mid-dose","enabled":true}),
+        )
+        .await?;
+        h.clear_mqtt().await;
+        request_battery_water(h, 40.0).await?;
+        let interrupted = wait_mqtt(
+            h,
+            |m| {
+                m.topic.ends_with("/commands/result")
+                    && serde_json::from_slice::<Value>(&m.payload).is_ok_and(|v| {
+                        v["data"]["status"] == "interrupted" && v["data"]["delivered_ml"].is_null()
+                    })
+            },
+            800,
+        )
+        .await?;
+        let body: Value = serde_json::from_slice(&interrupted.payload)?;
+        ensure!(body["data"]["status"] == "interrupted");
+        let state = h.get_json(&format!("{}/sim/state", h.battery_url)).await?;
+        ensure!(
+            !state["pump_running"].as_bool().unwrap_or(false),
+            "battery rebooted with the pump running"
+        );
         Ok(())
     })
 }

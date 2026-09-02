@@ -214,6 +214,11 @@ impl Harness {
         docker_service("stop", service)
     }
 
+    /// Abruptly terminates a service for crash-recovery scenarios.
+    pub fn kill_service(&self, service: &str) -> Result<()> {
+        docker_service("kill", service)
+    }
+
     /// Freezes a service without emitting its graceful-shutdown status.
     pub fn pause_service(&self, service: &str) -> Result<()> {
         docker_service("pause", service)

@@ -75,7 +75,20 @@ async fn start() -> Result<(), String> {
         clippy::disallowed_methods,
         reason = "the binary anchors the host-clock adapter once at startup"
     )]
-    let base_utc = chrono::Utc::now();
+    let host_utc = chrono::Utc::now();
+    // Accelerated time can run far ahead of the host. Restarting from host time
+    // would move the logical clock backwards, causing devices to reject the
+    // next `edge.time` and every safety-dated command after it. Anchor beyond
+    // the last durable ingress receipt instead; at production scale this is
+    // simply the host clock, while E2E restarts remain monotonic.
+    let durable_high_water: Option<i64> =
+        sqlx::query_scalar("SELECT max(received_at) FROM processed_messages")
+            .fetch_one(db.pool())
+            .await
+            .map_err(|e| e.to_string())?;
+    let base_utc = durable_high_water
+        .and_then(|millis| chrono::DateTime::from_timestamp_millis(millis.saturating_add(1)))
+        .map_or(host_utc, |durable| durable.max(host_utc));
     let clock: Arc<dyn rhizo_domain::Clock> = Arc::new(
         edge_controller::clock::AcceleratedClock::new(base_utc, c.time_scale),
     );

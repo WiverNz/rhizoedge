@@ -444,6 +444,9 @@ pub async fn run_control(
                 if let Err(error) = irrigation_pass(&commander, &metrics, now).await {
                     tracing::warn!(%error, "an irrigation pass failed");
                 }
+                if let Err(error) = crate::control::intents::sweep(&commander, now).await {
+                    tracing::warn!(%error, "expiring held doses failed");
+                }
                 if let Err(error) = crate::control::intents::deliver_ready(&commander, now).await {
                     tracing::warn!(%error, "delivering held doses failed");
                 }
