@@ -30,18 +30,27 @@ jobs:
       - name: Enable Docker layer cache
         uses: docker/setup-buildx-action@v3
 
+      # Every `change-me-*` placeholder, not just the edge's. `.env.example`
+      # carries one per device in `DEVICE_IDS`, and `gen-mosquitto-passwd.sh`
+      # refuses a placeholder by design — so filling only `MQTT_PASSWORD` here
+      # failed the job before a single image was built. The script is the same
+      # one a developer runs on a fresh clone, so the two cannot drift.
       - name: Generate throwaway credentials
         shell: bash
         run: |
           set -euo pipefail
-          cp .env.example .env
-          secret="$(head -c 24 /dev/urandom | base64 | tr -d '=+/')"
-          sed -i "s|^MQTT_PASSWORD=.*|MQTT_PASSWORD=${secret}|" .env
-          sed -i "s|^RHIZO_EDGE__MQTT__PASSWORD=.*|RHIZO_EDGE__MQTT__PASSWORD=${secret}|" .env
+          ./scripts/gen-dev-env.sh
           ./scripts/gen-mosquitto-passwd.sh
 
+      # `COMPOSE_PROFILES` so the scenario runner is in the bake set. It sits
+      # behind the `runner` profile — `up` must not start it — and Compose
+      # derives bake targets from the services it would start, so without this
+      # the runner is the one image built *outside* the layer cache, by
+      # `run-scenarios.sh`, on every run.
       - name: Build full topology with cached layers
         uses: docker/bake-action@v6
+        env:
+          COMPOSE_PROFILES: runner
         with:
           files: |
             deploy/docker-compose.yml
@@ -61,10 +70,16 @@ jobs:
       # scenarios stop containers on purpose and that flag would read the first
       # such stop as a reason to end the run — see the script's own header.
       - name: Run complete scenario suite once
+        id: suite
         run: ./scripts/run-scenarios.sh
 
+      # Conditioned on the *suite* failing, not on the job failing. A job that
+      # fell over during setup has no diagnostics to upload and never claimed
+      # to; `if-no-files-found: error` would then add a second, misleading
+      # failure on top of the real one. When the suite itself fails the dump is
+      # mandatory, which is what that setting is for.
       - name: Upload observable-state diagnostics
-        if: failure()
+        if: failure() && steps.suite.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: rhizo-e2e-failure

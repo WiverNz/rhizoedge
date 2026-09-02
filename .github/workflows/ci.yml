@@ -143,22 +143,17 @@ jobs:
       # Throwaway credentials for a throwaway broker on a throwaway runner.
       # `.env` is gitignored, so CI generates one exactly as first-run setup
       # tells a developer to — which also keeps that path exercised.
+      #
+      # Through the script, not a list of keys spelled out here. This step used
+      # to name `RHIZO_DEVICE_PLANT_NODE_01_PASSWORD` and `…_02_…` literally,
+      # and adding a third device to `DEVICE_IDS` broke it: the generator
+      # refuses a placeholder, correctly, and the job failed before a single
+      # test ran. `gen-dev-env.sh` reads `DEVICE_IDS` and fills whatever it
+      # finds, so the two cannot drift again.
       - name: Generate credentials and start Mosquitto
         run: |
           set -euo pipefail
-          cp .env.example .env
-          set_secret() {
-            local key="$1" secret
-            secret="$(head -c 24 /dev/urandom | base64 | tr -d '=+/')"
-            sed -i "s|^${key}=.*|${key}=${secret}|" .env
-            echo "$secret"
-          }
-          edge_password="$(set_secret MQTT_PASSWORD)"
-          set_secret RHIZO_DEVICE_PLANT_NODE_01_PASSWORD > /dev/null
-          set_secret RHIZO_DEVICE_PLANT_NODE_02_PASSWORD > /dev/null
-          # The edge account has two spellings that must agree: one is the
-          # broker credential, the other is the edge's own configuration layer.
-          sed -i "s|^RHIZO_EDGE__MQTT__PASSWORD=.*|RHIZO_EDGE__MQTT__PASSWORD=${edge_password}|" .env
+          ./scripts/gen-dev-env.sh
           ./scripts/gen-mosquitto-passwd.sh
           docker compose -f deploy/docker-compose.yml up -d --wait mosquitto
 

@@ -33,6 +33,22 @@ cp .env.example .env               # replace every change-me-* placeholder
 docker compose -f deploy/docker-compose.yml up --build -d
 ```
 
+For a throwaway topology — a development machine, or CI — the first step has a
+shortcut that fills every placeholder with random bytes:
+
+```bash
+./scripts/gen-dev-env.sh           # writes .env; refuses to clobber an existing one
+```
+
+There are **seven** placeholders, not one: the edge's broker password, the same
+value again under `RHIZO_EDGE__MQTT__PASSWORD`, and one per entry in
+`DEVICE_IDS`. The two edge values have to match — one is the account the broker
+knows, the other is what the edge connects with, and when they disagree the
+broker answers `NotAuthorized` and nothing else explains why. The script
+generates one value and writes it to both, and checks that every id in
+`DEVICE_IDS` has the variable the simulator will look for. CI runs the same
+script, so the two paths cannot drift.
+
 `gen-mosquitto-passwd.sh` creates one broker account per entry in `DEVICE_IDS`
 plus the edge's own, and refuses to run while any password is still a
 placeholder. It runs `mosquitto_passwd` inside the same `eclipse-mosquitto:2`
