@@ -24,21 +24,85 @@ not the mutation — is what gets fixed.
 
 ## How to run one
 
+**The mutation is applied in a throwaway worktree, never in the tree you work
+in.** A mutation is a deliberate act of vandalism against a safety mechanism, and
+the revert is what makes it survivable — so the revert must not be able to reach
+anything except the mutation itself.
+
 ```bash
-# from a clean tree, with the topology already built
-git stash list                      # expect empty; the mutation must be the only change
-$EDITOR <the file named below>      # apply the mutation
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
+# One worktree per mutation, detached at the commit under test.
+git worktree add --detach ../rhizoedge-mutation HEAD
+cd ../rhizoedge-mutation
+
+$EDITOR <the file named below>      # apply the mutation here, in the worktree
+
+docker compose -p rhizo-mutation \
+  -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
   build edge-controller device-simulator
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
+docker compose -p rhizo-mutation \
+  -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
   run --rm scenario-runner --scenario <the scenario named below>
 # expect a non-zero exit and that scenario reported FAILED
-git checkout -- <the file>          # revert before the next mutation
+
+docker compose -p rhizo-mutation \
+  -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml down -v
+cd -
+git worktree remove --force ../rhizoedge-mutation
 ```
 
+A fresh worktree is also what makes "the mutation must be the only change" true
+by construction rather than by a `git stash list` that a reader can forget.
+
+The explicit `-p rhizo-mutation` is not decoration. Compose derives its project
+name from the directory, so a run from the worktree would otherwise adopt the
+containers, networks, and volumes belonging to whatever project the directory
+name happens to spell — naming it makes the isolation something chosen rather
+than something inherited. `down -v` then disposes of the mutated build's state,
+so the next mutation does not start against a database written by a build with a
+safety mechanism removed.
+
+## Never revert with a path
+
+Reverting is the dangerous half of this procedure, and one form of it is
+prohibited outright:
+
+```bash
+git checkout -- crates/      # NEVER. Discards every uncommitted change under
+git restore crates/          # the path — the mutation and hours of unrelated
+git checkout .               # work alike, with no confirmation and no undo.
+```
+
+`git checkout` cannot tell which change was the mutation. A path-wide revert in a
+tree holding uncommitted work destroys all of it, and the loss is silent: the
+command succeeds, prints nothing, and leaves a tree that looks deliberately
+clean. That is exactly how it goes unnoticed until the next build.
+
+This happened in this repository on 2026-09-02, during the first run of this
+procedure. Recovery was possible only because the edits still existed in a
+session transcript — which is luck, not a backup. Untracked files survived
+untouched, because `git checkout` does not consider them; every *modified*
+tracked file under `crates/` was lost.
+
+The worktree above is why the question no longer arises: disposing of the
+worktree disposes of the mutation, and the tree you work in was never a
+participant.
+
+**If a worktree is genuinely unavailable**, the mutation may be applied in place
+— but the revert then names exactly one file, never a directory:
+
+```bash
+git diff > ../pre-mutation.patch             # uncommitted work, saved first
+$EDITOR <the file named below>
+# ... build, run, observe the failure ...
+git checkout -- <the one file named below>   # one file. Never a path.
+```
+
+Better still, commit before starting. A mutation run against a tree with nothing
+uncommitted in it has nothing to lose.
+
 One mutation at a time. Two at once can mask each other — a build that cannot
-water at all makes every watering scenario fail for the wrong reason, and the
-run then proves nothing about either mechanism.
+water at all makes every watering scenario fail for the wrong reason, and the run
+then proves nothing about either mechanism.
 
 ## The seven mutations
 
@@ -90,7 +154,7 @@ precisely the coupling ADR-008 exists to forbid.
 
 **Mechanism:** SAFETY-010 — an edge restart cannot replay a completed command.
 **Site:** `crates/edge-controller/src/control/command.rs`,
-`Commander::reconcile_ledger`'s `else` arm, which marks a still-live command as
+`Commander::reconcile`'s `else` arm, which marks a still-live command as
 awaiting and publishes nothing.
 **Mutation:** publish the command again instead of marking it awaiting.
 **Must fail:** `scenario_restart_mid_command` (SCEN-051).
