@@ -40,38 +40,90 @@ pub struct Scenario {
     pub run: for<'a> fn(&'a Harness) -> ScenarioFuture<'a>,
 }
 
+/// How many telemetry batches the cadence must produce before the scenario
+/// stops the publisher and inspects what was stored.
+const TELEMETRY_BATCHES: i64 = 10;
+
 fn normal_telemetry<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     Box::pin(async move {
+        let mut observed = 0i64;
         for _ in 0..400 {
-            let batches: i64 =
-                sqlx::query_scalar("SELECT count(DISTINCT batch_id) FROM measurements")
-                    .fetch_one(&h.sqlite)
-                    .await?;
-            if batches >= 10 {
-                h.stop_service("device-simulator")?;
-                ensure!(
-                    batches == 10,
-                    "expected exactly 10 telemetry batches, observed {batches}"
-                );
-                let rows: (i64, i64, i64) = sqlx::query_as(
-                    "SELECT count(*), count(DISTINCT batch_id), count(DISTINCT received_at) FROM measurements",
-                ).fetch_one(&h.sqlite).await?;
-                ensure!(
-                    rows.0 >= 10 && rows.1 == 10 && rows.2 == 10,
-                    "telemetry counts are inconsistent: {rows:?}"
-                );
-                let regressions: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM (SELECT received_at, lag(received_at) OVER (ORDER BY id) previous FROM measurements) WHERE previous > received_at",
-                ).fetch_one(&h.sqlite).await?;
-                ensure!(
-                    regressions == 0,
-                    "received_at regressed {regressions} times"
-                );
-                return Ok(());
+            observed = sqlx::query_scalar("SELECT count(DISTINCT batch_id) FROM measurements")
+                .fetch_one(&h.sqlite)
+                .await?;
+            if observed >= TELEMETRY_BATCHES {
+                break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        bail!("ten telemetry intervals did not arrive within eight seconds")
+        ensure!(
+            observed >= TELEMETRY_BATCHES,
+            "{TELEMETRY_BATCHES} telemetry intervals did not arrive within eight seconds; \
+             observed {observed}"
+        );
+
+        // Stop the publisher and let ingestion settle before measuring anything.
+        //
+        // **Stopping the publisher does not stop ingestion.** `docker compose
+        // stop` takes a moment, and a batch already on the broker is still
+        // delivered afterwards — so a count read immediately after the stop can
+        // catch one mid-flight. `wait_batches_settled` is what turns this into
+        // a stable snapshot worth asserting against.
+        h.stop_service("device-simulator")?;
+        let batches = wait_batches_settled(h).await?;
+        let samples: i64 = sqlx::query_scalar("SELECT count(*) FROM measurements")
+            .fetch_one(&h.sqlite)
+            .await?;
+
+        // The cadence delivered at least what was asked for. It is deliberately
+        // **not** asserted to be exactly `TELEMETRY_BATCHES`: the count is read
+        // by a poller and the publisher is stopped by a container runtime, so
+        // one further batch can always be produced between the two. That extra
+        // batch is the system working, and an assertion that fails on it is
+        // testing the harness's reflexes rather than the device's cadence.
+        ensure!(
+            batches >= TELEMETRY_BATCHES,
+            "expected at least {TELEMETRY_BATCHES} telemetry batches, observed {batches}"
+        );
+        ensure!(
+            samples >= batches,
+            "{samples} samples across {batches} batches: a batch stored no measurement"
+        );
+
+        // **The property that actually matters.** A batch is one message with
+        // one envelope and one deduplication key, so it is ingested atomically
+        // and every measurement in it carries the same edge receipt instant
+        // (protocol §3). A batch split across two `received_at` values would
+        // mean a redelivery had been allowed to tear one apart.
+        let split_batches: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM (SELECT batch_id FROM measurements GROUP BY batch_id HAVING count(DISTINCT received_at) > 1)",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
+        ensure!(
+            split_batches == 0,
+            "{split_batches} batches were stored across more than one received_at"
+        );
+
+        // The converse: two batches must not be merged into one instant either,
+        // which would mean the edge stamped a receipt time it had not taken.
+        let instants: i64 =
+            sqlx::query_scalar("SELECT count(DISTINCT received_at) FROM measurements")
+                .fetch_one(&h.sqlite)
+                .await?;
+        ensure!(
+            instants == batches,
+            "{batches} batches were stored under {instants} distinct received_at values"
+        );
+
+        let regressions: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM (SELECT received_at, lag(received_at) OVER (ORDER BY id) previous FROM measurements) WHERE previous > received_at",
+        ).fetch_one(&h.sqlite).await?;
+        ensure!(
+            regressions == 0,
+            "received_at regressed {regressions} times"
+        );
+        Ok(())
     })
 }
 
@@ -1924,6 +1976,16 @@ async fn provision_offline_policy(h: &Harness) -> Result<u64> {
 /// `recommended` is the mode under test, not `manual`: M6-007's budget query is
 /// `mode IN ('automatic','recommended')`, so a manual dose does not spend the
 /// budget and would prove nothing about it.
+/// One virtual day.
+const VIRTUAL_DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// How close to midnight the rolling-cap scenario starts spending.
+///
+/// Comfortably more than the ~25 virtual minutes spending the cap takes, and
+/// far less than the 24-hour window, so the doses are still well inside the
+/// window when the post-midnight check runs.
+const MIDNIGHT_LEAD_MS: i64 = 2 * 60 * 60 * 1000;
+
 fn rolling_cap_across_midnight<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     Box::pin(async move {
         setup_plant(h, true).await?;
@@ -1933,6 +1995,43 @@ fn rolling_cap_across_midnight<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         )
         .await?;
         tokio::time::sleep(Duration::from_millis(700)).await;
+
+        // Approach the boundary deliberately, before spending anything.
+        //
+        // The cap is a **rolling 24-hour window derived from rows**, not a
+        // calendar day (SAFETY-006). So "midnight does not refill the
+        // allowance" is only a claim about the edge while the doses are still
+        // *inside* that window — and whether they are depends on where in the
+        // virtual day the scenario happens to start, which is not a fact about
+        // the edge at all.
+        //
+        // Starting just after a midnight is the case that breaks: the cap is
+        // spent by 00:25, the next midnight is ~23.5 virtual hours later, and
+        // by then the first dose is over 24 hours old and has legitimately aged
+        // out. The window released it; the cap worked exactly as specified.
+        // Asserting a refusal there asserts something false, and the scenario
+        // did — it failed in CI with the first dose 24.3 virtual hours old.
+        //
+        // Waiting until midnight is close, and only then spending, makes the
+        // premise true by construction: the doses are a couple of virtual hours
+        // old when the check runs, which is the situation the invariant is
+        // actually about.
+        let midnight = {
+            let now = now_ms(h).await?;
+            now - now.rem_euclid(VIRTUAL_DAY_MS) + VIRTUAL_DAY_MS
+        };
+        let mut near_boundary = false;
+        for _ in 0..4_000 {
+            if now_ms(h).await? >= midnight - MIDNIGHT_LEAD_MS {
+                near_boundary = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        ensure!(
+            near_boundary,
+            "the edge clock did not reach the approach to the next virtual midnight"
+        );
 
         // Spend the cap. The profile allows 300 ml a day in 60 ml doses, so the
         // sixth request is the one that must be refused.
@@ -1962,13 +2061,11 @@ fn rolling_cap_across_midnight<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         );
         ensure!(accepted >= 4, "only {accepted} doses fitted inside the cap");
 
-        // Cross the next virtual midnight. At the overlay's scale a day passes
-        // in about half a minute of real time, so this is a wait rather than a
-        // simulation — and waiting is the point: the clock has to actually pass
-        // the boundary for the boundary to be tested.
-        let before = now_ms(h).await?;
-        let day_ms = 24 * 60 * 60 * 1000;
-        let midnight = before - before.rem_euclid(day_ms) + day_ms;
+        // Cross the boundary that was chosen before any water moved. At the
+        // overlay's scale a day passes in about half a minute of real time, so
+        // this is a wait rather than a simulation — and waiting is the point:
+        // the clock has to actually pass the boundary for the boundary to be
+        // tested. Spending the cap may already have carried it across.
         let mut crossed = false;
         for _ in 0..4_000 {
             if now_ms(h).await? > midnight {
@@ -1980,6 +2077,22 @@ fn rolling_cap_across_midnight<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         ensure!(
             crossed,
             "the edge clock did not reach the next virtual midnight"
+        );
+
+        // The premise the assertion below depends on, checked rather than
+        // assumed: the doses must still be inside the rolling window. If this
+        // ever fails the scenario is testing nothing, and saying so is better
+        // than reporting a green run that proved a vacuous thing.
+        let oldest_dose: i64 = sqlx::query_scalar(
+            "SELECT min(issued_at) FROM commands WHERE plant_id='scenario-plant' AND status='completed'",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
+        let age_ms = now_ms(h).await? - oldest_dose;
+        ensure!(
+            age_ms < VIRTUAL_DAY_MS,
+            "the oldest dose is {age_ms} ms old and has aged out of the rolling \
+             window, so a refusal here would not be evidence about midnight"
         );
 
         let (status, body) = h

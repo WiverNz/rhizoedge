@@ -48,8 +48,8 @@ toolchain download.
 
 ## Acceptance criteria
 
-- [ ] The job builds the firmware for `riscv32imc-esp-espidf`.
-- [ ] It builds every declared board profile, from the same application code.
+- [x] The job builds the firmware for `riscv32imc-esp-espidf`.
+- [x] It builds every declared board profile, from the same application code.
 - [x] Adding a board profile is a one-line matrix change.
 - [x] It triggers on the specified paths.
 - [ ] Caching keeps warm builds under 5 minutes.
