@@ -676,14 +676,21 @@ fn broker_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             duplicates == 0,
             "broker restart corrupted telemetry uniqueness"
         );
-        let retained_status = h
-            .mqtt()
-            .await
-            .into_iter()
-            .any(|m| m.retain && m.topic.ends_with("/status"));
+        let mut retained_status = false;
+        for _ in 0..400 {
+            if h.mqtt()
+                .await
+                .into_iter()
+                .any(|m| m.retain && m.topic.ends_with("/status"))
+            {
+                retained_status = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         ensure!(
             retained_status,
-            "retained device status was not redelivered after broker restart"
+            "retained device status was not redelivered after the broker restart"
         );
         for _ in 0..200 {
             let lockout: Option<String> = sqlx::query_scalar(
@@ -3170,13 +3177,28 @@ fn sleeping_safety_refusal<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                 }
                 _ => {}
             }
-            h.pause_service("battery-simulator")?;
+            // Nothing is paused here, deliberately. The device is asleep — that
+            // is what makes the command an intent — and its control API is
+            // served throughout, because only the radio is off.
+            //
+            // `docker pause` would stop it publishing, and a device that
+            // publishes nothing has readings that age out: `max_sample_age` is
+            // 900 logical seconds, a quarter of a second of real time at this
+            // scale, which a pause spanning an HTTP request exceeds. The gate is
+            // ordered, so stale inputs answer `uncertain` before it ever reaches
+            // the leak, the tank, or the cap — correct behaviour about the wrong
+            // subject, and a race that failed a different variant each run.
             let held = if variant == "budget" {
                 request_battery_water_mode(h, 30.0, "recommended").await?
             } else {
                 request_battery_water(h, 30.0).await?
             };
             let intent = held["intent_id"].as_str().context("intent_id")?;
+            // Spent *after* the intent is held, which is the whole point of
+            // SCEN-114: the gate is re-run at delivery, so a condition that
+            // appears during the sleep refuses a dose that was permitted when it
+            // was asked for. Spending it first would be refused at the request
+            // and no intent would exist to refuse later.
             if variant == "budget" {
                 let now: i64 = sqlx::query_scalar("SELECT max(received_at) FROM measurements")
                     .fetch_one(&h.sqlite)
@@ -3185,7 +3207,6 @@ fn sleeping_safety_refusal<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
                     .bind(now).bind(now).execute(&h.sqlite).await?;
             }
             h.clear_mqtt().await;
-            h.unpause_service("battery-simulator")?;
             let mut refusal = None;
             for _ in 0..800 {
                 refusal = sqlx::query_as::<_, (String, Option<String>)>(

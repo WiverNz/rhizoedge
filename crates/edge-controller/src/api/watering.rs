@@ -207,7 +207,9 @@ async fn immediate(
     mode: EvaluationMode,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Response {
-    let Ok(analysis) = plant::analyse(&state.db, loaded, now).await else {
+    let Ok(analysis) =
+        super::support::with_busy_retry(|| plant::analyse(&state.db, loaded, now)).await
+    else {
         return storage_error();
     };
     // Retried on a busy database, not on a refusal. `run_pass` runs the gate
@@ -424,12 +426,21 @@ pub async fn clear_lockout(
     };
 
     let now = state.clock.now();
-    let Ok(analysis) = plant::analyse(&state.db, &loaded, now).await else {
+    let Ok(analysis) =
+        super::support::with_busy_retry(|| plant::analyse(&state.db, &loaded, now)).await
+    else {
         return storage_error();
     };
     let mode = EvaluationMode::Automatic;
-    let Ok((gathered, _)) =
-        irrigation::preview(&state.db, &loaded, analysis.inputs.dry_duration, mode, now).await
+    let Ok((gathered, _)) = super::support::with_busy_retry(|| async {
+        irrigation::preview(&state.db, &loaded, analysis.inputs.dry_duration, mode, now)
+            .await
+            .map_err(|error| match error {
+                crate::error::EdgeError::Storage(storage) => storage,
+                other => rhizo_storage::StorageError::Database(other.to_string()),
+            })
+    })
+    .await
     else {
         return storage_error();
     };
@@ -455,15 +466,17 @@ pub async fn clear_lockout(
         );
     }
 
-    if rhizo_storage::repo::command::set_lockout(
-        &state.db,
-        &id,
-        None,
-        None,
-        None,
-        Some("operator"),
-        now.timestamp_millis(),
-    )
+    if super::support::with_busy_retry(|| {
+        rhizo_storage::repo::command::set_lockout(
+            &state.db,
+            &id,
+            None,
+            None,
+            None,
+            Some("operator"),
+            now.timestamp_millis(),
+        )
+    })
     .await
     .is_err()
     {
