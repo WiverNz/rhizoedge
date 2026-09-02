@@ -20,10 +20,6 @@ pub struct Scenario {
     pub run: for<'a> fn(&'a Harness) -> ScenarioFuture<'a>,
 }
 
-fn pending<'a>(_: &'a Harness) -> ScenarioFuture<'a> {
-    Box::pin(async { bail!("scenario implementation is not yet present; refusing a false green") })
-}
-
 fn normal_telemetry<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     Box::pin(async move {
         for _ in 0..400 {
@@ -168,6 +164,110 @@ async fn setup_plant(h: &Harness, automatic: bool) -> Result<String> {
     )
     .await?;
     Ok(device)
+}
+
+async fn setup_battery_plant(h: &Harness) -> Result<String> {
+    h.reset_battery_simulator().await?;
+    let device = "battery-node-01".to_owned();
+    for _ in 0..400 {
+        let devices = h
+            .get_json(&format!("{}/api/v1/devices", h.edge_url))
+            .await?;
+        if devices["devices"].as_array().is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row["device_id"] == device
+                    && row["power_mode"] == "battery"
+                    && matches!(row["connectivity"].as_str(), Some("connected" | "sleeping"))
+            })
+        }) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    api_ok(
+        h,
+        Method::POST,
+        "/api/v1/profiles",
+        json!({
+            "profile_id":"battery-profile", "name":"Battery profile",
+            "target_min_vwc":28.0, "target_max_vwc":45.0, "dose_ml":40.0,
+            "max_doses_per_cycle":3, "max_daily_ml":300.0,
+            "dry_confirm_minutes":30, "cooldown_hours":6.0,
+            "absorption_minutes":15, "recovery_delta_vwc":3.0,
+            "tank_min_percent":15.0, "command_ttl_seconds":600
+        }),
+    )
+    .await?;
+    api_ok(h, Method::POST, "/api/v1/plants", json!({
+        "plant_id":"battery-plant", "name":"Battery plant", "profile_id":"battery-profile", "pot_volume_ml":2000.0
+    })).await?;
+    for (sensor_id, point, kind, role) in [
+        ("soil-0", "default", "soil_moisture", "control"),
+        ("tank-0", "reservoir", "tank_level", "required"),
+        ("leak-0", "tray", "leak_state", "required"),
+        ("weight-0", "default", "pot_weight", "advisory"),
+    ] {
+        api_ok(
+            h,
+            Method::PUT,
+            "/api/v1/plants/battery-plant/bindings/sensors",
+            json!({"device_id":device,"sensor_id":sensor_id,"point":point,"kind":kind,"role":role}),
+        )
+        .await?;
+    }
+    api_ok(
+        h,
+        Method::PUT,
+        "/api/v1/plants/battery-plant/bindings/actuator",
+        json!({"device_id":device,"actuator_id":"pump-0"}),
+    )
+    .await?;
+    api_ok(
+        h,
+        Method::PUT,
+        "/api/v1/plants/battery-plant/measurement-policies/soil_moisture",
+        json!({"target_min":28.0,"target_max":45.0,"stale_after_ms":1800000,"confirm_duration_ms":1800000,"hysteresis":1.0}),
+    )
+    .await?;
+    Ok(device)
+}
+
+async fn wait_battery_sleep(h: &Harness) -> Result<()> {
+    for _ in 0..800 {
+        let announced = h.mqtt().await.iter().any(|message| {
+            message.topic == "rhizo/v1/devices/battery-node-01/status"
+                && serde_json::from_slice::<Value>(&message.payload).is_ok_and(|body| {
+                    body["data"]["status"] == "offline" && body["data"]["reason"] == "sleeping"
+                })
+        });
+        let mode: Option<String> = sqlx::query_scalar(
+            "SELECT connectivity_mode FROM devices WHERE device_id='battery-node-01'",
+        )
+        .fetch_optional(&h.sqlite)
+        .await?;
+        // The announcement is the wire-level observation and the current
+        // database row proves Edge consumed it. Requiring both closes the race
+        // where a request made just after the next wake would route directly.
+        if announced && mode.as_deref() == Some("sleeping") {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    bail!("battery device did not announce sleep")
+}
+
+async fn request_battery_water(h: &Harness, ml: f64) -> Result<Value> {
+    let (status, body) = h
+        .json(
+            Method::POST,
+            &format!("{}/api/v1/plants/battery-plant/water", h.edge_url),
+            json!({"ml":ml}),
+        )
+        .await?;
+    ensure!(status == reqwest::StatusCode::ACCEPTED, "{status}: {body}");
+    ensure!(body["status"] == "pending_for_device_wake");
+    ensure!(body.get("command_id").is_none());
+    Ok(body)
 }
 
 async fn api_ok(h: &Harness, method: Method, path: &str, body: Value) -> Result<Value> {
@@ -1764,7 +1864,7 @@ fn isolation_mid_dose<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             s["delivered_today_ml"].as_f64().unwrap_or_default() >= 79.99
         })
         .await?;
-        ensure!(completed["buffered_events"].as_u64().unwrap_or_default() > 0);
+        ensure!(completed["pending_results"].as_u64().unwrap_or_default() > 0);
         let command_publications = h
             .mqtt()
             .await
@@ -1952,8 +2052,8 @@ fn long_isolation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             .context("simulator uptime")?;
         h.stop_service("edge-controller")?;
         fault(h, "disconnect:172800", true).await?;
-        // Start the edge shortly before the device's 48-hour isolation ends so
-        // the reconnect and its replay are observed by a fresh edge process.
+        // Start the edge during the final eight virtual hours so its MQTT
+        // subscription is established before the device reconnects and replays.
         wait_simulator(h, 14_000, |s| {
             s["uptime_ms"]
                 .as_u64()
@@ -1972,7 +2072,7 @@ fn long_isolation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         h.start_service("edge-controller")?;
         wait_edge_ready(h).await?;
         wait_mqtt(h, |m| m.topic == "rhizo/v1/health/broker", 1_200).await?;
-        wait_simulator(h, 400, |s| s["connected"] == true).await?;
+        wait_simulator(h, 3_000, |s| s["connected"] == true).await?;
         for _ in 0..800 {
             let provisioned: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM watering_events WHERE plant_id='scenario-plant' AND origin='offline_autonomous'",
@@ -2003,26 +2103,980 @@ fn long_isolation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     })
 }
 
+fn policy_activation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        let mut active = provision_offline_policy(h).await?;
+        for step in ["validate", "stage", "verify", "activate", "acknowledge"] {
+            let before = h
+                .get_json(&format!("{}/sim/state", h.simulator_url))
+                .await?;
+            let boot = before["boot_count"].as_u64().context("boot_count")?;
+            fault(h, &format!("policy-interrupt:{step}"), true).await?;
+            let authored = api_ok(
+                h,
+                Method::PUT,
+                "/api/v1/plants/scenario-plant/offline-policy",
+                json!({}),
+            )
+            .await?;
+            let offered = authored["policy_version"]
+                .as_u64()
+                .context("policy version")?;
+            let state = wait_simulator(h, 400, |s| {
+                s["boot_count"].as_u64().unwrap_or_default() > boot
+                    && s["applied_policy_versions"]["scenario-plant"]
+                        .as_u64()
+                        .is_some_and(|v| v == active || v == offered)
+            })
+            .await?;
+            let held = state["applied_policy_versions"]["scenario-plant"]
+                .as_u64()
+                .context("held policy version")?;
+            ensure!(
+                held == active || held == offered,
+                "mixed policy state after {step}"
+            );
+            let enabled = api_ok(
+                h,
+                Method::POST,
+                "/api/v1/plants/scenario-plant/offline-policy/enable",
+                json!({}),
+            )
+            .await?;
+            active = enabled["policy_version"]
+                .as_u64()
+                .context("enabled version")?;
+            wait_simulator(h, 400, |s| {
+                s["applied_policy_versions"]["scenario-plant"] == active
+            })
+            .await?;
+        }
+        Ok(())
+    })
+}
+
+fn offline_budget<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        provision_offline_policy(h).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        let started = h
+            .get_json(&format!("{}/sim/state", h.simulator_url))
+            .await?["uptime_ms"]
+            .as_u64()
+            .context("uptime")?;
+        fault(h, "disconnect:259200", true).await?;
+        let mut first_used = 0.0_f64;
+        let mut first_window_complete = false;
+        for _ in 0..5_000 {
+            let state = h
+                .get_json(&format!("{}/sim/state", h.simulator_url))
+                .await?;
+            first_used =
+                first_used.max(state["offline_budget_used_ml"].as_f64().unwrap_or_default());
+            if state["uptime_ms"]
+                .as_u64()
+                .is_some_and(|v| v.saturating_sub(started) >= 86_400_000)
+            {
+                first_window_complete = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        ensure!(
+            first_window_complete,
+            "first rolling budget window did not complete"
+        );
+        ensure!(
+            first_used > 0.0 && first_used <= 300.01,
+            "first rolling budget maximum was {first_used}"
+        );
+        let final_state = wait_simulator(h, 8_000, |s| s["connected"] == true).await?;
+        ensure!(
+            final_state["offline_budget_used_ml"]
+                .as_f64()
+                .unwrap_or_default()
+                <= 300.01
+        );
+        for _ in 0..800 {
+            let edge_sum: f64 = sqlx::query_scalar(
+                "SELECT CAST(coalesce(sum(delivered_ml),0) AS REAL) FROM watering_events WHERE origin='offline_autonomous'",
+            ).fetch_one(&h.sqlite).await?;
+            if edge_sum > 0.0 {
+                let refusals: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM device_events WHERE kind='offline.refused' AND detail_json LIKE '%budget_exhausted%'",
+                )
+                .fetch_one(&h.sqlite)
+                .await?;
+                ensure!(
+                    edge_sum <= 900.01,
+                    "72-hour replay exceeded three rolling budgets: {edge_sum}"
+                );
+                ensure!(
+                    refusals > 0,
+                    "budget exhaustion produced no durable audit event"
+                );
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        bail!("72-hour offline budget history did not reconcile")
+    })
+}
+
+fn isolated_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        api_ok(
+            h,
+            Method::PUT,
+            "/api/v1/profiles/scenario-profile",
+            json!({
+                "name":"Scenario profile", "target_min_vwc":28.0, "target_max_vwc":45.0,
+                "dose_ml":40.0, "max_doses_per_cycle":1, "max_daily_ml":300.0,
+                "dry_confirm_minutes":30, "cooldown_hours":6.0,
+                "absorption_minutes":15, "recovery_delta_vwc":3.0,
+                "tank_min_percent":15.0, "command_ttl_seconds":600
+            }),
+        )
+        .await?;
+        provision_offline_policy(h).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        fault(h, "disconnect:43200", true).await?;
+        let dosed = wait_simulator(h, 1_000, |s| {
+            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+        })
+        .await?;
+        let delivered = dosed["delivered_today_ml"].as_f64().unwrap_or_default();
+        let cooling = wait_simulator(h, 1_000, |s| {
+            s["offline_cooldown_remaining_ms"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        })
+        .await?;
+        let mut remaining = cooling["offline_cooldown_remaining_ms"]
+            .as_u64()
+            .context("cooldown")?;
+        ensure!(remaining > 0 && cooling["buffered_events"].as_u64().unwrap_or_default() > 0);
+        for _ in 0..3 {
+            h.simulator_post("/sim/restart", json!({})).await?;
+            let restarted = h
+                .get_json(&format!("{}/sim/state", h.simulator_url))
+                .await?;
+            let now = restarted["offline_cooldown_remaining_ms"]
+                .as_u64()
+                .context("cooldown")?;
+            ensure!(
+                now <= remaining && now > 0,
+                "restart reset or erased cooldown"
+            );
+            ensure!(
+                (restarted["delivered_today_ml"].as_f64().unwrap_or_default() - delivered).abs()
+                    < 0.01
+            );
+            ensure!(restarted["buffered_events"].as_u64().unwrap_or_default() > 0);
+            remaining = now;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let before_cooldown = h
+            .get_json(&format!("{}/sim/state", h.simulator_url))
+            .await?;
+        ensure!(
+            (before_cooldown["delivered_today_ml"]
+                .as_f64()
+                .unwrap_or_default()
+                - delivered)
+                .abs()
+                < 0.01
+        );
+        Ok(())
+    })
+}
+
+fn isolated_no_wall_clock<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        let device = setup_plant(h, true).await?;
+        provision_offline_policy(h).await?;
+        fault(h, "clock-unsync", true).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        h.clear_mqtt().await;
+        fault(h, "disconnect:7200", true).await?;
+        let dosed = wait_simulator(h, 1_200, |s| {
+            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+        })
+        .await?;
+        ensure!(dosed["clock_synced"] == false);
+        fault(h, "disconnect:1", false).await?;
+        wait_simulator(h, 500, |s| s["connected"] == true).await?;
+        let replay_has_monotonic_without_wall = h
+            .mqtt()
+            .await
+            .iter()
+            .filter(|m| m.topic.ends_with("/events"))
+            .any(|m| {
+                serde_json::from_slice::<Value>(&m.payload).is_ok_and(|v| {
+                    v["data"]["events"].as_array().is_some_and(|events| {
+                        events.iter().any(|e| {
+                            e["kind"] == "watering.offline_autonomous"
+                                && e["device_time_ms"].is_null()
+                                && e["monotonic_ms"].as_u64().is_some()
+                        })
+                    })
+                })
+            });
+        ensure!(
+            replay_has_monotonic_without_wall,
+            "offline event did not preserve monotonic-only time"
+        );
+        let (id, payload) = direct_water_payload(h, &device).await?;
+        h.publish(
+            &format!("rhizo/v1/devices/{device}/commands/water"),
+            payload,
+        )
+        .await?;
+        wait_mqtt(
+            h,
+            |m| {
+                m.topic.ends_with("/commands/result")
+                    && serde_json::from_slice::<Value>(&m.payload).is_ok_and(|v| {
+                        v["data"]["command_id"] == id && v["data"]["reason"] == "clock_unsynced"
+                    })
+            },
+            400,
+        )
+        .await?;
+        Ok(())
+    })
+}
+
+fn required_measurement<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        provision_offline_policy(h).await?;
+        fault(h, "stale-tank", true).await?;
+        fault(h, "stale-leak", true).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        fault(h, "disconnect:10800", true).await?;
+        let refused = wait_simulator(h, 1_500, |s| {
+            s["buffered_events"].as_u64().unwrap_or_default() >= 2
+        })
+        .await?;
+        ensure!(
+            refused["delivered_today_ml"].as_f64().unwrap_or_default() < 0.01,
+            "missing required measurement actuated"
+        );
+        fault(h, "stale-tank", false).await?;
+        fault(h, "stale-leak", false).await?;
+        let allowed = wait_simulator(h, 1_500, |s| {
+            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+        })
+        .await?;
+        ensure!(allowed["delivered_today_ml"].as_f64().unwrap_or_default() <= 40.01);
+        Ok(())
+    })
+}
+
+fn reconciliation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        api_ok(
+            h,
+            Method::POST,
+            "/api/v1/plants/scenario-plant/auto-watering/enable",
+            json!({}),
+        )
+        .await?;
+        provision_offline_policy(h).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        fault(h, "disconnect:50400", true).await?;
+        wait_simulator(h, 3_000, |s| {
+            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 79.99
+        })
+        .await?;
+        h.clear_mqtt().await;
+        fault(h, "disconnect:1", false).await?;
+        wait_simulator(h, 600, |s| s["connected"] == true).await?;
+        for _ in 0..800 {
+            let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM watering_events WHERE plant_id='scenario-plant' AND origin='offline_autonomous'").fetch_one(&h.sqlite).await?;
+            if rows >= 2 {
+                let sum: f64 = sqlx::query_scalar("SELECT coalesce(sum(delivered_ml),0) FROM watering_events WHERE plant_id='scenario-plant' AND origin='offline_autonomous'").fetch_one(&h.sqlite).await?;
+                ensure!(sum >= 79.99, "replayed budget lost a dose: {sum}");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let mqtt = h.mqtt().await;
+        let commands = mqtt
+            .iter()
+            .filter(|m| m.topic.ends_with("/commands/water"))
+            .count();
+        ensure!(
+            commands == 0,
+            "edge published {commands} commands during reconciliation"
+        );
+        let mut saw_complete = false;
+        for message in mqtt.iter().filter(|m| m.topic.ends_with("/events")) {
+            let value: Value = serde_json::from_slice(&message.payload)?;
+            let seqs = value["data"]["events"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e["device_seq"].as_u64())
+                .collect::<Vec<_>>();
+            ensure!(
+                seqs.windows(2).all(|w| w[0] < w[1]),
+                "replay sequence was not ordered"
+            );
+            saw_complete |= value["data"]["complete"] == true;
+        }
+        ensure!(saw_complete, "replay never published complete=true");
+        Ok(())
+    })
+}
+
+async fn captured_replay_batches(h: &Harness) -> Result<Vec<Vec<u8>>> {
+    let batches = h
+        .mqtt()
+        .await
+        .into_iter()
+        .filter(|m| m.topic.ends_with("/events"))
+        .filter_map(|m| {
+            serde_json::from_slice::<Value>(&m.payload)
+                .ok()
+                .filter(|v| v["data"]["replay"] == true)
+                .map(|_| m.payload)
+        })
+        .collect::<Vec<_>>();
+    ensure!(!batches.is_empty(), "no replay batches were captured");
+    Ok(batches)
+}
+
+fn duplicate_replay<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        let device = setup_plant(h, true).await?;
+        // One autonomous dose is sufficient to prove replay idempotency and
+        // avoids manufacturing an unnecessary reconnect burst while the Edge
+        // is deliberately stopped.
+        api_ok(
+            h,
+            Method::PUT,
+            "/api/v1/profiles/scenario-profile",
+            json!({
+                "name":"Scenario profile", "target_min_vwc":28.0, "target_max_vwc":45.0,
+                "dose_ml":40.0, "max_doses_per_cycle":1, "max_daily_ml":300.0,
+                "dry_confirm_minutes":30, "cooldown_hours":6.0,
+                "absorption_minutes":15, "recovery_delta_vwc":3.0,
+                "tank_min_percent":15.0, "command_ttl_seconds":600
+            }),
+        )
+        .await?;
+        provision_offline_policy(h).await?;
+        h.stop_service("edge-controller")?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        fault(h, "disconnect:7200", true).await?;
+        wait_simulator(h, 1_200, |s| {
+            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+        })
+        .await?;
+        h.clear_mqtt().await;
+        fault(h, "disconnect:1", false).await?;
+        wait_simulator(h, 100, |s| s["isolation_remaining_ms"] == 0).await?;
+        wait_simulator(h, 2_000, |s| s["connected"] == true).await?;
+        let batches = captured_replay_batches(h).await?;
+        h.start_service("edge-controller")?;
+        wait_edge_ready(h).await?;
+        h.clear_mqtt().await;
+        for _ in 0..3 {
+            for payload in batches.iter().rev() {
+                h.publish(
+                    &format!("rhizo/v1/devices/{device}/events"),
+                    payload.clone(),
+                )
+                .await?;
+            }
+        }
+        for _ in 0..600 {
+            let distinct: i64 = sqlx::query_scalar("SELECT count(DISTINCT watering_event_id) FROM watering_events WHERE origin='offline_autonomous'").fetch_one(&h.sqlite).await?;
+            let total: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM watering_events WHERE origin='offline_autonomous'",
+            )
+            .fetch_one(&h.sqlite)
+            .await?;
+            if distinct > 0 {
+                ensure!(total == distinct, "triple replay duplicated watering rows");
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        bail!("triple replay did not persist")
+    })
+}
+
+fn restart_mid_replay<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        let device = setup_plant(h, true).await?;
+        provision_offline_policy(h).await?;
+        h.stop_service("edge-controller")?;
+        h.simulator_post("/sim/state", json!({"moisture_vwc":35.0}))
+            .await?;
+        fault(h, "disconnect:86400", true).await?;
+        let mut expected = 0;
+        for _ in 0..17 {
+            fault(h, "leak", true).await?;
+            expected += 1;
+            wait_simulator(h, 100, |s| {
+                s["buffered_events"].as_u64().unwrap_or_default() >= expected
+            })
+            .await?;
+            fault(h, "leak", false).await?;
+            fault(h, "tank-empty", true).await?;
+            expected += 1;
+            wait_simulator(h, 100, |s| {
+                s["buffered_events"].as_u64().unwrap_or_default() >= expected
+            })
+            .await?;
+            fault(h, "tank-empty", false).await?;
+            h.simulator_post("/sim/state", json!({"tank_percent":100.0}))
+                .await?;
+        }
+        wait_simulator(h, 2_000, |s| {
+            s["buffered_events"].as_u64().unwrap_or_default() > 32
+        })
+        .await?;
+        h.clear_mqtt().await;
+        fault(h, "disconnect:1", false).await?;
+        wait_simulator(h, 500, |s| s["connected"] == true).await?;
+        let batches = captured_replay_batches(h).await?;
+        ensure!(
+            batches.len() > 1,
+            "mid-replay scenario needs multiple batches"
+        );
+        h.start_service("edge-controller")?;
+        wait_edge_ready(h).await?;
+        h.arm_service_fault("edge-controller", "/tmp/rhizo-fault-exit-mid-replay")?;
+        h.clear_mqtt().await;
+        h.publish(
+            &format!("rhizo/v1/devices/{device}/events"),
+            batches[0].clone(),
+        )
+        .await?;
+        for _ in 0..200 {
+            if !h.service_running("edge-controller")? {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        ensure!(
+            !h.service_running("edge-controller")?,
+            "edge did not exit at the mid-replay hook"
+        );
+        let commands_before = h
+            .mqtt()
+            .await
+            .iter()
+            .filter(|m| m.topic.ends_with("/commands/water"))
+            .count();
+        ensure!(commands_before == 0);
+        h.start_service("edge-controller")?;
+        wait_edge_ready(h).await?;
+        for payload in &batches {
+            h.publish(
+                &format!("rhizo/v1/devices/{device}/events"),
+                payload.clone(),
+            )
+            .await?;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let duplicates: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT event_id FROM device_events GROUP BY event_id HAVING count(*)>1)").fetch_one(&h.sqlite).await?;
+        ensure!(duplicates == 0, "restart mid-replay duplicated events");
+        let complete: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM replay_progress WHERE complete=1")
+                .fetch_one(&h.sqlite)
+                .await?;
+        ensure!(complete > 0, "replay did not complete after edge restart");
+        let commands = h
+            .mqtt()
+            .await
+            .iter()
+            .filter(|m| m.topic.ends_with("/commands/water"))
+            .count();
+        ensure!(commands == 0, "command published across mid-replay restart");
+        Ok(())
+    })
+}
+
+fn stale_policy<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        let device = setup_plant(h, true).await?;
+        let old_version = provision_offline_policy(h).await?;
+        let old_payload = h
+            .mqtt()
+            .await
+            .into_iter()
+            .rev()
+            .find(|m| {
+                m.topic.ends_with("/policy")
+                    && serde_json::from_slice::<Value>(&m.payload)
+                        .is_ok_and(|v| v["data"]["policies"][0]["policy_version"] == old_version)
+            })
+            .context("old retained policy payload")?
+            .payload;
+        fault(h, "disconnect:7200", true).await?;
+        let mut latest = old_version;
+        for _ in 0..2 {
+            api_ok(
+                h,
+                Method::PUT,
+                "/api/v1/plants/scenario-plant/offline-policy",
+                json!({}),
+            )
+            .await?;
+            let enabled = api_ok(
+                h,
+                Method::POST,
+                "/api/v1/plants/scenario-plant/offline-policy/enable",
+                json!({}),
+            )
+            .await?;
+            latest = enabled["policy_version"]
+                .as_u64()
+                .context("latest policy version")?;
+        }
+        fault(h, "disconnect:1", false).await?;
+        wait_simulator(h, 600, |s| {
+            s["applied_policy_versions"]["scenario-plant"] == latest
+        })
+        .await?;
+        h.publish(&format!("rhizo/v1/devices/{device}/policy"), old_payload)
+            .await?;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let state = h
+            .get_json(&format!("{}/sim/state", h.simulator_url))
+            .await?;
+        ensure!(
+            state["applied_policy_versions"]["scenario-plant"] == latest,
+            "stale policy replaced v{latest}"
+        );
+        let db_version: i64 = sqlx::query_scalar(
+            "SELECT policy_version FROM offline_policies WHERE plant_id='scenario-plant'",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
+        ensure!(
+            db_version == latest as i64,
+            "edge policy drifted from device"
+        );
+        Ok(())
+    })
+}
+
+fn history_gap<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, false).await?;
+        h.simulator_post("/sim/state", json!({"moisture_vwc":5.0}))
+            .await?;
+        fault(h, "disconnect:259200", true).await?;
+        wait_simulator(h, 8_000, |s| {
+            s["buffered_cycles"].as_u64().unwrap_or_default() >= 16
+                && s["buffered_events"].as_u64().unwrap_or_default() >= 257
+        })
+        .await?;
+        fault(h, "disconnect:1", false).await?;
+        wait_simulator(h, 600, |s| s["connected"] == true).await?;
+        for _ in 0..1_000 {
+            let gaps: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM history_gaps WHERE lost_count>0 AND from_seq<=to_seq",
+            )
+            .fetch_one(&h.sqlite)
+            .await?;
+            let audits: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM device_events WHERE kind='offline.refused'",
+            )
+            .fetch_one(&h.sqlite)
+            .await?;
+            if gaps > 0 {
+                ensure!(
+                    audits > 0,
+                    "audit events did not survive telemetry eviction"
+                );
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        bail!("overflow replay produced no explicit history gap")
+    })
+}
+
+fn advisory_measurement<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_plant(h, true).await?;
+        provision_offline_policy(h).await?;
+        fault(h, "stale-weight", true).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        fault(h, "disconnect:7200", true).await?;
+        let state = wait_simulator(h, 1_500, |s| {
+            s["delivered_today_ml"].as_f64().unwrap_or_default() >= 39.99
+        })
+        .await?;
+        ensure!(
+            state["delivered_today_ml"].as_f64().unwrap_or_default() <= 40.01,
+            "missing advisory measurement blocked or over-dosed"
+        );
+        Ok(())
+    })
+}
+
+fn sleeping_manual_water<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_battery_plant(h).await?;
+        wait_battery_sleep(h).await?;
+        h.clear_mqtt().await;
+        let held = request_battery_water(h, 30.0).await?;
+        ensure!(held["expected_delivery_after"].as_str().is_some());
+        ensure!(held["intent_expires_at"].as_str().is_some());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        ensure!(
+            h.mqtt()
+                .await
+                .iter()
+                .all(|m| !m.topic.contains("/commands/")),
+            "a command was published while the battery device slept"
+        );
+        h.stop_service("battery-simulator")?;
+        h.stop_service("edge-controller")?;
+        // Restart both accelerated clocks together. The device is started
+        // first so the edge cannot consume the held intent until their anchors
+        // are aligned and the battery has joined the broker.
+        h.start_service("battery-simulator")?;
+        h.start_service("edge-controller")?;
+        wait_edge_ready(h).await?;
+        h.clear_mqtt().await;
+        wait_mqtt(h, |m| m.topic.ends_with("/commands/water"), 800).await?;
+        for _ in 0..800 {
+            let rows: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM watering_events WHERE plant_id='battery-plant'",
+            )
+            .fetch_one(&h.sqlite)
+            .await?;
+            if rows == 1 {
+                let published = h
+                    .mqtt()
+                    .await
+                    .iter()
+                    .filter(|m| m.topic.ends_with("/commands/water"))
+                    .count();
+                ensure!(published == 1, "intent delivered {published} times");
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        bail!("held battery intent produced no watering event")
+    })
+}
+
+fn sleeping_safety_refusal<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        for variant in ["leak", "tank", "budget"] {
+            if variant != "leak" {
+                h.reset_scenario().await?;
+            }
+            setup_battery_plant(h).await?;
+            wait_battery_sleep(h).await?;
+            match variant {
+                "leak" => {
+                    h.battery_post("/sim/fault", json!({"fault":"leak","enabled":true}))
+                        .await?;
+                }
+                "tank" => {
+                    h.battery_post("/sim/fault", json!({"fault":"tank-empty","enabled":true}))
+                        .await?;
+                }
+                _ => {
+                    let now: i64 = sqlx::query_scalar("SELECT max(received_at) FROM measurements")
+                        .fetch_one(&h.sqlite)
+                        .await?;
+                    sqlx::query("INSERT INTO watering_events(watering_event_id,plant_id,device_id,mode,origin,started_at,completed_at,requested_ml,delivered_ml,status) VALUES('battery-cap','battery-plant','battery-node-01','manual','edge_command',?,?,500,500,'completed')")
+                        .bind(now).bind(now).execute(&h.sqlite).await?;
+                }
+            }
+            h.pause_service("battery-simulator")?;
+            let held = request_battery_water(h, 30.0).await?;
+            let intent = held["intent_id"].as_str().context("intent_id")?;
+            h.clear_mqtt().await;
+            h.unpause_service("battery-simulator")?;
+            let mut refusal = None;
+            for _ in 0..800 {
+                refusal = sqlx::query_as::<_, (String, Option<String>)>(
+                    "SELECT state,refusal_reason FROM command_intents WHERE intent_id=?",
+                )
+                .bind(intent)
+                .fetch_optional(&h.sqlite)
+                .await?;
+                if refusal.as_ref().is_some_and(|row| row.0 == "refused") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let refusal = refusal.context("intent row")?;
+            ensure!(refusal.0 == "refused", "{variant} intent was not refused");
+            ensure!(
+                h.mqtt()
+                    .await
+                    .iter()
+                    .all(|m| !m.topic.ends_with("/commands/water")),
+                "{variant} refusal still published a water command"
+            );
+        }
+        Ok(())
+    })
+}
+
+fn sleeping_intent_expiry<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_battery_plant(h).await?;
+        wait_battery_sleep(h).await?;
+        let held = request_battery_water(h, 30.0).await?;
+        let intent = held["intent_id"].as_str().context("intent_id")?;
+        h.stop_service("battery-simulator")?;
+        h.clear_mqtt().await;
+        for _ in 0..1_000 {
+            let state: Option<String> =
+                sqlx::query_scalar("SELECT state FROM command_intents WHERE intent_id=?")
+                    .bind(intent)
+                    .fetch_optional(&h.sqlite)
+                    .await?;
+            if state.as_deref() == Some("expired_before_wake") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let expired: String =
+            sqlx::query_scalar("SELECT state FROM command_intents WHERE intent_id=?")
+                .bind(intent)
+                .fetch_one(&h.sqlite)
+                .await?;
+        ensure!(expired == "expired_before_wake");
+        ensure!(
+            h.mqtt()
+                .await
+                .iter()
+                .all(|m| !m.topic.contains("/commands/"))
+        );
+
+        h.reset_scenario().await?;
+        setup_battery_plant(h).await?;
+        wait_battery_sleep(h).await?;
+        request_battery_water(h, 30.0).await?;
+        h.clear_mqtt().await;
+        let command = wait_mqtt(h, |m| m.topic.ends_with("/commands/water"), 800).await?;
+        let value: Value = serde_json::from_slice(&command.payload)?;
+        let issued = value["data"]["issued_at_ms"]
+            .as_i64()
+            .context("issued_at")?;
+        let expires = value["data"]["expires_at_ms"]
+            .as_i64()
+            .context("expires_at")?;
+        ensure!(
+            expires - issued == 600_000,
+            "wire TTL was not minted at wake"
+        );
+        let time = h
+            .mqtt()
+            .await
+            .iter()
+            .position(|m| m.topic.ends_with("/time"))
+            .context("fresh edge.time")?;
+        let water = h
+            .mqtt()
+            .await
+            .iter()
+            .position(|m| m.topic.ends_with("/commands/water"))
+            .context("wake command")?;
+        ensure!(time < water, "command preceded fresh edge.time");
+        Ok(())
+    })
+}
+
+fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_battery_plant(h).await?;
+        wait_battery_sleep(h).await?;
+        request_battery_water(h, 40.0).await?;
+        h.clear_mqtt().await;
+        wait_mqtt(h, |m| m.topic.ends_with("/commands/result"), 800).await?;
+        wait_mqtt(
+            h,
+            |m| {
+                m.topic.ends_with("/status")
+                    && serde_json::from_slice::<Value>(&m.payload)
+                        .is_ok_and(|v| v["data"]["reason"] == "sleeping")
+            },
+            800,
+        )
+        .await?;
+        let mqtt = h.mqtt().await;
+        let result = mqtt
+            .iter()
+            .position(|m| m.topic.ends_with("/commands/result"))
+            .context("command result")?;
+        let sleep = mqtt
+            .iter()
+            .position(|m| {
+                m.topic.ends_with("/status")
+                    && serde_json::from_slice::<Value>(&m.payload)
+                        .is_ok_and(|v| v["data"]["reason"] == "sleeping")
+            })
+            .context("sleep announcement")?;
+        ensure!(result < sleep, "device slept before publishing its result");
+        Ok(())
+    })
+}
+
+fn sleep_budget_cooldown<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        setup_battery_plant(h).await?;
+        let authored = api_ok(
+            h,
+            Method::PUT,
+            "/api/v1/plants/battery-plant/offline-policy",
+            json!({}),
+        )
+        .await?;
+        ensure!(authored["enabled"] == false);
+        let enabled = api_ok(
+            h,
+            Method::POST,
+            "/api/v1/plants/battery-plant/offline-policy/enable",
+            json!({}),
+        )
+        .await?;
+        let version = enabled["policy_version"]
+            .as_u64()
+            .context("policy version")?;
+        for _ in 0..400 {
+            let state = h.get_json(&format!("{}/sim/state", h.battery_url)).await?;
+            if state["applied_policy_versions"]["battery-plant"] == version {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        h.battery_post(
+            "/sim/state",
+            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        h.battery_post(
+            "/sim/fault",
+            json!({"fault":"disconnect:172800","enabled":true}),
+        )
+        .await?;
+        let cooling = loop {
+            let state = h.get_json(&format!("{}/sim/state", h.battery_url)).await?;
+            if state["offline_cooldown_remaining_ms"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+            {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        };
+        let before = cooling["offline_cooldown_remaining_ms"]
+            .as_u64()
+            .context("cooldown")?;
+        let cold = h.battery_post("/sim/restart", json!({})).await?;
+        ensure!(cold["zero_credit_resets"].as_u64().unwrap_or_default() > 0);
+        ensure!(
+            cold["offline_cooldown_remaining_ms"]
+                .as_u64()
+                .unwrap_or_default()
+                >= before.saturating_sub(60_000),
+            "cold reset shortened cooldown"
+        );
+        let corrupt = h.battery_post("/sim/rtc-corrupt", json!({})).await?;
+        ensure!(
+            corrupt["zero_credit_checksum_failures"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        let final_state = wait_simulator_url(h, &h.battery_url, 8_000, |s| {
+            s["credited_timer_wakes"].as_u64().unwrap_or_default() >= 190
+        })
+        .await?;
+        ensure!(
+            final_state["offline_budget_used_ml"]
+                .as_f64()
+                .unwrap_or_default()
+                <= 300.01
+        );
+        ensure!(
+            final_state["delivered_today_ml"]
+                .as_f64()
+                .unwrap_or_default()
+                <= 600.01
+        );
+        Ok(())
+    })
+}
+
+async fn wait_simulator_url(
+    h: &Harness,
+    url: &str,
+    attempts: usize,
+    predicate: impl Fn(&Value) -> bool,
+) -> Result<Value> {
+    for _ in 0..attempts {
+        let state = h.get_json(&format!("{url}/sim/state")).await?;
+        if predicate(&state) {
+            return Ok(state);
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    bail!("simulator state did not reach the expected condition")
+}
+
 macro_rules! scenarios {
-    ($(($name:literal, [$($safety:literal),*] $(, $run:expr)?)),+ $(,)?) => {
+    ($(($name:literal, [$($safety:literal),*], $run:expr)),+ $(,)?) => {
         /// Complete M8 catalogue in deterministic execution order.
         pub fn catalogue() -> &'static [Scenario] {
             static SCENARIOS: &[Scenario] = &[$(Scenario {
                 name: $name,
                 proves: &[$($safety),*],
-                run: scenario_run!($($run)?),
+                run: $run,
             }),+];
             SCENARIOS
         }
-    };
-}
-
-macro_rules! scenario_run {
-    () => {
-        pending
-    };
-    ($run:expr) => {
-        $run
     };
 }
 
@@ -2118,34 +3172,70 @@ scenarios!(
         ["SAFETY-008", "SAFETY-013", "SAFETY-014"],
         long_isolation
     ),
-    ("scenario_policy_activation", ["SAFETY-019"]),
-    ("scenario_offline_budget", ["SAFETY-014"]),
-    ("scenario_isolated_restart", ["SAFETY-014", "SAFETY-015"]),
+    (
+        "scenario_policy_activation",
+        ["SAFETY-019"],
+        policy_activation
+    ),
+    ("scenario_offline_budget", ["SAFETY-014"], offline_budget),
+    (
+        "scenario_isolated_restart",
+        ["SAFETY-014", "SAFETY-015"],
+        isolated_restart
+    ),
     (
         "scenario_isolated_no_wall_clock",
-        ["SAFETY-015", "SAFETY-002"]
+        ["SAFETY-015", "SAFETY-002"],
+        isolated_no_wall_clock
     ),
-    ("scenario_required_measurement", ["SAFETY-017"]),
-    ("scenario_reconciliation", ["SAFETY-016"]),
-    ("scenario_duplicate_replay", ["SAFETY-016"]),
-    ("scenario_restart_mid_replay", ["SAFETY-016", "SAFETY-010"]),
-    ("scenario_stale_policy", ["SAFETY-019"]),
-    ("scenario_history_gap", ["SAFETY-020"]),
-    ("scenario_advisory_measurement", ["SAFETY-017"]),
+    (
+        "scenario_required_measurement",
+        ["SAFETY-017"],
+        required_measurement
+    ),
+    ("scenario_reconciliation", ["SAFETY-016"], reconciliation),
+    (
+        "scenario_duplicate_replay",
+        ["SAFETY-016"],
+        duplicate_replay
+    ),
+    (
+        "scenario_restart_mid_replay",
+        ["SAFETY-016", "SAFETY-010"],
+        restart_mid_replay
+    ),
+    ("scenario_stale_policy", ["SAFETY-019"], stale_policy),
+    ("scenario_history_gap", ["SAFETY-020"], history_gap),
+    (
+        "scenario_advisory_measurement",
+        ["SAFETY-017"],
+        advisory_measurement
+    ),
     (
         "scenario_sleeping_manual_water",
-        ["SAFETY-001", "SAFETY-010"]
+        ["SAFETY-001", "SAFETY-010"],
+        sleeping_manual_water
     ),
     (
         "scenario_sleeping_safety_refusal",
-        ["SAFETY-003", "SAFETY-012"]
+        ["SAFETY-003", "SAFETY-012"],
+        sleeping_safety_refusal
     ),
     (
         "scenario_sleep_budget_cooldown",
-        ["SAFETY-014", "SAFETY-015"]
+        ["SAFETY-014", "SAFETY-015"],
+        sleep_budget_cooldown
     ),
-    ("scenario_sleeping_intent_expiry", ["SAFETY-002"]),
-    ("scenario_battery_awake_cycle", ["SAFETY-001", "SAFETY-011"]),
+    (
+        "scenario_sleeping_intent_expiry",
+        ["SAFETY-002"],
+        sleeping_intent_expiry
+    ),
+    (
+        "scenario_battery_awake_cycle",
+        ["SAFETY-001", "SAFETY-011"],
+        battery_awake_cycle
+    ),
     (
         "scenario_first_demo",
         ["SAFETY-006", "SAFETY-008"],
@@ -2160,6 +3250,75 @@ pub fn select(names: &[String]) -> Result<Vec<&'static Scenario>> {
     }
     let mut selected = Vec::new();
     for name in names {
+        if name == "scenario_battery" {
+            for scenario in catalogue().iter().filter(|scenario| {
+                matches!(
+                    scenario.name,
+                    "scenario_sleeping_manual_water"
+                        | "scenario_sleeping_safety_refusal"
+                        | "scenario_sleep_budget_cooldown"
+                        | "scenario_sleeping_intent_expiry"
+                        | "scenario_battery_awake_cycle"
+                )
+            }) {
+                selected.push(scenario);
+            }
+            continue;
+        }
+        // `scenario_reconciliation` is the documented aggregate command for
+        // M8-016. Keep a private selector for focused verification of the
+        // underlying SCEN-100 case without duplicating it in the catalogue.
+        if name == "scenario_reconciliation_core" {
+            let scenario = catalogue()
+                .iter()
+                .find(|scenario| scenario.name == "scenario_reconciliation")
+                .expect("reconciliation scenario is catalogued");
+            selected.push(scenario);
+            continue;
+        }
+        if name == "scenario_isolation" {
+            for scenario in catalogue().iter().filter(|scenario| {
+                matches!(
+                    scenario.name,
+                    "scenario_reconnect_fresh_sync"
+                        | "scenario_isolation_no_policy"
+                        | "scenario_isolation_automation"
+                        | "scenario_isolation_mid_dose"
+                        | "scenario_isolation_corrupt_policy"
+                        | "scenario_long_isolation"
+                )
+            }) {
+                if selected
+                    .iter()
+                    .any(|existing: &&Scenario| existing.name == scenario.name)
+                {
+                    bail!("scenario `{}` was requested more than once", scenario.name);
+                }
+                selected.push(scenario);
+            }
+            continue;
+        }
+        if name == "scenario_reconciliation" {
+            for scenario in catalogue().iter().filter(|scenario| {
+                matches!(
+                    scenario.name,
+                    "scenario_policy_activation"
+                        | "scenario_offline_budget"
+                        | "scenario_isolated_restart"
+                        | "scenario_isolated_no_wall_clock"
+                        | "scenario_required_measurement"
+                        | "scenario_reconciliation"
+                        | "scenario_duplicate_replay"
+                        | "scenario_restart_mid_replay"
+                        | "scenario_stale_policy"
+                        | "scenario_history_gap"
+                        | "scenario_advisory_measurement"
+                )
+            }) {
+                selected.push(scenario);
+            }
+            continue;
+        }
         let scenario = catalogue()
             .iter()
             .find(|scenario| scenario.name == name)
@@ -2186,6 +3345,13 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), catalogue().len());
         assert!(select(&["scenario_first_demo".to_owned()]).is_ok());
+        assert_eq!(select(&["scenario_isolation".to_owned()]).unwrap().len(), 6);
+        assert_eq!(
+            select(&["scenario_reconciliation".to_owned()])
+                .unwrap()
+                .len(),
+            11
+        );
         assert!(select(&["missing".to_owned()]).is_err());
     }
 }

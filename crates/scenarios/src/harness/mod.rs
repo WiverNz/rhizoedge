@@ -27,6 +27,8 @@ pub struct Harness {
     pub edge_url: String,
     /// Simulator control API base URL.
     pub simulator_url: String,
+    /// Battery simulator control API base URL.
+    pub battery_url: String,
     /// Cloud API base URL.
     pub cloud_url: String,
     /// Shared typed HTTP client.
@@ -46,6 +48,10 @@ impl Harness {
     pub async fn from_env(seed: u64) -> Result<Self> {
         let edge_url = env("RHIZO_SCENARIO__EDGE_URL", "http://127.0.0.1:8080");
         let simulator_url = env("RHIZO_SCENARIO__SIMULATOR_URL", "http://127.0.0.1:9090");
+        let battery_url = env(
+            "RHIZO_SCENARIO__BATTERY_URL",
+            "http://battery-simulator:9090",
+        );
         let cloud_url = env("RHIZO_SCENARIO__CLOUD_URL", "http://127.0.0.1:8081");
         let edge_db = env("RHIZO_SCENARIO__EDGE_DB", "data/edge.sqlite");
         let postgres_url = env(
@@ -67,6 +73,7 @@ impl Harness {
             seed,
             edge_url,
             simulator_url,
+            battery_url,
             cloud_url,
             http: reqwest::Client::new(),
             sqlite,
@@ -151,6 +158,31 @@ impl Harness {
         Ok(value)
     }
 
+    /// Mutates only the battery simulator's modelled environment or faults.
+    pub async fn battery_post(&self, path: &str, body: Value) -> Result<Value> {
+        let url = format!("{}{}", self.battery_url, path);
+        let (status, value) = self.json(reqwest::Method::POST, &url, body).await?;
+        if !status.is_success() {
+            bail!("POST {url} returned {status}: {value}");
+        }
+        Ok(value)
+    }
+
+    /// Recreates the fixed battery node with no persisted state.
+    pub async fn reset_battery_simulator(&self) -> Result<()> {
+        self.stop_service("battery-simulator")?;
+        let state = std::path::Path::new("/var/lib/rhizo-simulator/battery-node-01.state.json");
+        if state.exists() {
+            std::fs::remove_file(state)?;
+        }
+        for suffix in ["status", "policy", "config"] {
+            self.clear_retained(&format!("rhizo/v1/devices/battery-node-01/{suffix}"))
+                .await?;
+        }
+        self.start_service("battery-simulator")?;
+        wait_http(&self.http, &format!("{}/sim/state", self.battery_url)).await
+    }
+
     /// Returns MQTT captured since the last isolation boundary.
     pub async fn mqtt(&self) -> Vec<CapturedMqtt> {
         self.mqtt.lock().await.clone()
@@ -180,6 +212,16 @@ impl Harness {
     /// Stops a Compose service by its label-derived container id.
     pub fn stop_service(&self, service: &str) -> Result<()> {
         docker_service("stop", service)
+    }
+
+    /// Freezes a service without emitting its graceful-shutdown status.
+    pub fn pause_service(&self, service: &str) -> Result<()> {
+        docker_service("pause", service)
+    }
+
+    /// Resumes a service frozen by [`Self::pause_service`].
+    pub fn unpause_service(&self, service: &str) -> Result<()> {
+        docker_service("unpause", service)
     }
 
     /// Starts a Compose service by its label-derived container id.
@@ -351,6 +393,13 @@ impl Harness {
             .and_then(Value::as_str)
             .context("simulator reset device_id")?
             .to_owned();
+        // The battery profile may be active while the aggregate suite is
+        // running.  Stop it before deleting device rows and durable simulator
+        // state; otherwise it can re-register between those operations and a
+        // subsequent clean restart legitimately looks stale to the edge.
+        // `docker compose stop` is harmless when the profiled service has not
+        // been created.
+        self.stop_service("battery-simulator")?;
         self.stop_service("device-simulator")?;
         self.stop_service("edge-controller")?;
         for statement in [
@@ -402,15 +451,19 @@ impl Harness {
                 }
             }
         }
-        self.mqtt_client
-            .publish(
-                format!("rhizo/v1/devices/{device_id}/status"),
-                QoS::AtLeastOnce,
-                true,
-                Vec::new(),
-            )
-            .await
-            .context("clear prior retained simulator status")?;
+        for suffix in ["status", "policy", "config"] {
+            for reset_device in [&device_id, "battery-node-01"] {
+                self.mqtt_client
+                    .publish(
+                        format!("rhizo/v1/devices/{reset_device}/{suffix}"),
+                        QoS::AtLeastOnce,
+                        true,
+                        Vec::new(),
+                    )
+                    .await
+                    .with_context(|| format!("clear prior retained {reset_device} {suffix}"))?;
+            }
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
         self.mqtt.lock().await.clear();
         self.start_service("edge-controller")?;

@@ -288,6 +288,14 @@ async fn process(
                 crate::control::reconcile::begin(db, dev.as_ref(), clock.now()).await?;
             }
             let commit = retry_transient(m, || ingest::persist_replay(db, &e, at)).await?;
+            if replay
+                && !e.data.complete
+                && std::env::var("RHIZO_E2E_FAULTS").as_deref() == Ok("1")
+                && std::path::Path::new("/tmp/rhizo-fault-exit-mid-replay").exists()
+            {
+                let _ = std::fs::remove_file("/tmp/rhizo-fault-exit-mid-replay");
+                std::process::exit(86);
+            }
             // No contiguous prefix means there is nothing truthful to say, so
             // the edge stays silent and the device replays again. `Some(0)` is
             // a real acknowledgement of sequence 0 and is published normally.

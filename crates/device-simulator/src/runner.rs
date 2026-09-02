@@ -89,6 +89,13 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
                 if restarted_by_fault {
                     rebuild(&cli, &device, &mut connection);
                 }
+                // A runtime-injected disconnect cannot wait for `step()` to
+                // return: on a healthy broker that future may remain pending
+                // indefinitely. Observe the injected state on the regular
+                // device tick so the socket is actually dropped promptly.
+                if crate::mqtt::lock(&device).is_isolated_by_fault() {
+                    connection = isolate(&cli, &device, &mut clock, connection).await?;
+                }
                 // The announcement has now gone out. *Then* the socket closes:
                 // publishing after disconnecting is not possible, and the
                 // ordering is what lets a fresh subscriber see a sleeping device

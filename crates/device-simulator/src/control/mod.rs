@@ -78,6 +78,7 @@ pub fn router(state: ControlState) -> Router {
         .route("/sim/fault", post(set_fault))
         .route("/sim/state", get(get_state).post(set_state))
         .route("/sim/restart", post(restart))
+        .route("/sim/rtc-corrupt", post(rtc_corrupt))
         .route("/sim/scale", get(get_scale))
         .with_state(state)
 }
@@ -146,8 +147,16 @@ pub struct StateResponse {
     pub leak: String,
     /// Volume delivered against the daily cap.
     pub delivered_today_ml: f32,
+    /// Volume charged to the current offline rolling budget.
+    pub offline_budget_used_ml: f32,
+    /// Persisted offline cooldown remaining.
+    pub offline_cooldown_remaining_ms: u64,
+    /// Virtual duration for which an injected disconnect still holds.
+    pub isolation_remaining_ms: u64,
     /// Audit events waiting to replay after an isolation.
     pub buffered_events: usize,
+    /// Durable command results waiting for an edge acknowledgement.
+    pub pending_results: usize,
     /// Offline-policy versions durably activated by the device.
     pub applied_policy_versions: std::collections::BTreeMap<String, u32>,
     /// Stable refusal reason for the most recently rejected policy.
@@ -162,6 +171,12 @@ pub struct StateResponse {
     pub sleeping: bool,
     /// Simulated state of charge.
     pub battery_percent: f64,
+    /// Validated RTC timer wakes credited to monotonic accounting.
+    pub credited_timer_wakes: u64,
+    /// Cold resets that credited no elapsed time.
+    pub zero_credit_resets: u64,
+    /// RTC checksum failures that credited no elapsed time.
+    pub zero_credit_checksum_failures: u64,
     /// Faults currently enabled.
     pub faults: Vec<String>,
     /// How many times the device has booted.
@@ -292,6 +307,12 @@ async fn restart(State(state): State<ControlState>) -> Response {
     response
 }
 
+async fn rtc_corrupt(State(state): State<ControlState>) -> Response {
+    let mut device = lock(&state.device);
+    device.mark_rtc_checksum_failure();
+    Json(snapshot(&device)).into_response()
+}
+
 async fn get_scale(State(state): State<ControlState>) -> Response {
     Json(ScaleResponse {
         time_scale: state.cli.time_scale,
@@ -336,7 +357,11 @@ fn snapshot(device: &Device) -> StateResponse {
         }
         .to_owned(),
         delivered_today_ml: device.delivered_today_ml(),
+        offline_budget_used_ml: device.offline_budget_used_ml(),
+        offline_cooldown_remaining_ms: device.offline_cooldown_remaining_ms(),
+        isolation_remaining_ms: device.isolation_remaining_ms(),
         buffered_events: device.buffered_events(),
+        pending_results: device.unacknowledged_results(),
         applied_policy_versions: device.applied_policy_versions().clone(),
         last_policy_rejection: device
             .last_policy_rejection()
@@ -350,6 +375,9 @@ fn snapshot(device: &Device) -> StateResponse {
         },
         sleeping: device.is_sleeping(),
         battery_percent: device.battery_percent(),
+        credited_timer_wakes: device.credited_timer_wakes(),
+        zero_credit_resets: device.zero_credit_resets(),
+        zero_credit_checksum_failures: device.zero_credit_checksum_failures(),
         faults: device.faults().active().map(|f| f.to_string()).collect(),
         boot_count: device.store().state().boot_count,
     }

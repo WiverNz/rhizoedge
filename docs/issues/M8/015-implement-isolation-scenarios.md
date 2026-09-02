@@ -49,13 +49,13 @@ feature.
 
 ## Acceptance criteria
 
-- [ ] A device can be network-isolated while still running.
-- [ ] All seven listed scenarios pass.
-- [ ] SCEN-090 shows a device with no policy never actuating.
-- [ ] SCEN-091 shows exactly one bounded dose delivered autonomously.
-- [ ] SCEN-107 shows the provisioned plant watered and the unprovisioned one not.
-- [ ] SCEN-077 shows autonomy unaffected while the reconnecting device still refuses a command until it is resynchronised.
-- [ ] Failures dump device state and buffered events.
+- [x] A device can be network-isolated while still running.
+- [x] All seven listed scenarios pass.
+- [x] SCEN-090 shows a device with no policy never actuating.
+- [x] SCEN-091 shows exactly one bounded dose delivered autonomously.
+- [x] SCEN-107 shows the provisioned plant watered and the unprovisioned one not.
+- [x] SCEN-077 shows autonomy unaffected while the reconnecting device still refuses a command until it is resynchronised.
+- [x] Failures dump device state and buffered events.
 
 ## Verification
 

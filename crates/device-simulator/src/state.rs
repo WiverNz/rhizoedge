@@ -379,19 +379,6 @@ impl PersistentState {
     }
 }
 
-/// The on-disk envelope: a checksum and the state it covers.
-///
-/// A separate type from [`PersistentState`] so the checksum cannot accidentally
-/// be included in what it covers, and so a file this device did not write —
-/// one with no checksum at all — is rejected rather than half-trusted.
-#[derive(Debug, Deserialize, Serialize)]
-struct StateFile {
-    /// Checksum over the canonical encoding of `state`.
-    checksum: String,
-    /// The state itself.
-    state: PersistentState,
-}
-
 /// Encodes a state file, checksum included.
 ///
 /// Public so a test or a scenario can seed a device with a state file the
@@ -402,11 +389,11 @@ struct StateFile {
 ///
 /// Returns the encoding failure.
 pub fn encode_state(state: &PersistentState) -> Result<Vec<u8>, serde_json::Error> {
-    let file = StateFile {
-        checksum: checksum_of(state),
-        state: state.clone(),
-    };
-    serde_json::to_vec_pretty(&file)
+    let state = serde_json::to_value(state)?;
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "checksum": checksum_of(&state),
+        "state": state,
+    }))
 }
 
 /// Why the state file could not be persisted.
@@ -442,14 +429,14 @@ impl StateStore {
     pub fn load(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let state = match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<StateFile>(&bytes) {
-                Ok(file) if checksum_of(&file.state) == file.checksum => file.state,
-                Ok(file) => {
+            Ok(bytes) => match decode_state_file(&bytes) {
+                Ok(state) => state,
+                Err(StateDecode::Checksum { stored, computed }) => {
                     let kept = quarantine(&path);
                     tracing::error!(
                         path = %path.display(),
-                        stored = %file.checksum,
-                        computed = %checksum_of(&file.state),
+                        stored = %stored,
+                        computed = %computed,
                         kept = %kept.display(),
                         "persisted state failed its checksum; actuation is disabled"
                     );
@@ -457,13 +444,13 @@ impl StateStore {
                         reason: PersistentStateFault::CHECKSUM.to_owned(),
                         detail: format!(
                             "stored {} but computed {}; the unreadable file was kept at {}",
-                            file.checksum,
-                            checksum_of(&file.state),
+                            stored,
+                            computed,
                             kept.display()
                         ),
                     })
                 }
-                Err(e) => {
+                Err(StateDecode::Json(e)) => {
                     let kept = quarantine(&path);
                     tracing::error!(
                         path = %path.display(),
@@ -561,17 +548,16 @@ impl StateStore {
             path: self.path.clone(),
             source,
         })?;
-        let file: StateFile = serde_json::from_slice(&bytes)?;
-        if checksum_of(&file.state) != file.checksum {
-            return Err(StateError::Write {
+        decode_state_file(&bytes).map_err(|error| match error {
+            StateDecode::Json(error) => StateError::Encode(error),
+            StateDecode::Checksum { .. } => StateError::Write {
                 path: self.path.clone(),
                 source: std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "the state file failed its checksum on read-back",
                 ),
-            });
-        }
-        Ok(file.state)
+            },
+        })
     }
 
     /// Writes the state atomically: temp file, flush, rename.
@@ -602,6 +588,34 @@ impl StateStore {
             source,
         })
     }
+}
+
+enum StateDecode {
+    Json(serde_json::Error),
+    Checksum { stored: String, computed: String },
+}
+
+fn decode_state_file(bytes: &[u8]) -> Result<PersistentState, StateDecode> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(StateDecode::Json)?;
+    let stored = value
+        .get("checksum")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            StateDecode::Json(<serde_json::Error as serde::de::Error>::custom(
+                "missing state checksum",
+            ))
+        })?
+        .to_owned();
+    let state = value.get("state").ok_or_else(|| {
+        StateDecode::Json(<serde_json::Error as serde::de::Error>::custom(
+            "missing state payload",
+        ))
+    })?;
+    let computed = checksum_of(state);
+    if stored != computed {
+        return Err(StateDecode::Checksum { stored, computed });
+    }
+    serde_json::from_value(state.clone()).map_err(StateDecode::Json)
 }
 
 /// Moves an untrusted state file aside, returning where it went.

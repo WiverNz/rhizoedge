@@ -216,7 +216,7 @@ impl AcceleratedClock {
 /// interval, while keeping accelerated offline autonomy from performing six
 /// hundred durable state writes per real second. Pump completion still uses
 /// the exact elapsed duration and the physical model integrates each step.
-pub const MAX_VIRTUAL_STEP_MS: u64 = 10_000;
+pub const MAX_VIRTUAL_STEP_MS: u64 = 60_000;
 
 #[cfg(test)]
 mod accelerated_clock_tests {
@@ -310,7 +310,7 @@ mod accelerated_clock_tests {
     #[test]
     fn an_odd_interval_keeps_its_remainder() {
         let steps = AcceleratedClock::steps(25_000);
-        assert_eq!(steps, vec![10_000, 10_000, 5_000]);
+        assert_eq!(steps, vec![25_000]);
         assert_eq!(steps.iter().sum::<u64>(), 25_000);
     }
 }

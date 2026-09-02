@@ -38,7 +38,14 @@ pub const RECONNECT_CAP: Duration = Duration::from_secs(300);
 /// How long a clean shutdown waits for its DISCONNECT to reach the broker.
 const SHUTDOWN_DRAIN: Duration = Duration::from_secs(5);
 /// Outstanding-request capacity of the client channel.
-const CHANNEL_CAPACITY: usize = 32;
+///
+/// A `ConnAck` is handled by the same task that polls the event loop.  Its
+/// reconnect burst therefore has to fit in this channel in full: eight
+/// subscriptions, status, the 16-batch telemetry ring, up to 32 durable command
+/// results, and up to eleven replay batches for the bounded event buffer.  If
+/// this is smaller, awaiting the next enqueue deadlocks the only task that can
+/// drain it and silently strands the replay at the end of the burst.
+const CHANNEL_CAPACITY: usize = 128;
 
 /// A broker host and port.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -409,7 +416,17 @@ impl Connection {
                 return;
             }
             match tokio::time::timeout(remaining, self.eventloop.poll()).await {
-                Ok(Ok(Event::Outgoing(rumqttc::Outgoing::Disconnect))) | Ok(Err(_)) => return,
+                Ok(Ok(Event::Outgoing(rumqttc::Outgoing::Disconnect))) => {
+                    // `Outgoing` means rumqttc accepted the frame for the
+                    // socket, not that the broker has necessarily read it.
+                    // Give the transport one bounded scheduling turn before
+                    // dropping the event loop, otherwise Mosquitto can observe
+                    // an unclean close and publish the will after an announced
+                    // battery sleep.
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    return;
+                }
+                Ok(Err(_)) => return,
                 Ok(Ok(_)) => {}
                 Err(_) => {
                     tracing::warn!("timed out draining the shutdown publish");

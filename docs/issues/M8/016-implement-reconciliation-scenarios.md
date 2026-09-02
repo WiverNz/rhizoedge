@@ -45,13 +45,13 @@ published and then rolled back would still have reached the device.
 
 ## Acceptance criteria
 
-- [ ] All listed scenarios pass.
-- [ ] SCEN-100 shows autonomous doses folded into the budget exactly once.
-- [ ] SCEN-101 shows triple replay producing one event per `event_id`.
-- [ ] SCEN-102 shows an edge restart mid-replay losing nothing and duplicating nothing.
-- [ ] **No command is published during reconciliation**, asserted by spy.
-- [ ] SCEN-104 shows an explicit gap in history.
-- [ ] The suite still completes within its time budget.
+- [x] All listed scenarios pass.
+- [x] SCEN-100 shows autonomous doses folded into the budget exactly once.
+- [x] SCEN-101 shows triple replay producing one event per `event_id`.
+- [x] SCEN-102 shows an edge restart mid-replay losing nothing and duplicating nothing.
+- [x] **No command is published during reconciliation**, asserted by spy.
+- [x] SCEN-104 shows an explicit gap in history.
+- [x] The suite still completes within its time budget.
 
 ## Verification
 

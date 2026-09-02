@@ -144,6 +144,12 @@ pub struct Device {
     /// than in the store because losing it costs one early retry and nothing
     /// else, while a reboot republishes from `pending_results` anyway.
     last_result_publish_ms: u64,
+    /// Timer wakes whose validated monotonic elapsed time was credited.
+    credited_timer_wakes: u64,
+    /// Non-timer resets that conservatively credited no elapsed time.
+    zero_credit_resets: u64,
+    /// Explicit RTC checksum failures that conservatively credited no time.
+    zero_credit_checksum_failures: u64,
 }
 
 impl Device {
@@ -173,9 +179,15 @@ impl Device {
         let settings = std::sync::Arc::clone(&self.settings);
         let environment = self.environment.clone();
         let faults = self.faults.clone();
+        let credited_timer_wakes = self.credited_timer_wakes;
+        let zero_credit_resets = self.zero_credit_resets.saturating_add(1);
+        let zero_credit_checksum_failures = self.zero_credit_checksum_failures;
         *self = Self::new(&settings);
         self.environment = environment;
         self.faults = faults;
+        self.credited_timer_wakes = credited_timer_wakes;
+        self.zero_credit_resets = zero_credit_resets;
+        self.zero_credit_checksum_failures = zero_credit_checksum_failures;
         self.apply_faults();
         self.restart_notice = true;
     }
@@ -259,6 +271,9 @@ impl Device {
             last_offline_refusal: None,
             last_ack_outcome: None,
             last_result_publish_ms: 0,
+            credited_timer_wakes: 0,
+            zero_credit_resets: 0,
+            zero_credit_checksum_failures: 0,
             power: if cli.power_mode.is_battery() {
                 crate::power::PowerState::battery(
                     cli.wake_interval_seconds,
@@ -454,6 +469,22 @@ impl Device {
         self.store.state().delivered_today_ml
     }
 
+    /// Volume charged to the current offline-policy rolling window.
+    #[must_use]
+    pub const fn offline_budget_used_ml(&self) -> f32 {
+        self.store
+            .state()
+            .offline_runtime
+            .budget_window
+            .delivered_ml
+    }
+
+    /// Persisted cooldown remaining for offline autonomy.
+    #[must_use]
+    pub const fn offline_cooldown_remaining_ms(&self) -> u64 {
+        self.store.state().offline_runtime.cooldown_remaining_ms
+    }
+
     /// What this device declares it can do.
     #[must_use]
     pub const fn capabilities(&self) -> &Capabilities {
@@ -526,7 +557,11 @@ impl Device {
 
     /// Disables a fault at runtime.
     pub fn disable_fault(&mut self, name: &str) {
-        if self.faults.disable(name) {
+        let canonical = name.split_once(':').map_or(name, |(name, _)| name);
+        if self.faults.disable(canonical) {
+            if canonical == "disconnect" {
+                self.isolation_remaining_ms = 0;
+            }
             self.apply_faults();
         }
     }
@@ -643,6 +678,7 @@ impl Device {
         // in the readings that follow it.
         if self.power.advance(elapsed_ms) {
             // One wake, one charge.
+            self.credited_timer_wakes = self.credited_timer_wakes.saturating_add(1);
             self.environment.battery.drain_wake();
             tracing::debug!("woke from deep sleep");
         }
@@ -669,7 +705,16 @@ impl Device {
             self.power.note_sampled();
             match self.telemetry_publication(batch.clone()) {
                 Ok(p) if self.connected => publications.push(p),
-                Ok(_) => self.telemetry_ring.push(batch),
+                Ok(_) => {
+                    self.telemetry_ring.push(batch);
+                    if !self.power.is_battery() {
+                        self.record_event(
+                            EventTier::Telemetry,
+                            EventKind::Unknown("telemetry.cycle".to_owned()),
+                            EventDetail::Unknown,
+                        );
+                    }
+                }
                 Err(e) => tracing::error!(error = %e, "could not build a telemetry batch"),
             }
         }
@@ -736,6 +781,26 @@ impl Device {
             self.sleep_notice = true;
         }
         publications
+    }
+
+    /// Records the conservative RTC-checksum failure branch used by battery tests.
+    pub const fn mark_rtc_checksum_failure(&mut self) {
+        self.zero_credit_checksum_failures = self.zero_credit_checksum_failures.saturating_add(1);
+    }
+
+    /// Credited timer wake count.
+    pub const fn credited_timer_wakes(&self) -> u64 {
+        self.credited_timer_wakes
+    }
+
+    /// Zero-credit cold-reset count.
+    pub const fn zero_credit_resets(&self) -> u64 {
+        self.zero_credit_resets
+    }
+
+    /// Zero-credit checksum-failure count.
+    pub const fn zero_credit_checksum_failures(&self) -> u64 {
+        self.zero_credit_checksum_failures
     }
 
     /// Whether the device has announced its sleep and is waiting for the run
@@ -893,6 +958,21 @@ impl Device {
             batch
                 .samples
                 .retain(|sample| sample.kind != MeasurementKind::SoilMoisture);
+        }
+        if self.faults.is_enabled("stale-tank") {
+            batch
+                .samples
+                .retain(|sample| sample.kind != MeasurementKind::TankLevel);
+        }
+        if self.faults.is_enabled("stale-leak") {
+            batch
+                .samples
+                .retain(|sample| sample.kind != MeasurementKind::LeakState);
+        }
+        if self.faults.is_enabled("stale-weight") {
+            batch
+                .samples
+                .retain(|sample| sample.kind != MeasurementKind::PotWeight);
         }
         if invalid_soil_rate > 0.0 {
             self.spoil_soil_readings(&mut batch);
@@ -2136,6 +2216,18 @@ mod tests {
         assert_eq!(status.clock_synced, Some(false));
         assert_eq!(status.device_time_ms, None);
         assert_eq!(status.message_id.as_uuid().get_version_num(), 4);
+    }
+
+    #[test]
+    fn disabling_a_parameterised_disconnect_ends_isolation_immediately() {
+        let mut device = connected(&[]);
+        device.enable_fault(Fault::Disconnect { seconds: 7_200 });
+        assert!(device.is_isolated());
+
+        device.disable_fault("disconnect:1");
+
+        assert_eq!(device.isolation_remaining_ms(), 0);
+        assert!(!device.faults().is_enabled("disconnect"));
     }
 
     #[test]

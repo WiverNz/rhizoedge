@@ -7,7 +7,7 @@ services:
     environment:
       RHIZO_E2E_FAULTS: "1"
       RHIZO_E2E_CLOUD_BATCH_SIZE: "10"
-      RHIZO_EDGE__TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_EDGE__TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
       RHIZO_EDGE__CONTROL__TICK_INTERVAL_SECONDS: "30"
       RHIZO_EDGE__CONTROL__COMMAND_TTL_SECONDS: "600"
       RHIZO_EDGE__CLOUD__REQUEST_TIMEOUT_SECONDS: "10"
@@ -15,7 +15,7 @@ services:
   device-simulator:
     restart: "no"
     environment:
-      RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
       RHIZO_SIMULATOR__CONTROL_BIND: 0.0.0.0:9090
     command:
       - >-
@@ -58,9 +58,10 @@ services:
       RHIZO_SCENARIO__EDGE_URL: http://edge-controller:8080
       RHIZO_SCENARIO__CLOUD_URL: http://cloud-api:8081
       RHIZO_SCENARIO__SIMULATOR_URL: http://device-simulator:9090
+      RHIZO_SCENARIO__BATTERY_URL: http://battery-simulator:9090
       RHIZO_SCENARIO__POSTGRES_URL: postgres://rhizo:rhizo@postgres:5432/rhizo
       RHIZO_SCENARIO__EDGE_DB: /var/lib/rhizo-edge/edge.sqlite
-      RHIZO_SCENARIO__TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_SCENARIO__TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
       RHIZO_SCENARIO__MQTT_HOST: mosquitto
       RHIZO_SCENARIO__SEED: ${RHIZO_SCENARIO_SEED:-159}
       RHIZO_SCENARIO__ARTIFACTS: /artifacts
@@ -86,7 +87,8 @@ services:
       - path: ../.env
         required: false
     environment:
-      RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-600}
+      RHIZO_TIME_SCALE: ${RHIZO_TIME_SCALE:-3600}
+      RHIZO_SIMULATOR__CONTROL_BIND: 0.0.0.0:9090
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
@@ -98,8 +100,10 @@ services:
         --power-mode battery
         --wake-interval-seconds 900
         --telemetry-interval 900
+        --awake-budget-seconds 1
         --time-scale "$${RHIZO_TIME_SCALE}"
         --state-file /var/lib/rhizo/battery-node-01.state.json
+        --allow-remote-control-api
         --log-format json
     volumes:
       - device-simulator-state:/var/lib/rhizo

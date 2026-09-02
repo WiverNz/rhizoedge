@@ -290,6 +290,12 @@ pub enum Fault {
     },
     /// Omit soil moisture while continuing every other telemetry stream.
     StaleSoil,
+    /// Omit tank level while continuing every other telemetry stream.
+    StaleTank,
+    /// Omit leak state while continuing every other telemetry stream.
+    StaleLeak,
+    /// Omit pot weight while continuing every other telemetry stream.
+    StaleWeight,
     /// Repeat one bit-identical reading forever.
     StuckSensor,
     /// Report `clock_synced: false` regardless of synchronisation.
@@ -341,6 +347,9 @@ impl Fault {
             Self::Reorder { .. } => "reorder",
             Self::InvalidSoil { .. } => "invalid-soil",
             Self::StaleSoil => "stale-soil",
+            Self::StaleTank => "stale-tank",
+            Self::StaleLeak => "stale-leak",
+            Self::StaleWeight => "stale-weight",
             Self::StuckSensor => "stuck-sensor",
             Self::ClockUnsync => "clock-unsync",
             Self::ClockSkew { .. } => "clock-skew",
@@ -358,12 +367,15 @@ impl Fault {
     }
 
     /// Every fault specification in the catalogue, for help text and tests.
-    pub const NAMES: [&'static str; 18] = [
+    pub const NAMES: [&'static str; 21] = [
         "disconnect:<sec>",
         "duplicate:<rate>",
         "reorder:<rate>",
         "invalid-soil:<rate>",
         "stale-soil",
+        "stale-tank",
+        "stale-leak",
+        "stale-weight",
         "stuck-sensor",
         "clock-unsync",
         "clock-skew:<sec>",
@@ -388,6 +400,9 @@ impl fmt::Display for Fault {
             Self::Reorder { rate } => write!(f, "reorder:{rate}"),
             Self::InvalidSoil { rate } => write!(f, "invalid-soil:{rate}"),
             Self::StaleSoil => f.write_str("stale-soil"),
+            Self::StaleTank => f.write_str("stale-tank"),
+            Self::StaleLeak => f.write_str("stale-leak"),
+            Self::StaleWeight => f.write_str("stale-weight"),
             Self::ClockSkew { seconds } => write!(f, "clock-skew:{seconds}"),
             Self::PolicyInterrupt { step } => write!(f, "policy-interrupt:{step}"),
             Self::MissWake { count } => write!(f, "miss-wake:{count}"),
@@ -435,6 +450,9 @@ impl FromStr for Fault {
                 rate: rate(s, name, arg)?,
             }),
             "stale-soil" => Ok(Self::StaleSoil),
+            "stale-tank" => Ok(Self::StaleTank),
+            "stale-leak" => Ok(Self::StaleLeak),
+            "stale-weight" => Ok(Self::StaleWeight),
             "stuck-sensor" => Ok(Self::StuckSensor),
             "clock-unsync" => Ok(Self::ClockUnsync),
             "clock-skew" => Ok(Self::ClockSkew {

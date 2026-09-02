@@ -148,6 +148,18 @@ pub async fn complete(
 ) -> Result<Summary, EdgeError> {
     let summary = summarise(db, device_id, boot_id).await?;
     attribute_autonomous_doses(db, device_id, now).await?;
+    sqlx::query(
+        "UPDATE devices SET connectivity_mode=CASE \
+         WHEN status='online' THEN 'connected' \
+         WHEN status='offline' AND power_mode='battery' AND expected_wake_at IS NOT NULL AND overdue_at>? THEN 'sleeping' \
+         ELSE connectivity_mode END WHERE device_id=? AND boot_id=?",
+    )
+    .bind(now.timestamp_millis())
+    .bind(device_id)
+    .bind(boot_id)
+    .execute(db.pool())
+    .await
+    .map_err(|e| EdgeError::Storage(rhizo_storage::StorageError::Database(e.to_string())))?;
     // Nothing needs clearing: the hold is derived from `replay_progress`, which
     // the commit that produced this call has already advanced.
     record_device_event(
