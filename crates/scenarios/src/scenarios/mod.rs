@@ -2173,6 +2173,42 @@ async fn wait_measurement_newer_than(h: &Harness, kind: &str, after: i64) -> Res
     Ok(false)
 }
 
+/// Polls the simulator until `predicate` holds or `budget` elapses.
+///
+/// **A deadline, not an iteration count.** `wait_simulator` below counts polls,
+/// and each poll costs an HTTP round trip whose latency is a property of the
+/// machine: 8 000 attempts is about a minute on a developer's desktop and about
+/// five and a half on a two-core CI runner sharing itself with six containers.
+/// A budget in the wrong unit is one that silently means something different
+/// wherever it runs, and `scenario_history_gap` sat within seconds of its own
+/// limit on CI for exactly that reason.
+///
+/// Used only where the wait is dominated by how fast the *machine* can drive
+/// the simulator rather than by how many times the scenario asks. Everything
+/// else is fast enough that the distinction does not arise.
+async fn wait_simulator_until(
+    h: &Harness,
+    budget: Duration,
+    predicate: impl Fn(&Value) -> bool,
+) -> Result<Value> {
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        let state = h
+            .get_json(&format!("{}/sim/state", h.simulator_url))
+            .await?;
+        if predicate(&state) {
+            return Ok(state);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "simulator state did not reach the expected condition within {budget:?}; \
+                 last observed: {state}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn wait_simulator(
     h: &Harness,
     attempts: usize,
@@ -3171,7 +3207,18 @@ fn history_gap<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         h.simulator_post("/sim/state", json!({"moisture_vwc":5.0}))
             .await?;
         fault(h, "disconnect:259200", true).await?;
-        wait_simulator(h, 8_000, |s| {
+        // The slowest wait in the suite, and inherently so: the telemetry tier
+        // holds 256 events, and the threshold is one above it because an
+        // eviction — and therefore a gap — is the thing being tested. Reaching
+        // it means driving 256 real telemetry cycles through the simulator, so
+        // the cost is set by how fast the host can run six containers, not by
+        // anything the scenario does.
+        //
+        // Measured: about a minute on a developer's machine, five and a half on
+        // a CI runner. Ten is roughly double the slower observation, and the
+        // failure carries the last observed state so a budget that is one day
+        // genuinely too small says what it was still waiting for.
+        wait_simulator_until(h, Duration::from_secs(600), |s| {
             s["buffered_cycles"].as_u64().unwrap_or_default() >= 16
                 && s["buffered_events"].as_u64().unwrap_or_default() >= 257
         })

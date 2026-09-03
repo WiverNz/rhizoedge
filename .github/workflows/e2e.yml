@@ -23,19 +23,23 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # Thirty minutes for build **and** suite.
+    # Fifty minutes for build **and** suite, from measurement rather than guess.
     #
     # Fifteen was set when this job had never once reached the scenarios, so
-    # nothing about it was measured. The first run that got there spent 14m16s
-    # building and pulling the topology and was killed seven scenarios later —
-    # with the suite itself running at roughly four seconds a scenario. A budget
-    # that cannot fit a cold image build plus the suite fails every commit that
-    # touches Rust, which is most of them, and tells you nothing when it does.
+    # nothing about it had been measured. Two runs since have measured it: a
+    # cold topology build takes about 14 minutes, and the suite is far from
+    # uniform — the median scenario is 3 seconds and the slowest are 30 to 70,
+    # because they drive hours of virtual time through a real simulator.
     #
-    # The step below carries its own, much tighter budget, so a hung *suite* and
-    # a slow *build* now fail differently and legibly. That is the property
-    # worth having; the number here is only the outer bound.
-    timeout-minutes: 30
+    # Measured: 648 s for all 41 scenarios on a fast developer machine, and a
+    # runner is roughly 1.5-2x slower again. Build 14 + suite 30 + teardown is
+    # about 46, so 50 leaves the slack that stops a marginally slow run from
+    # failing for no reason anybody can act on.
+    #
+    # The step below carries its own budget, so a hung *suite* and a slow
+    # *build* fail differently and legibly. That separation is the property
+    # worth having; this number is only the outer bound.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
@@ -83,12 +87,24 @@ jobs:
       # such stop as a reason to end the run — see the script's own header.
       - name: Run complete scenario suite once
         id: suite
-        # The suite is ~41 scenarios at a few seconds each — under four minutes
-        # on a runner. Ten is roughly triple that: comfortably clear of a slow
-        # runner, and still tight enough that a scenario stuck in one of its own
-        # polling loops is reported as a hang rather than absorbed by the job's
-        # outer budget.
-        timeout-minutes: 10
+        # Twenty-five minutes, measured rather than extrapolated.
+        #
+        # An earlier ten was sized from the first fourteen scenarios, which are
+        # the fast ones — a median of 3 seconds each. That sample was not
+        # representative: `scenario_offline_budget` takes 73 seconds on a
+        # runner, `scenario_long_isolation` 50, and `scenario_history_gap`
+        # several minutes because it must fill a 256-entry buffer at the
+        # telemetry cadence. Thirty-three scenarios took 272 seconds and the
+        # thirty-fourth was still going when the budget ran out.
+        #
+        # Measured: 648 s for all 41 on a fast developer machine; a runner is
+        # roughly 1.5-2x slower, so about 16 minutes. Thirty is comfortably
+        # clear of that without being so loose that a wedged suite sits there.
+        #
+        # This is still an outer bound and not a target: every scenario carries
+        # its own budget and bails with its last observed state, so a genuine
+        # hang is reported by the scenario rather than by this timeout.
+        timeout-minutes: 30
         run: ./scripts/run-scenarios.sh
 
       # Conditioned on the *suite* failing, not on the job failing. A job that
