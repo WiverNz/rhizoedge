@@ -3206,16 +3206,39 @@ fn history_gap<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         setup_plant(h, false).await?;
         h.simulator_post("/sim/state", json!({"moisture_vwc":5.0}))
             .await?;
-        fault(h, "disconnect:259200", true).await?;
+        // **The isolation ceiling must outlast the fill, on any machine.**
+        //
+        // The overlay runs at `--time-scale 3600` with `--telemetry-interval
+        // 300`, so one telemetry cycle is 83 ms of real time and the 259 200
+        // virtual seconds this fault used to request were **72 real seconds**
+        // of isolation. Filling the buffer takes 257 cycles — about 21 real
+        // seconds when the simulator keeps its cadence, and several times that
+        // on a runner sharing two cores with six containers.
+        //
+        // So the scenario was a race: win it and the predicate holds while the
+        // device is still isolated; lose it and the isolation expires, the
+        // device reconnects, the telemetry ring flushes to zero, and
+        // `buffered_cycles >= 16` can never be true again. CI lost it, and the
+        // failure said so exactly — `buffered_events: 257` with
+        // `buffered_cycles: 0`, `connected: true`, `isolation_remaining_ms: 0`.
+        //
+        // The duration is only a **ceiling**: the fault is disabled the moment
+        // the predicate holds, so asking for a long one costs nothing on a fast
+        // machine. It is set beyond the wait budget below on purpose, so the
+        // budget is always the binding limit and a genuine problem is reported
+        // as a diagnostic rather than as a silent reconnection.
+        //
+        // 3 240 000 virtual seconds = 900 real seconds at this scale.
+        fault(h, "disconnect:3240000", true).await?;
         // The slowest wait in the suite, and inherently so: the telemetry tier
         // holds 256 events, and the threshold is one above it because an
         // eviction — and therefore a gap — is the thing being tested. Reaching
-        // it means driving 256 real telemetry cycles through the simulator, so
+        // it means driving 257 real telemetry cycles through the simulator, so
         // the cost is set by how fast the host can run six containers, not by
         // anything the scenario does.
         //
-        // Measured: about a minute on a developer's machine, five and a half on
-        // a CI runner. Ten is roughly double the slower observation, and the
+        // Measured: about 21 real seconds when the cadence is kept, and several
+        // times that on a runner. Ten minutes is generous against both, and the
         // failure carries the last observed state so a budget that is one day
         // genuinely too small says what it was still waiting for.
         wait_simulator_until(h, Duration::from_secs(600), |s| {
@@ -3579,17 +3602,19 @@ fn sleep_budget_cooldown<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             json!({"fault":"disconnect:172800","enabled":true}),
         )
         .await?;
-        let cooling = loop {
-            let state = h.get_json(&format!("{}/sim/state", h.battery_url)).await?;
-            if state["offline_cooldown_remaining_ms"]
+        // Bounded, like every other wait in the suite. An unbounded `loop` here
+        // has no failure mode of its own: if the cooldown never opens, the
+        // scenario spins until something outside it — the step timeout — kills
+        // the whole run, and the report says nothing about which scenario or
+        // what it was waiting for. A budget with the last observed state is the
+        // difference between a diagnosis and a restart.
+        let cooling = wait_simulator_url(h, &h.battery_url, 4_000, |s| {
+            s["offline_cooldown_remaining_ms"]
                 .as_u64()
                 .unwrap_or_default()
                 > 0
-            {
-                break state;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        };
+        })
+        .await?;
         let before = cooling["offline_cooldown_remaining_ms"]
             .as_u64()
             .context("cooldown")?;

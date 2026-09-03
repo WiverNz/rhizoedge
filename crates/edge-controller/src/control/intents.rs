@@ -288,11 +288,34 @@ async fn deliver_one(
         }
         IrrigationDecision::Lock { reason } => {
             let name = plant::lockout_name(reason);
-            // `clock_unsynced` means the device is awake but has not yet applied
-            // `edge.time`. Retrying inside the same awake window is correct and
-            // terminates, because the window itself is bounded. Every other
-            // reason is terminal for the intent.
-            if reason == rhizo_domain::state::LockoutReason::ClockUnsynced {
+            // Two reasons are **states the edge is passing through**, not
+            // answers to the operator's request, so the intent waits for the
+            // next attempt rather than being consumed by one unlucky moment.
+            // Both terminate: the conditions themselves are bounded, and the
+            // intent expires on its own clock regardless (ADR-018 §3).
+            //
+            // - `clock_unsynced`: the device is awake but has not yet applied
+            //   `edge.time`. The awake window bounds it.
+            // - `uncertain`: the reconciliation hold. A plant is held until the
+            //   replay for the device's *current boot* commits a contiguous
+            //   prefix (SAFETY-016) — and a battery device reconnects on
+            //   **every wake**, so this is a routine momentary state rather
+            //   than a verdict. Treating it as terminal silently discarded an
+            //   operator's dose whenever the mint raced that wake's replay,
+            //   which is what `scenario_battery_awake_cycle` was failing on
+            //   about one run in two.
+            //
+            // Every other reason — a leak, a low tank, the daily cap — is a
+            // real answer, and stays terminal.
+            //
+            // This loosens nothing at the gate: the full gate re-runs on every
+            // delivery attempt against inputs read *now*, and a dose is
+            // published only when it accepts.
+            if matches!(
+                reason,
+                rhizo_domain::state::LockoutReason::ClockUnsynced
+                    | rhizo_domain::state::LockoutReason::Uncertain
+            ) {
                 return Ok(Delivery::Retryable {
                     intent_id: intent.intent_id.clone(),
                 });
