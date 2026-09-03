@@ -1,4 +1,4 @@
-![Rhizo Edge — a seedling with soil sensor, drip emitter and wireless link, beside the Rhizo Edge wordmark](preview.png)
+![Rhizo Edge - a seedling with soil sensor, drip emitter and wireless link, beside the Rhizo Edge wordmark](preview.png)
 
 # Rhizo Edge
 
@@ -6,16 +6,16 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M8 complete. M9 in progress — its board-free work is
+> **Status: M0 through M8 complete. M9 in progress - its board-free work is
 > substantially complete; its hardware verification is pending a board.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
 > Implemented and green: the engineering baseline, the shared wire contract and
 > pure domain, the device simulator, Edge ingestion and SQLite, the device
-> registry and health model, the whole plant model — plants, bindings,
+> registry and health model, the whole plant model - plants, bindings,
 > per-measurement thresholds, trends, manual-watering detection, species
-> presets, offline-policy authoring, and an explainable recommendation engine —
+> presets, offline-policy authoring, and an explainable recommendation engine -
 > as of M6 **irrigation itself**, and as of M7 the **optional cloud sink**.
 >
 > **M6 is the milestone where software moves water.** The safety gate, the
@@ -24,7 +24,7 @@ cloud synchronisation.
 > Fourteen safety invariants moved to `ENFORCED`, and `cargo test safety_` is
 > the executable gate over all of them. A focused **post-M6 correction**
 > (2026-08-31) then closed two durability defects the milestone had claimed but
-> not held — see [docs/reports/M6.md](docs/reports/M6.md).
+> not held - see [docs/reports/M6.md](docs/reports/M6.md).
 >
 > **M7 is the milestone that adds the cloud without letting it matter.** An
 > append-only PostgreSQL history behind an idempotent batch-ingest endpoint; a
@@ -33,13 +33,13 @@ cloud synchronisation.
 > quarantines a poison event rather than wedging behind it, and prunes only
 > measurements when capped. It stays **disabled by default**, the cloud has no
 > route that can originate a command, and `rhizo-domain` cannot depend on the
-> cloud client — proven by test, not by review. A **post-M7 correction**
+> cloud client - proven by test, not by review. A **post-M7 correction**
 > (2026-08-31) then aligned the emitted event catalogue with ADR-005 and gave
-> destructive changes the history they were not writing — see
+> destructive changes the history they were not writing - see
 > [docs/reports/M7.md](docs/reports/M7.md).
 >
 > **M8 is complete**: the whole software system is reproducible and verifiable
-> with one command, on any machine with Docker and no hardware at all —
+> with one command, on any machine with Docker and no hardware at all -
 > forty-one scenarios, and seven deliberate mutations of the safety logic that
 > each turn the suite red ([docs/reports/M8.md](docs/reports/M8.md)).
 >
@@ -47,7 +47,7 @@ cloud synchronisation.
 > firmware exists and builds for `riscv32imc-esp-espidf`; the toolchain question
 > ADR-007 left open is resolved from a real machine (stock Rust 1.98.0 *cannot*
 > build that target, so the image workspace pins a dated nightly with
-> `-Z build-std`); and every criterion a host can settle has been settled —
+> `-Z build-std`); and every criterion a host can settle has been settled -
 > boot-safe pump ordering, the dedup ring across a simulated power cycle, the
 > pending-result ledger's fail-closed saturation, policy activation interrupted
 > at every step, and a conformance suite proving the firmware and the simulator
@@ -55,7 +55,7 @@ cloud synchronisation.
 >
 > **No board has executed any of it.** Wi-Fi, real flash, the RTC domain, deep
 > sleep, and every GPIO measured with a meter are implemented and
-> **hardware-verification pending** — above all HIL-1, the multimeter check that
+> **hardware-verification pending** - above all HIL-1, the multimeter check that
 > the pump line never asserts across twenty resets.
 > [docs/reports/M9.md](docs/reports/M9.md) labels every criterion with what was
 > actually done to it, because a compile is not a board.
@@ -84,13 +84,13 @@ node can serve several plants and one plant can draw on several nodes.
 - A plant may have a **dedicated soil probe**, or share a multi-channel node
   with the pots beside it.
 - **Ambient sensors are shared.** One temperature, humidity, and light node is
-  bound to every plant it describes — each with its own thresholds, because the
+  bound to every plant it describes - each with its own thresholds, because the
   same reading is "fine" for a succulent and "critical" for a fern.
 - A plant may have **no actuator at all**: a first-class configuration with
   alerts, trends, and recommendations, not a degraded one (SAFETY-018).
 - Watering may come from a **separate node** holding the pump, wherever the
   tubing actually runs.
-- A single node may **do both** — sense its pot and water it.
+- A single node may **do both** - sense its pot and water it.
 
 Bindings, not wiring, decide which measurement serves which plant, so adding a
 pump node or moving a probe is an API call rather than a rebuild.
@@ -103,9 +103,9 @@ protocol, and a device's behaviour follows the capabilities it declares.
 
 | Profile | What it is | Built from |
 |---|---|---|
-| **Rhizo Sense** | Sensor-oriented node — soil, ambient, light, weight; no actuator | `esp32-node` declaring sensors only |
-| **Rhizo Water** | Actuation node — a pump, plus the tank and leak sensing its own safety gate requires | `esp32-node` declaring an actuator |
-| **Rhizo Hub** | The Edge Controller — bindings, thresholds, the safety gate, SQLite, the local API | `edge-controller` beside Mosquitto |
+| **Rhizo Sense** | Sensor-oriented node - soil, ambient, light, weight; no actuator | `esp32-node` declaring sensors only |
+| **Rhizo Water** | Actuation node - a pump, plus the tank and leak sensing its own safety gate requires | `esp32-node` declaring an actuator |
+| **Rhizo Hub** | The Edge Controller - bindings, thresholds, the safety gate, SQLite, the local API | `edge-controller` beside Mosquitto |
 
 A Rhizo Water node is never *only* an actuator. The device-side gate reads leak
 and tank state from **its own** sensors and refuses the dose when either is
@@ -150,32 +150,32 @@ decisions and local authoritative state. When a device becomes isolated, it may
 execute only a previously validated, persisted offline policy with a
 deliberately restricted rule set. The cloud is an append-only history sink,
 optional by default (`cloud.enabled = false`), and can vanish for a week without
-affecting a single watering decision — enforced structurally, not by discipline:
+affecting a single watering decision - enforced structurally, not by discipline:
 the domain crate cannot depend on the cloud client, and the type carrying every
 watering input has no cloud-derived field.
 
 **Safety-first.** When any input is missing, stale, invalid, or contradictory,
-the answer is *do not water*, plus a visible lockout — never *water anyway*.
+the answer is *do not water*, plus a visible lockout - never *water anyway*.
 Twenty-four numbered invariants
 ([SAFETY-001…024](docs/architecture/safety-invariants.md)) state this precisely,
 each with named automated tests and the milestone where it becomes enforced.
 From M6 onward, `cargo test safety_` is the executable safety-invariant gate.
 
 **Offline-capable at every layer.** A device that loses Wi-Fi is not a device
-that stops caring for its plant. See the next section — this is the part most
+that stops caring for its plant. See the next section - this is the part most
 comparable projects get wrong.
 
 Defence in depth throughout. While connected, the edge decides *whether* and
 *how much*; the device independently decides whether it is **safe to obey**.
 When isolated, the device may evaluate only its provisioned offline policy,
 while the same firmware hard limits remain authoritative. Those limits are
-compiled in and cannot be raised by any message, API call, or configuration — so
+compiled in and cannot be raised by any message, API call, or configuration - so
 even a completely wrong Edge Controller cannot flood the room.
 
 **And the record of what happened is treated as safety-critical, not as
 telemetry.** The rolling 24-hour cap is derived from stored watering rows rather
 than from a counter, so anything that loses or misfiles a row weakens it
-silently — and always in the over-watering direction. Two mechanisms exist for
+silently - and always in the over-watering direction. Two mechanisms exist for
 that reason alone:
 
 - **Every dose report is acknowledged end to end.** A device holds each
@@ -186,24 +186,24 @@ that reason alone:
   running. The same rule already governed replayed offline history.
 - **A dose delivered while isolated names the plant it watered.** The Edge
   charges the plant the device names, not whichever plant holds the pump binding
-  when the history finally arrives — because an isolated device is exactly when
+  when the history finally arrives - because an isolated device is exactly when
   someone has time to move a pump, and a dose filed against the wrong plant
   leaves the plant that *was* watered free to be watered again.
 
-## Working offline — three different outages
+## Working offline - three different outages
 
 "Offline" is not one condition, and each degrades something different:
 
 | | What broke | What still works |
 |---|---|---|
 | **Cloud offline** | the cloud endpoint | everything local; history queues and syncs later |
-| **Site offline** | the whole internet | everything local — devices take their clock from the Edge over the MQTT connection they already have, so watering continues with no internet at all |
+| **Site offline** | the whole internet | everything local - devices take their clock from the Edge over the MQTT connection they already have, so watering continues with no internet at all |
 | **Device isolated** | that device's link to the edge | **the device keeps monitoring and, if provisioned, keeps watering on its own** |
 
 The third case is the one that matters when you are away for two weeks and the
 router reboots. A plant-side device that has been explicitly given a validated
 **offline policy** continues to sample its sensors, evaluate the policy, and
-deliver bounded doses — then reports everything that happened once the link
+deliver bounded doses - then reports everything that happened once the link
 returns.
 
 Crucially, it does **not** improvise:
@@ -211,8 +211,8 @@ Crucially, it does **not** improvise:
 - It acts only from a policy the Edge authored, validated, versioned, and that
   the device persisted and activated atomically. No policy, an invalid policy, or
   a missing required sensor all mean **no watering**.
-- It runs a deliberately restricted rule set — threshold, confirmation duration,
-  hysteresis, cooldown, a fixed dose, bounded dose count, rolling volume cap —
+- It runs a deliberately restricted rule set - threshold, confirmation duration,
+  hysteresis, cooldown, a fixed dose, bounded dose count, rolling volume cap -
   never the Edge's full recommendation engine.
 - Every safety veto still applies: leak, empty or unknown tank, faulted pump,
   firmware hard limits.
@@ -241,12 +241,12 @@ Reconciling                      replaying buffered history after an absence
 ```
 
 The window is computed from the Edge's own clock, so a device cannot make itself
-look punctual, and a device that stops waking becomes `Isolated` — the new state
+look punctual, and a device that stops waking becomes `Isolated` - the new state
 can only ever *defer* the offline indication, never suppress it.
 
 Manual watering on such a device has honest latency. The Edge holds the request
 as a durable **intent**, re-runs the full safety gate when the device wakes, and
-only then issues the command — so a leak that appeared while the device slept
+only then issues the command - so a leak that appeared while the device slept
 still refuses the dose. The UI shows `Pending until device wakes`, not a spinner.
 
 Nothing on the wire changed to make this work: no protocol bump, no retained
@@ -254,7 +254,7 @@ commands, and the same 120-second command TTL, because the command is minted at
 the wake rather than at the request.
 
 **Battery life figures are targets, not specifications**, until they are measured
-on assembled hardware — and the number that matters is complete-system sleep
+on assembled hardware - and the number that matters is complete-system sleep
 current, which is not the chip's datasheet figure.
 
 Details: [ADR-018](docs/adr/018-battery-and-deep-sleep-device-mode.md)
@@ -271,7 +271,7 @@ that boots three days later still receives current desired state:
 | `policy` | per-plant offline automation rules | thresholds, dose size, cooldown, required sensors, enable/disable |
 
 Both are validated before publication, re-validated by the device, applied
-atomically, and acknowledged — the device echoes the version it is actually
+atomically, and acknowledged - the device echoes the version it is actually
 running, so configuration drift is visible rather than silent. A policy that
 fails validation never replaces the working one.
 
@@ -301,7 +301,7 @@ nitrate_concentration
 Each kind has exactly one canonical unit and a physical plausibility range,
 declared once as compile-time data the firmware itself can check against.
 
-Adding a measurement kind — PAR/PPFD, CO₂, whatever a future probe measures —
+Adding a measurement kind - PAR/PPFD, CO₂, whatever a future probe measures -
 does not require a new MQTT topic or a database-schema redesign. Devices that
 actually support a new physical sensor may still require a firmware update for
 the corresponding driver and capability declaration.
@@ -332,14 +332,14 @@ Details: [ADR-017](docs/adr/017-extensible-measurement-model.md) ·
 Thresholds belonging to the plant is the right design, and it means configuring
 a new plant begins with an operator inventing a moisture band for a species they
 bought yesterday. **Plant presets** fill that in: pick "Rose", "Monstera", or
-"Basil" and the per-measurement policy is prefilled — then reviewed and edited
+"Basil" and the per-measurement policy is prefilled - then reviewed and edited
 before anything is written.
 
 Three rules stop a convenience from becoming an authority:
 
-- **A preset is not a schedule.** It stores what a species prefers — a moisture
+- **A preset is not a schedule.** It stores what a species prefers - a moisture
   band, a light preference, temperature and humidity ranges, pH, a dose and
-  cooldown class — and never "water every 2 days". Watering remains a function
+  cooldown class - and never "water every 2 days". Watering remains a function
   of measurements and the safety gate. A timer would be a second actuation
   authority that no sensor reading and no lockout could contradict.
 - **A preset is a template, exactly as `PlantProfile` is.** Applying one writes
@@ -350,13 +350,13 @@ Three rules stop a convenience from becoming an authority:
 - **A stated fact and a derived guess are labelled differently.** Where a source
   says a species likes "moderate" soil moisture, the volumetric figure Rhizo
   would target is an interpretation with a unit conversion inside it. The
-  interface says which is which, in words — that sentence is what invites an
+  interface says which is which, in words - that sentence is what invites an
   operator to correct a number they know better than the catalogue does.
 
 The catalogue is curated, versioned, and compiled into the binary, so creating a
 plant is not the one operation that needs the Internet. External species
 databases may be used to research and import entries offline, with human review
-and a verified licence — never as a runtime dependency.
+and a verified licence - never as a runtime dependency.
 
 Configuring a plant entirely by hand remains an equal path, not a fallback.
 
@@ -364,16 +364,16 @@ Configuring a plant entirely by hand remains an equal path, not a fallback.
 into the binary; applying one writes ordinary per-plant threshold rows resolved
 against the bindings the plant already has. Tests assert over the whole
 catalogue that no entry contains an interval or a schedule, and that no field
-names a device, sensor, point, or capability — a preset describes a plant, not
+names a device, sensor, point, or capability - a preset describes a plant, not
 an installation. The picker and the review step are M12.
 
 ## The pump is optional
 
 Most plants in a real home will never have one. A plant with no actuator is a
-**first-class, fully supported** configuration — telemetry, history, trends,
-thresholds, warnings, critical alerts, recommendations, and UI visibility — that
+**first-class, fully supported** configuration - telemetry, history, trends,
+thresholds, warnings, critical alerts, recommendations, and UI visibility - that
 simply has no actuation path. It is not a plant with a missing part. And when a
-plant does have one, the pump need not sit on the plant's own node — see
+plant does have one, the pump need not sit on the plant's own node - see
 [Not one box per plant](#not-one-box-per-plant).
 
 Supported shapes, all equally normal:
@@ -435,13 +435,13 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 |---|---|
 | `rhizo-mqtt-contract` | `no_std` wire contract, measurement kinds, hard limits, the shared command validator |
 | `rhizo-policy` | `no_std` offline-policy state and decision contract, and the one offline evaluator (M6-019) shared by simulator, firmware, and any required edge use |
-| `rhizo-domain` | Pure plants, bindings, per-measurement policies, trends, detection, thresholds, the species preset catalogue, the recommendation engine, and — since M6 — the irrigation state machine and the safety gate |
+| `rhizo-domain` | Pure plants, bindings, per-measurement policies, trends, detection, thresholds, the species preset catalogue, the recommendation engine, and - since M6 - the irrigation state machine and the safety gate |
 | `rhizo-storage` | SQLite schema, repositories, and the deduplicate-and-persist transaction |
-| `edge-controller` | Deployed as the **Rhizo Hub**. The control plane — the only component that decides while connected. Since M6 it owns the command lifecycle, reconciliation of replayed offline history, and the durable acknowledgement of every dose result |
+| `edge-controller` | Deployed as the **Rhizo Hub**. The control plane - the only component that decides while connected. Since M6 it owns the command lifecycle, reconciliation of replayed offline history, and the durable acknowledgement of every dose result |
 | `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; since M6 it waters autonomously while isolated, through the shared evaluator |
 | `rhizo-cloud-client` | The edge's typed HTTP client for the cloud: bounded requests, exhaustive retry classification, and `Retry-After` handling. Nothing else in the edge knows the cloud exists |
 | `cloud-api` | Implemented in M7. Idempotent event ingestion keyed by `(edge_id, event_id)` into an append-only PostgreSQL ledger, the projections rebuilt from it, and read-only history APIs. It can issue nothing |
-| `rhizo-node-app` | Added in M9. Every safety-relevant firmware decision — the actuation gate's caller, the pending-result ledger, the monotonic budget, the policy store, the event buffer, the wake machine — with **no ESP-IDF dependency**, so it builds and tests on any machine with a Rust toolchain |
+| `rhizo-node-app` | Added in M9. Every safety-relevant firmware decision - the actuation gate's caller, the pending-result ledger, the monotonic budget, the policy store, the event buffer, the wake machine - with **no ESP-IDF dependency**, so it builds and tests on any machine with a Rust toolchain |
 | `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller. The ESP-IDF adapters and the board pin map, over `rhizo-node-app`. One codebase, deployed as **Rhizo Sense**, **Rhizo Water**, or both, according to the capabilities it declares |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
 
@@ -454,10 +454,10 @@ mechanics, with an enabled offline policy still inert. M6-019 added the single
 evaluator to `rhizo-policy` and its sole simulator call site, and a test counts
 those call sites so a second implementation cannot appear quietly. Firmware will
 call that same implementation; there is never a simulator-specific copy. This
-keeps the full control plane — offline autonomy included — buildable and
+keeps the full control plane - offline autonomy included - buildable and
 testable before electronics exist.
 
-**Milestones M0–M8 require no hardware at all — and so does most of M9.** The
+**Milestones M0–M8 require no hardware at all - and so does most of M9.** The
 firmware's safety logic lives in `rhizo-node-app`, which has no ESP-IDF
 dependency, so `cd firmware/node-app && cargo test` runs the whole firmware
 safety suite with no board, no ESP-IDF installation, and no nightly toolchain.
@@ -466,7 +466,7 @@ board.
 
 When hardware does arrive, the
 [home node hardware guide](docs/hardware/home-node-hardware-guide.md) is the
-bill of materials, wiring, power, and assembly order for building one — bench
+bill of materials, wiring, power, and assembly order for building one - bench
 bring-up on an official Espressif ESP32-C3-DEVKITM-1-N4X through a battery and
 optional solar deployment. It is
 practical guidance, not a specification: its parts and values are starting points
@@ -486,7 +486,7 @@ looks like a failure and is not one. The script's own header explains it at
 length; it is still one command and still exits non-zero on any failure.
 
 The hard requirement that follows: replacing the simulator with a real ESP32
-changes the *device implementation* — never the MQTT protocol or the Edge
+changes the *device implementation* - never the MQTT protocol or the Edge
 Controller architecture.
 
 ## Implementation constraints
@@ -503,8 +503,8 @@ silently raise the MSRV, and nothing is downgraded below it.
 established on a real machine that stock 1.98.0 cannot build
 `riscv32imc-esp-espidf`: it is a recognised tier-3 target for which rustup
 distributes no `std`, so `std` must be built from source with `-Z build-std`,
-which is nightly-only. Only `firmware/esp32-node` — the crate that links ESP-IDF
-— pins that nightly. The host workspace is untouched, and so is
+which is nightly-only. Only `firmware/esp32-node` - the crate that links ESP-IDF
+- pins that nightly. The host workspace is untouched, and so is
 `firmware/node-app`, so the firmware's *safety logic* is still compiled by the
 project MSRV. Recorded with the evidence in
 [ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md).
@@ -524,7 +524,7 @@ project MSRV. Recorded with the evidence in
 
 No hardware is needed. One broker, one edge, one simulated plant node.
 
-**First run only** — the broker needs accounts, and they are generated rather
+**First run only** - the broker needs accounts, and they are generated rather
 than committed:
 
 ```bash
@@ -570,8 +570,8 @@ curl -s localhost:8080/api/v1/presets | jq '.presets[].display_name'
 curl -s localhost:8080/api/v1/plants | jq
 ```
 
-Creating a plant takes three calls — a plant, a binding that says which probe
-supplies which measurement, and a threshold policy — after which
+Creating a plant takes three calls - a plant, a binding that says which probe
+supplies which measurement, and a threshold policy - after which
 `GET /api/v1/plants/{id}/recommendation` explains itself:
 
 ```json
@@ -587,9 +587,9 @@ supplies which measurement, and a threshold policy — after which
 ```
 
 Since M6 that recommendation can become water. `POST /plants/{id}/water`
-answers **422** `no_actuator_bound` for a plant with no pump — distinguishable
+answers **422** `no_actuator_bound` for a plant with no pump - distinguishable
 from a safety refusal, which is a **409** carrying `{ reason, since, clearable,
-message }` — and **202** with a `command_id` when the gate allows the dose. For
+message }` - and **202** with a `command_id` when the gate allows the dose. For
 a device that is asleep it answers **202** with an `intent_id` and no
 `command_id` at all: the command is minted at the next wake, with the whole gate
 re-run against inputs that are current then.
@@ -605,18 +605,18 @@ exists. It carries the configurations worth having rather than one per binary:
 | Configuration | What it is for |
 |---|---|
 | **Edge controller** | The control plane, loopback API, cloud off. A second entry raises the log level to `debug` |
-| **Simulator: plant-node-01** | The standard node — soil, weight, tank, leak, one pump — at 600× virtual time |
+| **Simulator: plant-node-01** | The standard node - soil, weight, tank, leak, one pump - at 600× virtual time |
 | **Simulator: plant-node-02** | A second node, on its own control port, for shared-sensor and two-plant setups |
 | **Simulator: monitoring only** | No actuators at all: the common shape in a real home, and the one SAFETY-018 is about |
 | **Simulator: battery node** | Sleeps between samples and announces each sleep, so the `sleeping` connectivity state has a producer |
-| **Simulator: with a fault…** | Prompts for any fault in the catalogue — leak, tank-empty, clock-unsync, stuck-sensor, miss-wake, and the rest |
+| **Simulator: with a fault…** | Prompts for any fault in the catalogue - leak, tank-empty, clock-unsync, stuck-sensor, miss-wake, and the rest |
 | **Simulator: choose device and time scale…** | Prompts for both |
 
 Three compounds start the usual pairings in one keystroke: *Edge + one plant
 node*, *Edge + two plant nodes*, and *Edge + battery node*.
 
 `.vscode/tasks.json` carries the broker (`Mosquitto: up`, `logs`, `down`), the
-gate commands, and two `mosquitto_sub` watchers — including one on the command
+gate commands, and two `mosquitto_sub` watchers - including one on the command
 topics alone, which is the fastest way to confirm the edge is still not acting.
 
 The launch configurations use the MSVC debugger, matching the
@@ -624,7 +624,7 @@ The launch configurations use the MSVC debugger, matching the
 as the pattern; they need the CodeLLDB extension and build through cargo
 themselves.
 
-More: [local development](docs/testing/local-development.md) — watching MQTT
+More: [local development](docs/testing/local-development.md) - watching MQTT
 directly, injecting faults through the simulator's control API, and what each
 symptom usually means.
 
@@ -652,7 +652,7 @@ cargo run -p rhizo-docscheck
 
 The three `RHIZO_REQUIRE_*` flags are how CI runs the suite. Without them the
 tests that need a broker, PostgreSQL, or a live cloud print a loud skip and
-pass, so a fresh clone is green; with them, a missing service is a failure — a
+pass, so a fresh clone is green; with them, a missing service is a failure - a
 suite that can silently skip its own subject eventually proves nothing.
 
 They also mean **a bare test total is not evidence**. Dozens of tests skip and
@@ -670,11 +670,11 @@ connecting, and a query changed without regenerating it fails there rather than
 at runtime.
 
 A milestone is complete only when its acceptance tests are green and its exit
-criteria are demonstrably met — never on the basis of closed issues alone.
+criteria are demonstrably met - never on the basis of closed issues alone.
 
 ## Documentation
 
-Start here: **[docs/README.md](docs/README.md)** — the documentation index.
+Start here: **[docs/README.md](docs/README.md)** - the documentation index.
 
 | | |
 |---|---|
@@ -707,30 +707,30 @@ Stated plainly, because they are decisions rather than oversights:
   reach different conclusions about the same plant. Bounded by sharing the
   offline rules in one crate; not eliminated.
 - **Device history is bounded.** An isolated device buffers what it can and
-  reports an explicit gap for what it could not keep — audit events (doses,
+  reports an explicit gap for what it could not keep - audit events (doses,
   refusals, faults) outrank telemetry samples and are never dropped to make room
   for them. Unacknowledged dose reports are bounded the same way, and for the
   same reason.
 - **Telemetry is lossy on purpose.** Samples get no acknowledgement and no
   retry: a lost sample makes data look older, and stale data blocks watering, so
-  losing one fails safe. Only ledger data — dose results and offline history —
+  losing one fails safe. Only ledger data - dose results and offline history -
   is delivered with an end-to-end guarantee.
 
 ## What comes after V1
 
-Planned, specified, and **not built** — each has an ADR, a PRD, and issue-level
+Planned, specified, and **not built** - each has an ADR, a PRD, and issue-level
 scope in [ROADMAP.md](ROADMAP.md), and none of them changes a safety rule.
 
-**M14 — Field readiness architecture.** Documentation only, deliberately: the
+**M14 - Field readiness architecture.** Documentation only, deliberately: the
 route to greenhouse and field mapped honestly, with no speculative
 implementation. Zones and multi-depth sensing, the v2 protocol a constrained
 radio would need, weather as a recommendation input and never a gate input, and
 solar power planned as a power source rather than a control architecture.
 [PRD 140](docs/prd/140-field-readiness.md)
 
-**M15 — Per-plant adaptive water model.** Static species thresholds cannot know
+**M15 - Per-plant adaptive water model.** Static species thresholds cannot know
 your pot. This learns how *one specific* plant, pot, substrate, and probe
-actually behaves — a drying rate and a dose response — and answers questions the
+actually behaves - a drying rate and a dose response - and answers questions the
 current rules cannot: when will this plant be dry, and what does a millilitre do
 here. Deterministic weighted least squares over a handful of observations, **not
 machine learning**: replayable, explainable in a sentence, and bounded by
@@ -739,28 +739,28 @@ more. Cold start behaves exactly like today.
 [ADR-019](docs/adr/019-per-plant-adaptive-water-model.md) ·
 [PRD 150](docs/prd/150-per-plant-adaptive-water-model.md)
 
-**M16 — Verified watering.** Today "the pump ran for eight seconds" is the only
+**M16 - Verified watering.** Today "the pump ran for eight seconds" is the only
 evidence a plant was watered, and a blocked tube, a lost prime, or a tube that
 fell out of the pot all produce a perfectly successful result. This adds a
-physical witness — a load cell under the reservoir, measuring volume by
+physical witness - a load cell under the reservoir, measuring volume by
 subtraction, chosen over a flow meter because a dosing pump runs below where
 cheap flow meters are accurate.
 
 **What that witness proves is bounded, and the milestone says so.** A reservoir
 scale answers one question exactly: *did water physically leave the reservoir,
 and how much?* That is enough to catch a blocked or kinked line, a lost prime, a
-dry reservoir, and a partial occlusion — on the *first* dose, rather than after
+dry reservoir, and a partial occlusion - on the *first* dose, rather than after
 two doses a plant failed to respond to. It says nothing about where the water
 went, so a tube that fell out of the pot still leaves the reservoir normally and
 is only caught by corroboration: the optional pot scale, the soil response that
 `no_delivery_detected` already watches, and the leak sensor. Evidence levels are
 ordered for exactly this reason, and a weaker one is never reported as a
-stronger one — a dose with no witness fitted reports *unverified*, not
+stronger one - a dose with no witness fitted reports *unverified*, not
 *verified*.
 
 On top of that sits an outcome vocabulary in which **unknown is a real answer**
-and is never quietly rounded to zero, and unauthorised water movement — a
-siphon, a stuck valve, a shorted driver — becomes a fault the system can finally
+and is never quietly rounded to zero, and unauthorised water movement - a
+siphon, a stuck valve, a shorted driver - becomes a fault the system can finally
 represent.
 [ADR-020](docs/adr/020-verified-watering-and-delivery-evidence.md) ·
 [PRD 160](docs/prd/160-verified-watering.md)
@@ -781,7 +781,7 @@ that the code and its design documents can be read, reviewed, and evaluated.
 Publication grants no licence to use the software. Copyright © 2026 WiverNz;
 all rights reserved. Without prior written permission you may not use,
 copy, modify, distribute, sublicense, sell, create derivative works from, or
-incorporate this code — or any part of it — into another product or project.
+incorporate this code - or any part of it - into another product or project.
 Commercial and non-commercial use alike require that permission, and enquiries
 are welcome.
 
