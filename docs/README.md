@@ -143,7 +143,13 @@ One PRD per milestone.
 | [failure-scenarios.md](testing/failure-scenarios.md) | **SCEN-001…117** — the executable scenario catalogue and its invariant coverage matrix |
 | [simulator-strategy.md](testing/simulator-strategy.md) | Physical model, fault catalogue, the permissiveness rule |
 | [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | HIL-1…HIL-7 gated checklists for real hardware; HIL-8 is added by M16-015 |
-| [local-development.md](testing/local-development.md) | Running, debugging, inspecting, common problems |
+| [local-development.md](testing/local-development.md) | Running, debugging, inspecting, common problems, and (§14) reproducing a 2-vCPU CI runner locally |
+
+## Firmware
+
+| Document | Contents |
+|---|---|
+| [firmware/README.md](../firmware/README.md) | Building, flashing, provisioning, and board profiles. The safety suite in `firmware/node-app` runs with no board, no ESP-IDF, and no nightly toolchain |
 
 ## Hardware
 

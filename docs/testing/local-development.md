@@ -563,3 +563,61 @@ in, the export script's `PATH` entry is required as well as `LIBCLANG_PATH`, and
 `CARGO_TARGET_DIR` must be 15 characters or fewer.
 
 A cold image build is about six and a half minutes; a warm rebuild is seconds.
+
+---
+
+## 14. Reproducing a CI runner locally
+
+A GitHub runner has **2 vCPUs**. A developer machine may have sixteen times
+that, and the difference hides every timing assumption in the scenario suite:
+six latent races survived for months and then surfaced one at a time, each
+costing a ~30-minute CI round trip, the first time the suite actually ran on a
+runner.
+
+**Loading the CPU is not the way to reproduce it.** Busy loops starve
+*throughput* but leave `nproc` inside the containers reporting the host's core
+count, so their runtimes stay sized for a machine they no longer have. That is
+oversubscription a runner never experiences, and it invents failures: it
+produced a battery-intent "failure" that the edge's own log flatly contradicted.
+
+Pin the containers instead, so `nproc` inside them really is 2:
+
+```yaml
+# /tmp/cpu2.yml — scratch, not committed
+services:
+  mosquitto:         { cpuset: "0,1" }
+  postgres:          { cpuset: "0,1" }
+  cloud-api:         { cpuset: "0,1" }
+  edge-controller:   { cpuset: "0,1" }
+  device-simulator:  { cpuset: "0,1" }
+  battery-simulator: { cpuset: "0,1" }
+  scenario-runner:   { cpuset: "0,1" }
+```
+
+```bash
+C=(docker compose -f deploy/docker-compose.yml \
+                  -f deploy/docker-compose.test.yml \
+                  -f /tmp/cpu2.yml)
+"${C[@]}" --profile runner build
+"${C[@]}" up -d --wait
+docker exec rhizo-edge-edge-controller-1 nproc     # must print 2
+"${C[@]}" run --rm --no-deps scenario-runner
+"${C[@]}" down --volumes --remove-orphans
+```
+
+The suite takes about 570 s under that and 532 s on a real runner — close
+enough that a scenario which passes here will pass there.
+
+**Read the script's exit status, never a tally scraped from the log.**
+`./scripts/run-scenarios.sh | tail -n` returns *`tail`'s* status, so a piped run
+reports success while a scenario has failed, and `grep -c PASSED` over a
+truncated tail undercounts. The reliable form is:
+
+```bash
+./scripts/run-scenarios.sh > /tmp/scen.log 2>&1; echo "exit=$?"
+grep -cE 'PASSED$' /tmp/scen.log        # expect 41
+```
+
+**Do not run the scenario suite and `cargo test --workspace` at the same time.**
+Both drive the same broker on the same ports, and the result is a scatter of
+failures in whichever one you were not thinking about.

@@ -676,6 +676,43 @@ correction.
 device that refuses every dose with `leak_unknown`. Fail-closed by design, and
 the first thing to check when a simulated dose is refused.
 
+**The scenario suite had never run on CI until 2026-09-03, and its first real
+run found six latent races.** Every `End-to-end` run before that died in setup.
+Four of the six were *missing synchronisation barriers* — a scenario asserting on
+a snapshot of the MQTT capture or the database where it needed to wait for an
+observable event — and they are invisible on a fast machine. Before adding a
+scenario, ask what event it is waiting for and wait for **that**, not for a
+proxy that usually arrives first. `docs/reports/M8.md` §Six more lists all six.
+
+**A test budget in poll iterations is a budget in the wrong unit.**
+`wait_simulator(h, 8_000, …)` costs one HTTP round trip per iteration, so it
+means about a minute on a 32-core desktop and about five and a half on a 2-vCPU
+runner. `history_gap` sat within seconds of its own limit for exactly that
+reason. Where the wait is dominated by how fast the *machine* drives the
+simulator, use `wait_simulator_until`, which takes a `Duration`.
+
+**To reproduce a runner, pin the containers — do not load the host.** Thirty busy
+loops starve throughput but leave `nproc` inside the containers reporting 32, so
+their runtimes stay sized for a machine they no longer have. That oversubscription
+is not something CI experiences, and it invents failures: it produced a
+battery-intent failure the edge's own log flatly contradicted. A `cpuset: "0,1"`
+overlay makes `nproc` report 2 and the suite behaves as it does on a runner
+(570 s locally, 532 s on CI). Recipe in
+[docs/testing/local-development.md](docs/testing/local-development.md) §14.
+
+**`./scripts/run-scenarios.sh | tail` reports `tail`'s exit code.** A piped run
+says success while a scenario has failed, and `grep -c PASSED` over the truncated
+tail undercounts — it is how "14 scenarios" got written down for a suite of 41.
+Redirect to a file and read `$?`. And never run the suite and
+`cargo test --workspace` at once: both drive the same broker.
+
+**A transient lockout reason must not settle a command intent.**
+`control::intents` returns `Retryable` for `clock_unsynced` *and* `uncertain`;
+everything else is terminal. `uncertain` is the reconciliation hold, and a
+battery device reconnects on every wake, so treating it as an answer silently
+discarded an operator's dose. Termination is still guaranteed twice over — the
+hold clears when replay commits, and the intent expires on its own clock.
+
 **`safety_007_simulator_refuses_like_hardware` fails under CPU contention.**
 It drives a real broker and the command carries the ordinary 120 s TTL, so a
 machine busy enough to delay processing past it produces

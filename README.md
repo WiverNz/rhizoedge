@@ -6,7 +6,8 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M8 complete. M9 ready, and not started.**
+> **Status: M0 through M8 complete. M9 in progress — its board-free work is
+> substantially complete; its hardware verification is pending a board.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
@@ -42,9 +43,22 @@ cloud synchronisation.
 > forty-one scenarios, and seven deliberate mutations of the safety logic that
 > each turn the suite red ([docs/reports/M8.md](docs/reports/M8.md)).
 >
-> **M9 is next**, and is the first milestone that needs an ESP32. Start at
-> [ROADMAP.md](ROADMAP.md); the next issue is
-> [M9-001](docs/issues/M9/001-verify-esp32-toolchain.md).
+> **M9 is in progress, and is the first milestone that needs an ESP32.** The
+> firmware exists and builds for `riscv32imc-esp-espidf`; the toolchain question
+> ADR-007 left open is resolved from a real machine (stock Rust 1.98.0 *cannot*
+> build that target, so the image workspace pins a dated nightly with
+> `-Z build-std`); and every criterion a host can settle has been settled —
+> boot-safe pump ordering, the dedup ring across a simulated power cycle, the
+> pending-result ledger's fail-closed saturation, policy activation interrupted
+> at every step, and a conformance suite proving the firmware and the simulator
+> answer identically.
+>
+> **No board has executed any of it.** Wi-Fi, real flash, the RTC domain, deep
+> sleep, and every GPIO measured with a meter are implemented and
+> **hardware-verification pending** — above all HIL-1, the multimeter check that
+> the pump line never asserts across twenty resets.
+> [docs/reports/M9.md](docs/reports/M9.md) labels every criterion with what was
+> actually done to it, because a compile is not a board.
 >
 > To run it now, see [Running it locally](#running-it-locally).
 
@@ -427,7 +441,8 @@ Details: [system overview](docs/architecture/system-overview.md) ·
 | `device-simulator` | Implemented reference device with protocol mechanics, persistence, isolation/replay, virtual time, battery mode with real deep-sleep cycles, and faults; since M6 it waters autonomously while isolated, through the shared evaluator |
 | `rhizo-cloud-client` | The edge's typed HTTP client for the cloud: bounded requests, exhaustive retry classification, and `Retry-After` handling. Nothing else in the edge knows the cloud exists |
 | `cloud-api` | Implemented in M7. Idempotent event ingestion keyed by `(edge_id, event_id)` into an append-only PostgreSQL ledger, the projections rebuilt from it, and read-only history APIs. It can issue nothing |
-| `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller. One codebase, deployed as **Rhizo Sense**, **Rhizo Water**, or both, according to the capabilities it declares |
+| `rhizo-node-app` | Added in M9. Every safety-relevant firmware decision — the actuation gate's caller, the pending-result ledger, the monotonic budget, the policy store, the event buffer, the wake machine — with **no ESP-IDF dependency**, so it builds and tests on any machine with a Rust toolchain |
+| `esp32-node` | ESP32-C3 firmware; the final hardware safety boundary and the offline fallback controller. The ESP-IDF adapters and the board pin map, over `rhizo-node-app`. One codebase, deployed as **Rhizo Sense**, **Rhizo Water**, or both, according to the capabilities it declares |
 | `rhizo-ui` | Tauri 2 + Leptos desktop client; talks HTTP to the edge only |
 
 ## Development strategy: simulator before hardware
@@ -442,8 +457,15 @@ call that same implementation; there is never a simulator-specific copy. This
 keeps the full control plane — offline autonomy included — buildable and
 testable before electronics exist.
 
-**Milestones M0–M8 require no hardware at all.** When hardware does arrive at M9,
-the [home node hardware guide](docs/hardware/home-node-hardware-guide.md) is the
+**Milestones M0–M8 require no hardware at all — and so does most of M9.** The
+firmware's safety logic lives in `rhizo-node-app`, which has no ESP-IDF
+dependency, so `cd firmware/node-app && cargo test` runs the whole firmware
+safety suite with no board, no ESP-IDF installation, and no nightly toolchain.
+Building the *image* needs the ESP toolchain; verifying it on silicon needs the
+board.
+
+When hardware does arrive, the
+[home node hardware guide](docs/hardware/home-node-hardware-guide.md) is the
 bill of materials, wiring, power, and assembly order for building one — bench
 bring-up on an official Espressif ESP32-C3-DEVKITM-1-N4X through a battery and
 optional solar deployment. It is
@@ -453,9 +475,15 @@ to be measured.
 M8 delivers the complete software system, verified end to end by one command:
 
 ```bash
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml \
-  up --abort-on-container-exit --exit-code-from scenario-runner
+./scripts/run-scenarios.sh
 ```
+
+**Not** `up --abort-on-container-exit --exit-code-from scenario-runner`, which
+cannot work here: that flag tears the project down the moment *any* container
+exits, and stopping containers is what a third of these scenarios do. The first
+deliberate stop would end the run and SIGKILL the runner mid-scenario, which
+looks like a failure and is not one. The script's own header explains it at
+length; it is still one command and still exits non-zero on any failure.
 
 The hard requirement that follows: replacing the simulator with a real ESP32
 changes the *device implementation* — never the MQTT protocol or the Edge
@@ -469,9 +497,16 @@ is Cargo-based specifically to keep it that way.
 
 **MSRV is Rust 1.98.0**, and `rust-toolchain.toml` currently pins exactly that.
 The pin may be raised to a newer stable as a deliberate change, but no change may
-silently raise the MSRV, and nothing is downgraded below it. The firmware
-workspace is separate and may pin an ESP-compatible toolchain if the Espressif
-ecosystem requires it; that exception is isolated and documented in
+silently raise the MSRV, and nothing is downgraded below it.
+
+**The firmware's toolchain exception is real, and it is contained.** M9-001
+established on a real machine that stock 1.98.0 cannot build
+`riscv32imc-esp-espidf`: it is a recognised tier-3 target for which rustup
+distributes no `std`, so `std` must be built from source with `-Z build-std`,
+which is nightly-only. Only `firmware/esp32-node` — the crate that links ESP-IDF
+— pins that nightly. The host workspace is untouched, and so is
+`firmware/node-app`, so the firmware's *safety logic* is still compiled by the
+project MSRV. Recorded with the evidence in
 [ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md).
 
 | Layer | Choice |
