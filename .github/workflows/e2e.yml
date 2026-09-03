@@ -23,7 +23,19 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Thirty minutes for build **and** suite.
+    #
+    # Fifteen was set when this job had never once reached the scenarios, so
+    # nothing about it was measured. The first run that got there spent 14m16s
+    # building and pulling the topology and was killed seven scenarios later —
+    # with the suite itself running at roughly four seconds a scenario. A budget
+    # that cannot fit a cold image build plus the suite fails every commit that
+    # touches Rust, which is most of them, and tells you nothing when it does.
+    #
+    # The step below carries its own, much tighter budget, so a hung *suite* and
+    # a slow *build* now fail differently and legibly. That is the property
+    # worth having; the number here is only the outer bound.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +83,12 @@ jobs:
       # such stop as a reason to end the run — see the script's own header.
       - name: Run complete scenario suite once
         id: suite
+        # The suite is ~41 scenarios at a few seconds each — under four minutes
+        # on a runner. Ten is roughly triple that: comfortably clear of a slow
+        # runner, and still tight enough that a scenario stuck in one of its own
+        # polling loops is reported as a hang rather than absorbed by the job's
+        # outer budget.
+        timeout-minutes: 10
         run: ./scripts/run-scenarios.sh
 
       # Conditioned on the *suite* failing, not on the job failing. A job that
