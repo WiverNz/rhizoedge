@@ -2960,21 +2960,48 @@ fn reconciliation<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     })
 }
 
+/// Every replayed `device.events` batch, once the replay has **finished**.
+///
+/// The barrier is protocol §5.4's own end-of-replay marker: the device sets
+/// `complete: true` on the last batch it sends. Waiting for that is what makes
+/// this a synchronisation point rather than a snapshot.
+///
+/// Its callers previously waited for the *device* to report `connected` and
+/// then read the capture immediately. But a device publishes its replay
+/// **after** connecting, and the harness fills the capture asynchronously — so
+/// on a fast machine the batches happened to be there, and on a loaded CI
+/// runner they were not. `scenario_duplicate_replay` failed on exactly that
+/// with "no replay batches were captured".
+///
+/// Waiting for `complete` also fixes the harder half: a caller that needs
+/// *several* batches would otherwise have to guess how long the rest take.
 async fn captured_replay_batches(h: &Harness) -> Result<Vec<Vec<u8>>> {
-    let batches = h
-        .mqtt()
-        .await
-        .into_iter()
-        .filter(|m| m.topic.ends_with("/events"))
-        .filter_map(|m| {
-            serde_json::from_slice::<Value>(&m.payload)
-                .ok()
-                .filter(|v| v["data"]["replay"] == true)
-                .map(|_| m.payload)
-        })
-        .collect::<Vec<_>>();
-    ensure!(!batches.is_empty(), "no replay batches were captured");
-    Ok(batches)
+    async fn replayed(h: &Harness) -> Vec<(bool, Vec<u8>)> {
+        h.mqtt()
+            .await
+            .into_iter()
+            .filter(|m| m.topic.ends_with("/events"))
+            .filter_map(|m| {
+                serde_json::from_slice::<Value>(&m.payload)
+                    .ok()
+                    .filter(|v| v["data"]["replay"] == true)
+                    .map(|v| (v["data"]["complete"] == true, m.payload))
+            })
+            .collect()
+    }
+
+    for _ in 0..2_000 {
+        let seen = replayed(h).await;
+        if seen.iter().any(|(complete, _)| *complete) {
+            return Ok(seen.into_iter().map(|(_, payload)| payload).collect());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let seen = replayed(h).await;
+    bail!(
+        "the replay never completed; {} batch(es) captured, none marked complete",
+        seen.len()
+    )
 }
 
 fn duplicate_replay<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
