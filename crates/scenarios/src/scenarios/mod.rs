@@ -662,6 +662,68 @@ async fn wait_mqtt(
     bail!("expected MQTT publication was not captured; topics seen: {topics:?}")
 }
 
+/// Waits for an MQTT publication, budgeted in **wall-clock time**, and says
+/// what the device looked like when it gave up.
+///
+/// # Two defects in [`wait_mqtt`], both of which this fixes
+///
+/// **The budget is in the wrong unit.** `wait_mqtt` counts *poll iterations*,
+/// and each iteration is one HTTP round trip for the whole capture plus a
+/// 25 ms sleep. What that costs in seconds therefore depends on the machine and
+/// on how large the capture has grown — the same failure this repository
+/// already recorded once for `history_gap`, which sat within seconds of its own
+/// limit on a slow runner while looking generous on a desktop. A `Duration`
+/// means the same thing everywhere.
+///
+/// **The failure message describes the wrong half of the system.** "topics
+/// seen: [...]" says what the *broker* carried and nothing about the device
+/// that was supposed to publish. Diagnosing one `scenario_battery_awake_cycle`
+/// failure meant reading 2.7 MB of container logs to establish that the device
+/// had in fact completed the dose and been acknowledged — a fact its own
+/// `/sim/state` would have given in one line. PRD 080 F-080-15 asks for the
+/// last known state on a failure; the topics alone are not it.
+///
+/// This does not claim to fix the flake it was written for. That failure was
+/// not reproducible in isolation — seven runs, including three pinned to two
+/// CPUs by the recipe in `local-development.md` §14 — so what is fixed here is
+/// the fragility and the blindness, not a proven cause. The next occurrence
+/// should be diagnosable from the failure line.
+async fn wait_mqtt_until(
+    h: &Harness,
+    budget: Duration,
+    sim_url: &str,
+    what: &str,
+    predicate: impl Fn(&crate::harness::CapturedMqtt) -> bool,
+) -> Result<crate::harness::CapturedMqtt> {
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        if let Some(message) = h.mqtt().await.into_iter().find(&predicate) {
+            return Ok(message);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            let mut topics: Vec<String> = h
+                .mqtt()
+                .await
+                .into_iter()
+                .map(|message| message.topic)
+                .collect();
+            topics.sort_unstable();
+            topics.dedup();
+            // Best effort: a simulator that cannot be reached is itself the
+            // answer, and must not replace the original failure with a
+            // transport error.
+            let state = match h.get_json(&format!("{sim_url}/sim/state")).await {
+                Ok(state) => state.to_string(),
+                Err(error) => format!("<unreachable: {error}>"),
+            };
+            bail!(
+                "waiting for {what} on MQTT gave up after {budget:?};                  topics seen: {topics:?}; simulator state: {state}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 fn broker_restart<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     Box::pin(async move {
         setup_plant(h, true).await?;
@@ -3530,15 +3592,28 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         // the flake that failed one run in two.
         h.clear_mqtt().await;
         request_battery_water(h, 40.0).await?;
-        wait_mqtt(h, |m| m.topic.ends_with("/commands/result"), 800).await?;
-        wait_mqtt(
+        // Budgeted in seconds, not in poll iterations. Sixty is far past what
+        // this takes even pinned to two CPUs — the wake is a quarter of a real
+        // second at 3600x — so a timeout here means something stopped, not that
+        // the machine was busy.
+        wait_mqtt_until(
             h,
+            Duration::from_secs(60),
+            &h.battery_url,
+            "the command result",
+            |m| m.topic.ends_with("/commands/result"),
+        )
+        .await?;
+        wait_mqtt_until(
+            h,
+            Duration::from_secs(60),
+            &h.battery_url,
+            "the sleep announcement",
             |m| {
                 m.topic.ends_with("/status")
                     && serde_json::from_slice::<Value>(&m.payload)
                         .is_ok_and(|v| v["data"]["reason"] == "sleeping")
             },
-            800,
         )
         .await?;
         let mqtt = h.mqtt().await;
@@ -3569,15 +3644,21 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         .await?;
         h.clear_mqtt().await;
         request_battery_water(h, 40.0).await?;
-        let interrupted = wait_mqtt(
+        // The reboot path gets the same budget and a name of its own. This is
+        // the wait that failed once in a full-suite run, and "an expected
+        // publication was not captured" was all it said; the device's own state
+        // is now part of the failure.
+        let interrupted = wait_mqtt_until(
             h,
+            Duration::from_secs(60),
+            &h.battery_url,
+            "the interrupted result after a power cut mid-dose",
             |m| {
                 m.topic.ends_with("/commands/result")
                     && serde_json::from_slice::<Value>(&m.payload).is_ok_and(|v| {
                         v["data"]["status"] == "interrupted" && v["data"]["delivered_ml"].is_null()
                     })
             },
-            800,
         )
         .await?;
         let body: Value = serde_json::from_slice(&interrupted.payload)?;
