@@ -24,15 +24,17 @@ use esp_idf_svc::mqtt::client::EspMqttClient;
 
 use rhizo_mqtt_contract::payload::{
     CommandResult, CommandResultAck, DeviceConfig, DeviceStatus, DeviceStatusValue, EdgeTime,
-    EventAck, OfflinePolicySet, PowerMode, PowerStatus, WaterCommand,
+    EventAck, OfflinePolicySet, PowerMode, PowerStatus, TelemetryBatch, WaterCommand,
 };
 use rhizo_mqtt_contract::safety::LeakState;
-use rhizo_mqtt_contract::{DeviceId, Envelope, MessageKind, Topic, UtcMillis};
+use rhizo_mqtt_contract::{CommandId, DeviceId, Envelope, EventId, MessageKind, Topic, UtcMillis};
 
 use rhizo_node_app::command::{handle_water, GateInputs};
+use rhizo_node_app::isolation::{plant_to_evaluate, seam_inputs, IsolationDriver};
+use rhizo_node_app::offline::AutonomousOutcome;
 use rhizo_node_app::persist::{BootIdentity, PersistedState};
 use rhizo_node_app::policy::UpdateStep;
-use rhizo_node_app::ports::{NvsStore, Pump};
+use rhizo_node_app::ports::{NvsStore, Pump, Watchdog};
 use rhizo_node_app::power::{WakeCycle, WakeReason};
 use rhizo_node_app::telemetry::{ChemistryCurve, Sensors, TelemetryRing};
 use rhizo_node_app::{config, identity, policy, telemetry};
@@ -71,6 +73,7 @@ pub fn serve<N: NvsStore, P: Pump>(
     clock: &mut EdgeClock,
     cycle: &mut WakeCycle,
     ring: &mut TelemetryRing,
+    driver: &mut IsolationDriver,
 ) {
     let mut next_telemetry_ms = 0u64;
     let mut telemetry_cycles: u32 = 0;
@@ -85,6 +88,11 @@ pub fn serve<N: NvsStore, P: Pump>(
             match event {
                 Inbound::Connected => {
                     connected = true;
+                    // Control returns to the edge. The driver forgets its
+                    // evaluation instant, so the time this session lasts is
+                    // never credited to an offline cooldown the edge was
+                    // pacing from rows (M9-016).
+                    driver.on_edge_control();
                     publish_online_status(context, session, clock, cycle, now_mono);
                 }
                 Inbound::Disconnected => {
@@ -146,6 +154,140 @@ pub fn serve<N: NvsStore, P: Pump>(
         }
 
         FreeRtos::delay_ms(TICK_MS);
+    }
+}
+
+/// Runs autonomous operation for up to `for_ms` while the device is isolated
+/// (M9-016, ADR-015, SAFETY-013).
+///
+/// # Why this exists at all
+///
+/// Without it the loop's answer to a dead router is to sleep and retry, and a
+/// device provisioned with a validated policy does nothing for its plant —
+/// which is the whole of what ADR-015 promises. The safety logic was written
+/// and host-tested from the start; this is the wiring that lets the image reach
+/// it.
+///
+/// # It samples as well as evaluates
+///
+/// An isolated device is still a fully functioning sensor node (protocol §5.12).
+/// Readings go to the ring so a reconnection replays them, and the evaluation
+/// runs on the batch that was **just read** rather than on whatever the
+/// connected path last published — one reading, one decision, no window in
+/// which a decision rests on a reading the device no longer believes.
+///
+/// # It returns on a deadline rather than on a connection
+///
+/// The caller owns the backoff. Returning when the budget is spent keeps the
+/// retry schedule in `main`, where it is already written, and means nothing
+/// here has to reason about how long a Wi-Fi association takes.
+pub fn serve_isolated<N: NvsStore, P: Pump, W: Watchdog>(
+    context: &mut Context<'_, N, P>,
+    clock: &EdgeClock,
+    cycle: &mut WakeCycle,
+    ring: &mut TelemetryRing,
+    driver: &mut IsolationDriver,
+    watchdog: &mut W,
+    for_ms: u64,
+) {
+    let started = monotonic_ms();
+    let interval_ms = u64::from(config::telemetry_interval_seconds(context.state)) * 1000;
+
+    loop {
+        watchdog.feed();
+        let now_mono = monotonic_ms();
+        if now_mono.saturating_sub(started) >= for_ms {
+            return;
+        }
+        // The cadence belongs to the driver, not to this call: a full-jitter
+        // backoff re-enters here every second or two while the radio flaps, and
+        // a deadline local to one call would evaluate on every one of them.
+        if driver.due(now_mono, interval_ms) {
+            isolated_cycle(context, clock, cycle, ring, driver, now_mono);
+        }
+        FreeRtos::delay_ms(TICK_MS);
+    }
+}
+
+/// One isolated sample-and-decide cycle.
+fn isolated_cycle<N: NvsStore, P: Pump>(
+    context: &mut Context<'_, N, P>,
+    clock: &EdgeClock,
+    cycle: &mut WakeCycle,
+    ring: &mut TelemetryRing,
+    driver: &mut IsolationDriver,
+    now_mono: u64,
+) {
+    // The reading first, and it is buffered whatever the decision turns out to
+    // be: the evidence an operator needs to understand an autonomous dose is
+    // the same evidence the decision was made on.
+    let batch = read_batch(context, now_mono);
+    if let Some(batch) = batch.clone() {
+        ring.push(batch);
+    }
+
+    let Some(plant_id) = plant_to_evaluate(context.state).map(ToOwned::to_owned) else {
+        // SAFETY-013. No activated policy is not permission; it is the
+        // documented behaviour of an unprovisioned device, which is a data
+        // logger. Nothing is buffered here because there is no policy to name
+        // and the connected path already reports the absence in `device.status`.
+        return;
+    };
+    let Some(policy) = rhizo_node_app::policy::active_for_plant(context.state, &plant_id).cloned()
+    else {
+        return;
+    };
+
+    let config = context.state.config;
+    let inputs = seam_inputs(
+        &policy,
+        batch.as_ref().unwrap_or(&TelemetryBatch {
+            batch_id: uuid::Uuid::nil(),
+            samples: Vec::new(),
+        }),
+        config.map_or(0.0, |c| c.pump.ml_per_second),
+        Some(!context.pump.is_faulted()),
+    );
+
+    let at = ClockAt::capture(clock, now_mono);
+    let device_time_ms = rhizo_node_app::ports::Clock::now_ms(&at).map(UtcMillis);
+
+    // The hold keeps a battery device awake across its own dose, exactly as the
+    // commanded path does, and releases on drop so no error path below can
+    // leave it awake for ever — or let it sleep mid-dose.
+    let hold = cycle.acquire_hold();
+    let outcome = driver.step(
+        context.state,
+        context.nvs,
+        context.pump,
+        &plant_id,
+        &inputs,
+        now_mono,
+        device_time_ms,
+        // `EspRng` is a zero-sized handle on the hardware generator, so each
+        // closure takes its own rather than contending for one borrow.
+        || CommandId::from_uuid(identity::mint_message_id(device_time_ms, &mut EspRng).as_uuid()),
+        || EventId::from_uuid(identity::mint_message_id(device_time_ms, &mut EspRng).as_uuid()),
+    );
+    drop(hold);
+    cycle.sync_holds();
+    log::info!("isolated evaluation for {plant_id}: {outcome:?}");
+
+    // Persisted when the evaluation produced something durable to remember — a
+    // dose, a buffered refusal, a fault — and not for a plain `Waiting`, which
+    // only advances counters. A device sitting idle through a week-long outage
+    // would otherwise write NVS once per sampling interval for nothing, and
+    // this part has a flash-endurance limit.
+    //
+    // What that loses on a reboot is accumulated confirmation time, and losing
+    // it is the *conservative* direction: SAFETY-015 already says a reboot
+    // credits zero, so the plant waits longer rather than being watered sooner.
+    // `evaluate_and_act` performs its own commit before actuating, so an
+    // in-flight dose is durable whatever this decides.
+    if outcome != AutonomousOutcome::Waiting {
+        if let Err(error) = context.nvs.store(context.state) {
+            log::error!("could not persist the offline runtime state: {error}");
+        }
     }
 }
 
@@ -373,16 +515,18 @@ fn publish_online_status<N: NvsStore, P: Pump>(
     publish(session.client(), &topic, &envelope);
 }
 
-fn publish_telemetry<N: NvsStore, P: Pump>(
-    context: &mut Context<'_, N, P>,
-    session: &mut Session,
-    clock: &EdgeClock,
-    ring: &mut TelemetryRing,
+/// Reads one batch from whatever sensors are fitted.
+///
+/// The one place the sensor set is assembled, so the connected path and the
+/// isolated path can never read *different* sensors — which would make an
+/// autonomous decision rest on inputs no published telemetry ever showed.
+///
+/// M9 fits none of them (PRD 090 §Goals 6), so the batch is empty and
+/// `validate` rejects it; M10 fits the probes and nothing here changes.
+fn read_batch<N: NvsStore, P: Pump>(
+    context: &Context<'_, N, P>,
     now_mono: u64,
-) {
-    // M9 samples through the trait boundary with no sensors fitted, so the
-    // batch is empty and nothing is published. M10 fits the probe; the code
-    // path, the ring, and the envelope are exercised by the host tests.
+) -> Option<TelemetryBatch> {
     let mut sensors = Sensors {
         soil: None,
         tank: None,
@@ -396,9 +540,19 @@ fn publish_telemetry<N: NvsStore, P: Pump>(
     if errors.total() > 0 {
         log::warn!("sensor errors this cycle: {errors:?}");
     }
-    if batch.validate().is_err() {
+    batch.validate().is_ok().then_some(batch)
+}
+
+fn publish_telemetry<N: NvsStore, P: Pump>(
+    context: &mut Context<'_, N, P>,
+    session: &mut Session,
+    clock: &EdgeClock,
+    ring: &mut TelemetryRing,
+    now_mono: u64,
+) {
+    let Some(batch) = read_batch(context, now_mono) else {
         return;
-    }
+    };
     ring.push(batch);
     for batch in ring.drain() {
         let envelope = envelope_for(context, clock, MessageKind::TelemetryBatch, now_mono, batch);

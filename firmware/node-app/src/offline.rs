@@ -86,6 +86,14 @@ pub struct OfflineTick<'a> {
     pub monotonic_ms: u64,
     /// Wall time, where the clock is synchronised.
     pub device_time_ms: Option<UtcMillis>,
+    /// The refusal this caller last buffered, if any.
+    ///
+    /// One buffered event per *change* of reason. A leak that lasts a week
+    /// would otherwise fill the 64-slot audit ring with the same sentence and
+    /// evict the record of the dose that matters (SAFETY-020). The reason still
+    /// governs every evaluation — this suppresses the *record*, never the
+    /// refusal, and a reason that differs from this one is always recorded.
+    pub last_refusal: Option<RefuseReason>,
 }
 
 /// What an autonomous evaluation did.
@@ -132,6 +140,7 @@ pub fn evaluate_and_act(
         elapsed,
         monotonic_ms,
         device_time_ms,
+        last_refusal,
     } = tick;
     let Some(policy) = crate::policy::active_for_plant(state, plant_id).cloned() else {
         // SAFETY-013. Not a fault, not a default: the documented behaviour of an
@@ -139,6 +148,7 @@ pub fn evaluate_and_act(
         buffer_refusal(
             state,
             RefuseReason::NoValidPolicy,
+            last_refusal,
             monotonic_ms,
             device_time_ms,
             &mint_event_id,
@@ -242,7 +252,14 @@ pub fn evaluate_and_act(
             }
         }
         OfflineDecision::Refuse(reason) => {
-            buffer_refusal(state, reason, monotonic_ms, device_time_ms, &mint_event_id);
+            buffer_refusal(
+                state,
+                reason,
+                last_refusal,
+                monotonic_ms,
+                device_time_ms,
+                &mint_event_id,
+            );
             AutonomousOutcome::Refused(reason)
         }
         OfflineDecision::Idle
@@ -252,20 +269,27 @@ pub fn evaluate_and_act(
     }
 }
 
-/// Buffers one audit event for a refusal.
+/// Buffers one audit event for a refusal, unless it repeats the last one.
 ///
-/// Every refusal is recorded with its reason so a reconnect makes it
-/// observable. The caller is responsible for suppressing repeats of an
-/// unchanged reason: a leak that lasts a week would otherwise fill the 64-slot
-/// audit ring with the same sentence and evict the record of the dose that
-/// matters (SAFETY-020).
+/// Every *change* of refusal is recorded with its reason so a reconnect makes
+/// it observable, and an unchanged reason is not recorded again: a leak that
+/// lasts a week would otherwise fill the 64-slot audit ring with the same
+/// sentence and evict the record of the dose that matters (SAFETY-020).
+///
+/// Suppression applies to the **record** and never to the refusal. The plant is
+/// refused on every evaluation either way; what is bounded is how much of the
+/// audit ring one persistent condition may consume.
 fn buffer_refusal(
     state: &mut PersistedState,
     reason: RefuseReason,
+    last_refusal: Option<RefuseReason>,
     monotonic_ms: u64,
     device_time_ms: Option<UtcMillis>,
     mint_event_id: &impl Fn() -> rhizo_mqtt_contract::EventId,
 ) {
+    if last_refusal == Some(reason) {
+        return;
+    }
     state.buffer.push(
         mint_event_id(),
         EventTier::Audit,
@@ -441,6 +465,9 @@ mod tests {
                 elapsed,
                 monotonic_ms: elapsed.0,
                 device_time_ms: None,
+                // These tests drive one refusal at a time and assert on the
+                // event each produced, so none of them is a repeat.
+                last_refusal: None,
             },
             || CommandId::from_uuid(Uuid::from_u128(ids.next())),
             || EventId::from_uuid(Uuid::from_u128(ids.next())),

@@ -184,6 +184,7 @@ fn main() {
     let mut clock = hal::clock::EdgeClock::new();
     let mut cycle = run::wake_cycle(&state, wake_reason);
     let mut ring = rhizo_node_app::telemetry::TelemetryRing::new();
+    let mut driver = rhizo_node_app::isolation::IsolationDriver::new();
     let mut attempt = 0u32;
 
     // ---------------------------------------------------------------- STEP 7
@@ -191,20 +192,33 @@ fn main() {
     // at 300 s: a device that gives up after N attempts is a device that needs
     // a human to power-cycle it, which is the failure mode this project exists
     // to avoid.
+    //
+    // Every backoff is spent in `serve_isolated` rather than asleep. A device
+    // that cannot reach its edge is *isolated*, not idle: it keeps sampling,
+    // and if it was provisioned with a validated policy it keeps its plant
+    // alive on its own (ADR-015, M9-016). Waiting quietly for the router to
+    // come back is what this loop used to do, and it made the whole of the
+    // offline-autonomy design unreachable from the image.
     loop {
         watchdog.feed();
 
-        if !station.is_up() {
-            if let Err(error) = station.connect_once() {
-                let delay = station.note_failure(&mut rng);
-                log::warn!("wifi attempt {attempt} failed ({error}); retrying in {delay}ms");
-                attempt = attempt.saturating_add(1);
-                sleep_feeding(&mut watchdog, delay);
-                continue;
+        let wifi_failure = if station.is_up() {
+            None
+        } else {
+            match station.connect_once() {
+                Err(error) => {
+                    let delay = station.note_failure(&mut rng);
+                    log::warn!("wifi attempt {attempt} failed ({error}); isolated for {delay}ms");
+                    attempt = attempt.saturating_add(1);
+                    Some(delay)
+                }
+                Ok(()) => {
+                    attempt = 0;
+                    log::info!("wifi up, rssi {:?}", station.rssi_dbm());
+                    None
+                }
             }
-            attempt = 0;
-            log::info!("wifi up, rssi {:?}", station.rssi_dbm());
-        }
+        };
 
         let mut context = run::Context {
             state: &mut state,
@@ -214,6 +228,21 @@ fn main() {
             device_id: device_id.clone(),
             rng,
         };
+
+        // No radio is the deepest isolation there is, and the one the plant
+        // most needs the device to handle by itself.
+        if let Some(delay) = wifi_failure {
+            run::serve_isolated(
+                &mut context,
+                &clock,
+                &mut cycle,
+                &mut ring,
+                &mut driver,
+                &mut watchdog,
+                delay,
+            );
+            continue;
+        }
         let opened = {
             let settings = run::settings(context.state, &url, &device_id);
             net::session::Session::open(&settings, identity.boot_generation)
@@ -226,26 +255,28 @@ fn main() {
                     &mut clock,
                     &mut cycle,
                     &mut ring,
+                    &mut driver,
                 );
                 log::warn!("session ended; reconnecting");
             }
             Err(error) => {
+                // Wi-Fi is up but the broker is not answering. The device is
+                // isolated in exactly the sense ADR-015 means, so the backoff
+                // is spent evaluating rather than waiting.
                 let delay = crate::net::wifi::backoff_delay_ms(attempt, &mut rng);
-                log::warn!("mqtt connect failed ({error}); retrying in {delay}ms");
+                log::warn!("mqtt connect failed ({error}); isolated for {delay}ms");
                 attempt = attempt.saturating_add(1);
-                sleep_feeding(&mut watchdog, delay);
+                run::serve_isolated(
+                    &mut context,
+                    &clock,
+                    &mut cycle,
+                    &mut ring,
+                    &mut driver,
+                    &mut watchdog,
+                    delay,
+                );
             }
         }
-    }
-}
-
-/// Waits, feeding the watchdog, so a long backoff is not a watchdog reset.
-fn sleep_feeding(watchdog: &mut hal::watchdog::TaskWatchdog, mut remaining_ms: u64) {
-    while remaining_ms > 0 {
-        let slice = remaining_ms.min(1000);
-        esp_idf_hal::delay::FreeRtos::delay_ms(slice as u32);
-        watchdog.feed();
-        remaining_ms -= slice;
     }
 }
 

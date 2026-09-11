@@ -514,6 +514,18 @@ the column back directly and you will see `sleeping` for a device that is
 reported — correctly — as `isolated`; that is not a bug, it is the point. Use
 `connectivity::from_projection`, never the raw column.
 
+**The gate is handed a resolved freshness limit; it does not derive one.**
+`IrrigationInputs` carries `control_max_age` and `tank_max_age`, each already
+narrowed to `min(policy.stale_after_ms, max(15 min, 3 x telemetry interval))` by
+`control::inputs::resolved_freshness`. The domain cannot apply the cadence half
+— that needs a device row it may not read. It used to be handed the whole
+`MeasurementPolicy` list and took the **minimum across every kind**, which both
+coupled the soil threshold to the ambient-temperature policy *and* dropped the
+cadence bound entirely: `stale_after_ms` is validated only as positive, so an
+operator could set a day and have the gate water on day-old data.
+`gate::MAX_FRESHNESS_SECONDS` (3 h — the slowest configurable cadence, tripled)
+is a backstop on whatever arrives, not the rule.
+
 **There are two staleness formulas and picking the wrong one breaks SAFETY-005.**
 `max_sample_age_seconds` is the control-freshness threshold: it takes the
 telemetry cadence and nothing else, and it is what M6-005 must call.
@@ -751,6 +763,39 @@ pass" is not the same as "it agrees with the reference".
 property.** A corrupted RTC word can present a credit of `u64::MAX`, which is
 about 2e11 iterations against a day-long window — a watchdog reset inside the
 accounting code. Found by a host test that took 60 seconds to run.
+
+**The device-side rolling budget window lives in `rhizo-policy`, not in either
+device.** `BudgetWindow::credit` is the one implementation; the firmware's
+`OfflineRuntime::credit_window` and the simulator's `advance` both delegate to
+it. They used to each own a copy, and the two disagreed about a credit longer
+than one window — the firmware carried the overshoot with `%`, the simulator
+discarded it — so after a 30-hour sleep against a 24-hour window the firmware
+replenished 18 hours later and the simulator 24. The firmware was the *more
+permissive* of the two, against the canonical implementation.
+`conformance_budget_window_credits_identically` is what now stops that
+reopening; the conformance suite previously reached the command gate and
+stopped.
+
+**One owner per monotonic quantity.** `next_offline_state` owns the cooldown and
+the confirmation; `BudgetWindow` owns the budget; a device owns neither. The
+simulator's `advance` used to decrement the cooldown *as well*, and
+`next_offline_state` decremented it again from the same `elapsed` in the same
+tick, so every offline cooldown expired at twice the policy rate. A consequence
+that is correct rather than a regression: the offline cooldown is **dormant
+while the device is connected**, because the edge is pacing the plant from rows
+then, and it resumes where it left off when isolation starts.
+
+**Every backoff in the firmware loop is spent isolated, not idle.**
+`run::serve_isolated` samples on the telemetry cadence and runs
+`evaluate_and_act` on each fresh batch, for both the Wi-Fi and the broker
+failure. Before it, `evaluate_and_act` had exactly one caller — its own unit
+test — so a provisioned device did nothing for its plant during an outage and
+ADR-015's central promise was unreachable from the image. `IsolationDriver` in
+`node-app` holds what must survive between evaluations: the last evaluation
+instant (the evaluator takes a *delta*), whether the edge has had control since
+(its time is never credited to an offline cooldown), and the last refusal
+buffered (SAFETY-020 bounds how much of the 64-slot ring one persistent
+condition may consume).
 
 **A firmware test that greps its own source is doing the load-bearing work.**
 `node-app/tests/single_actuation_path.rs` counts call sites of

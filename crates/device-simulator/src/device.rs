@@ -891,11 +891,13 @@ impl Device {
             return;
         }
         let pending = std::mem::take(&mut self.unpersisted_runtime_ms);
+        // A device with no activated policy has no window length to credit
+        // against, so nothing is released. Zero is the conservative reading:
+        // the budget it is holding was spent under *some* policy, and inventing
+        // a window in which to forgive it would be the permissive one.
+        let window_ms = window_ms.unwrap_or(0);
         if let Err(e) = self.store.mutate(|state| {
-            state.offline_runtime.advance(pending);
-            if let Some(window_ms) = window_ms {
-                state.offline_runtime.roll_window(window_ms);
-            }
+            state.offline_runtime.advance(pending, window_ms);
         }) {
             tracing::error!(error = %e, "could not persist the offline runtime state");
         }

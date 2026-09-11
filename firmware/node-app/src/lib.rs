@@ -73,6 +73,7 @@ pub mod config;
 pub mod dedup;
 pub mod fakes;
 pub mod identity;
+pub mod isolation;
 pub mod ledger;
 pub mod offline;
 pub mod persist;

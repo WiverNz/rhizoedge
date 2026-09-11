@@ -100,27 +100,30 @@ impl OfflineRuntime {
         self.confirmation_elapsed_ms = state.confirm_elapsed.0;
     }
 
-    /// Advances the state by observed monotonic time.
+    /// Credits observed monotonic time to the rolling budget window.
     ///
-    /// **Only by time the device actually observed.** Cooldown is counted down
-    /// and the budget window advanced from elapsed milliseconds the monotonic
-    /// clock really produced — never from a wall-clock difference across a
-    /// reboot, which the device cannot vouch for.
-    pub fn advance(&mut self, elapsed_ms: u64) {
-        self.cooldown_remaining_ms = self.cooldown_remaining_ms.saturating_sub(elapsed_ms);
-        self.budget_window.elapsed_ms = self.budget_window.elapsed_ms.saturating_add(elapsed_ms);
-    }
-
-    /// Rolls the rolling budget window over once it has fully elapsed.
+    /// **Only time the device actually observed** — never a wall-clock
+    /// difference across a reboot, which the device cannot vouch for. The
+    /// arithmetic is [`rhizo_policy::BudgetWindow::credit`], the same function
+    /// the firmware calls; this crate had its own copy, and the two disagreed
+    /// about what a credit longer than the window leaves behind.
     ///
-    /// Called with the policy's window length. The budget is reduced **only**
-    /// here, and only on evidence the device observed the whole window pass. A
-    /// device that reboots repeatedly does not thereby earn more water.
-    pub fn roll_window(&mut self, window_ms: u64) {
-        if window_ms > 0 && self.budget_window.elapsed_ms >= window_ms {
-            self.budget_window.elapsed_ms = 0;
-            self.budget_window.delivered_ml = 0.0;
-        }
+    /// **The cooldown is deliberately not touched here.** It belongs to
+    /// `next_offline_state`, which counts it down by this same `elapsed` a few
+    /// microseconds later in the same tick. Decrementing it in both places
+    /// halved every offline cooldown — an isolated plant became eligible for
+    /// its next cycle in half the configured time — and that is precisely the
+    /// bug that having two owners for one quantity produces. One owner per
+    /// quantity: the evaluator owns the cooldown and the confirmation, the
+    /// shared window owns the budget.
+    pub fn advance(&mut self, elapsed_ms: u64, window_ms: u64) {
+        let mut window = rhizo_policy::BudgetWindow {
+            used_ml: self.budget_window.delivered_ml,
+            elapsed_ms: self.budget_window.elapsed_ms,
+        };
+        window.credit(MonotonicMillis(elapsed_ms), window_ms);
+        self.budget_window.delivered_ml = window.used_ml;
+        self.budget_window.elapsed_ms = window.elapsed_ms;
     }
 }
 
@@ -379,45 +382,55 @@ mod tests {
         }
     }
 
-    #[test]
-    fn advancing_counts_the_cooldown_down_and_the_window_up() {
-        let mut state = runtime();
-        state.advance(400_000);
-        assert_eq!(state.cooldown_remaining_ms, 14_000_000);
-        assert_eq!(state.budget_window.elapsed_ms, 2_200_000);
-    }
+    const DAY: u64 = 86_400_000;
 
+    /// **The cooldown is not this function's business.** `next_offline_state`
+    /// counts it down by the same `elapsed` later in the same tick, and while
+    /// both did it every offline cooldown expired at twice the policy rate.
     #[test]
-    fn a_cooldown_never_goes_negative_or_wraps() {
+    fn advancing_moves_the_window_and_leaves_the_cooldown_alone() {
         let mut state = runtime();
-        state.advance(u64::MAX);
-        assert_eq!(state.cooldown_remaining_ms, 0);
-        assert_eq!(state.budget_window.elapsed_ms, u64::MAX);
+        let before = state.cooldown_remaining_ms;
+        state.advance(400_000, DAY);
+        assert_eq!(
+            state.cooldown_remaining_ms, before,
+            "the evaluator owns the cooldown; a second owner halves it"
+        );
+        assert_eq!(state.budget_window.elapsed_ms, 2_200_000);
     }
 
     /// SAFETY-015: the budget is reduced only on observed elapsed time.
     #[test]
     fn the_budget_is_replenished_only_when_the_whole_window_was_observed() {
         let mut state = runtime();
-        let window = 86_400_000;
 
-        state.roll_window(window);
+        state.advance(0, DAY);
         assert_eq!(
             state.budget_window.delivered_ml, 70.0,
             "half a window is not a window"
         );
 
-        state.advance(window);
-        state.roll_window(window);
+        state.advance(DAY, DAY);
         assert_eq!(state.budget_window.delivered_ml, 0.0);
-        assert_eq!(state.budget_window.elapsed_ms, 0);
+        assert_eq!(
+            state.budget_window.elapsed_ms, 1_800_000,
+            "the fixture opened 30 minutes into its window, so 30 minutes of              the next one have already passed: the overshoot is carried"
+        );
+    }
+
+    /// A huge credit terminates and cannot wrap the accumulator.
+    #[test]
+    fn a_credit_of_any_size_terminates_and_never_wraps() {
+        let mut state = runtime();
+        state.advance(u64::MAX, DAY);
+        assert_eq!(state.budget_window.delivered_ml, 0.0);
+        assert!(state.budget_window.elapsed_ms < DAY);
     }
 
     #[test]
     fn a_zero_length_window_never_replenishes_anything() {
         let mut state = runtime();
-        state.advance(1_000_000_000);
-        state.roll_window(0);
+        state.advance(1_000_000_000, 0);
         assert_eq!(
             state.budget_window.delivered_ml, 70.0,
             "a nonsensical window must not hand out a fresh allowance"

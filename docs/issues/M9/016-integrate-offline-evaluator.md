@@ -52,15 +52,20 @@ buffered events; M9-017 owns their lifecycle.
 - [x] Elapsed time comes from the monotonic timer, not the wall clock.
 - [x] `grep -c validate_water_command` shows exactly one call site.
 - [x] Every refusal is buffered as an audit event with its reason.
-- [ ] Control returns to the edge on reconnection.
+- [x] Control returns to the edge on reconnection.
 - [x] Host tests cover all of the above with fake adapters.
 
 ## Verification
 
+The safety logic lives in `rhizo-node-app`, which has no ESP-IDF dependency, so
+it is tested on the host pin. `firmware/esp32-node` cross-compiles and its
+`cargo test` cannot run — building it is what proves the wiring compiles.
+
 ```bash
-cd firmware/esp32-node && cargo test offline::
-cargo test safety_013 safety_017
-grep -rn 'validate_water_command' firmware/esp32-node/src | wc -l
+cd firmware/node-app && cargo test isolation:: offline::
+cd firmware/node-app && cargo test safety_013 safety_017 safety_020
+cd firmware/node-app && cargo test --test single_actuation_path
+(cd firmware/esp32-node && cargo build --release)
 ```
 
 ## Tests required
@@ -77,5 +82,17 @@ grep -rn 'validate_water_command' firmware/esp32-node/src | wc -l
 ## Files likely affected
 
 ```text
-firmware/esp32-node/src/app/offline.rs
+firmware/node-app/src/offline.rs       the evaluator call and the audit records
+firmware/node-app/src/isolation.rs     the cross-tick bookkeeping and the seam
+firmware/esp32-node/src/run.rs         serve_isolated, and the batch both paths read
+firmware/esp32-node/src/main.rs        every backoff is spent isolated, not idle
 ```
+
+## Note on the first completion
+
+The acceptance criteria were ticked once while `evaluate_and_act` had no caller
+in the image at all: the logic and its host tests were complete, and the loop
+that should reach them still answered a dead router by sleeping. "Done (host)"
+was the wrong grade for that, because the missing piece was wiring rather than
+hardware. `serve_isolated` is that wiring, and the criteria above are ticked
+against it.

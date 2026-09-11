@@ -262,23 +262,49 @@ fn safety_015_reboot_does_not_replenish_budget_or_shorten_cooldown() {
     }
 }
 
+/// **One owner for the cooldown, and it is the evaluator.**
+///
+/// `next_offline_state` counts the cooldown down by the observed `elapsed`, and
+/// it runs only while the device is isolated — which is the only time an
+/// offline cooldown paces anything, because a connected device is told what to
+/// do by the edge. The device's own window bookkeeping deliberately does not
+/// touch it: while both did, every offline cooldown expired at twice the policy
+/// rate, and an isolated plant became eligible for its next cycle in half the
+/// configured time.
 #[test]
 fn observed_time_counts_the_cooldown_down_and_a_reboot_keeps_what_is_left() {
     let state_file = scratch_state_file().display().to_string();
     {
         let mut device = Device::new(&settings_at(&state_file, &[]));
-        device
-            .store_mut_for_test(|state| state.offline_runtime.cooldown_remaining_ms = 600_000)
-            .unwrap();
         device.on_connected().unwrap();
-        // Five virtual minutes the device really observed.
+        device.on_message(&policy_topic(), &policy_envelope(7));
+        device
+            .store_mut_for_test(|state| {
+                state.offline_runtime.cycle = CyclePhase::Cooldown;
+                state.offline_runtime.cooldown_remaining_ms = 600_000;
+            })
+            .unwrap();
+
+        // Connected: the edge is in charge and the offline cooldown is dormant.
+        for _ in 0..30 {
+            device.tick(10_000);
+        }
+        assert_eq!(
+            device.store().state().offline_runtime.cooldown_remaining_ms,
+            600_000,
+            "a connected device's offline cooldown is not paced by this loop"
+        );
+
+        // Isolated: the evaluator runs, and counts it down once per tick.
+        device.on_disconnected();
+        assert!(device.is_isolated());
         for _ in 0..30 {
             device.tick(10_000);
         }
         assert_eq!(
             device.store().state().offline_runtime.cooldown_remaining_ms,
             300_000,
-            "observed time really does count down"
+            "five observed minutes are five minutes off the cooldown, not ten"
         );
     }
     let device = Device::new(&settings_at(&state_file, &[]));

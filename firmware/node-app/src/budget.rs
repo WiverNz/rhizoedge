@@ -123,25 +123,24 @@ impl OfflineRuntime {
 
     /// Advances the rolling budget window by observed elapsed time.
     ///
-    /// The window is only ever advanced by time the device measured, and when
-    /// a full window has passed the spent volume is released. Crediting zero —
-    /// what a reboot and a failed RTC checksum both produce — advances nothing,
-    /// which is the whole of SAFETY-015's guarantee.
+    /// Delegates to [`rhizo_policy::BudgetWindow::credit`], which is **the one
+    /// implementation** of this arithmetic — the simulator calls the same
+    /// function. It used to live here and a second copy lived in the simulator,
+    /// and the two disagreed about what a credit longer than the window leaves
+    /// behind; the shared crate's module documentation records the divergence
+    /// and why the carried remainder is the right answer.
     ///
-    /// The remainder is computed with `%` rather than by subtracting in a loop.
-    /// A loop is the obvious way to write it and is a real hazard here: a
-    /// corrupted RTC word can offer a credit of `u64::MAX`, which is about
-    /// 2e11 iterations of a day-long window — on an ESP32 that is a watchdog
-    /// reset inside the accounting code, which is the last place to hang.
+    /// The state is mirrored into a `BudgetWindow` rather than stored as one
+    /// because `rhizo-policy` carries no `serde` derive on purpose, and this
+    /// struct is the NVS storage format.
     pub fn credit_window(&mut self, elapsed: MonotonicMillis, window_ms: u64) {
-        if window_ms == 0 {
-            return;
-        }
-        let total = self.window_elapsed_ms.saturating_add(elapsed.0);
-        if total >= window_ms {
-            self.budget_used_ml = 0.0;
-        }
-        self.window_elapsed_ms = total % window_ms;
+        let mut window = rhizo_policy::BudgetWindow {
+            used_ml: self.budget_used_ml,
+            elapsed_ms: self.window_elapsed_ms,
+        };
+        window.credit(elapsed, window_ms);
+        self.budget_used_ml = window.used_ml;
+        self.window_elapsed_ms = window.elapsed_ms;
     }
 
     /// Accepts the edge's authoritative post-reconciliation baseline.

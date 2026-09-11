@@ -493,3 +493,59 @@ fn conformance_detects_an_injected_divergence() {
         "an injected divergence must be detected, not absorbed"
     );
 }
+
+/// **The rolling budget window advances identically in both.**
+///
+/// This is the test that did not exist while the two implementations
+/// disagreed. Each kept its own copy of the window arithmetic, and for a credit
+/// longer than one window the firmware carried the overshoot while the
+/// simulator dropped it — so the firmware replenished eighteen hours after a
+/// thirty-hour sleep and the simulator twenty-four, the firmware being the more
+/// permissive of the two. Both now call
+/// [`rhizo_policy::BudgetWindow::credit`], and this drives the two persisted
+/// state shapes through the same credit sequence to prove it.
+///
+/// The sequence is chosen to cover what the two used to disagree about: a
+/// partial window, an exact boundary, a credit spanning several windows, and a
+/// zero credit — which is what a reboot and a failed RTC checksum both produce.
+#[test]
+fn conformance_budget_window_credits_identically() {
+    use rhizo_node_app::budget::OfflineRuntime as FirmwareRuntime;
+    use rhizo_policy::MonotonicMillis;
+
+    const DAY: u64 = 86_400_000;
+
+    let mut firmware = FirmwareRuntime {
+        budget_used_ml: 290.0,
+        ..FirmwareRuntime::default()
+    };
+    let mut simulator = device_simulator::state::OfflineRuntime {
+        budget_window: device_simulator::state::BudgetWindow {
+            elapsed_ms: 0,
+            delivered_ml: 290.0,
+        },
+        ..device_simulator::state::OfflineRuntime::default()
+    };
+
+    for (step, credit) in [
+        3_600_000,       // an hour: nothing released
+        DAY - 3_600_000, // exactly to the boundary
+        0,               // a reboot credits nothing
+        30 * 3_600_000,  // thirty hours: the case the two disagreed about
+        u64::MAX,        // a corrupted RTC word must not hang either
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        firmware.credit_window(MonotonicMillis(credit), DAY);
+        simulator.advance(credit, DAY);
+        assert_eq!(
+            firmware.budget_used_ml, simulator.budget_window.delivered_ml,
+            "step {step}: the released volume must match"
+        );
+        assert_eq!(
+            firmware.window_elapsed_ms, simulator.budget_window.elapsed_ms,
+            "step {step}: the window phase must match, or the two replenish on              different schedules"
+        );
+    }
+}
