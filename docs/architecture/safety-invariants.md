@@ -1033,6 +1033,20 @@ invariant exists to prevent, reintroduced by the mechanism meant to enforce it.
 So the timer is what makes the transition durable and observable, and the
 derivation is what makes it true in the meantime.
 
+**An unrecognised stored mode is absent, not reachable.** The derivation parses
+`connectivity_mode` into a closed `StoredMode` before deciding anything, so the
+decision itself is an exhaustive match with no catch-all arm and a mode added to
+the schema fails to compile until someone chooses what it means for watering.
+The one unavoidable wildcard — a `match` on `&str` can never be exhaustive —
+lives in the parse and produces a *named* `Unrecognised` variant rather than a
+meaning. That wildcard previously lived in the decision and answered
+`Reconciling`, which is a **reachable** state: an operator would have read
+"reachable, already sorting itself out" for a row nothing could explain.
+Nothing writes such a value today, and that is a claim about code that can
+change. `the_only_catch_all_arm_produces_the_unrecognised_variant` is the
+sibling of the domain's `no_catch_all_arm_on_a_safety_match`, which reads
+`irrigation/gate.rs` and does not reach this crate.
+
 **Tests.**
 - `safety_021_overdue_sleeper_becomes_isolated` (unit,
   `edge-controller::device::connectivity`): a device past `overdue_at` derives

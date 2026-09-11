@@ -58,3 +58,22 @@ opt-level = "s"
 [profile.dev]
 debug = true
 opt-level = "z"
+
+# The same discipline `node-app` and the host workspace hold, on the crate where
+# the consequence of breaking it is a device in a reset loop on a windowsill.
+#
+# `unsafe_code` is **not** denied here, and that is the one deliberate
+# difference: this crate is the ESP-IDF boundary and calls into C for the MAC,
+# the RNG, and the heap counter. Denying it would mean an `allow` on each call
+# and the lint would stop meaning anything. `undocumented_unsafe_blocks` is the
+# rule that actually applies at a C boundary — every block states why it is
+# sound — and it is what the existing `// SAFETY:` comments were already
+# following by hand.
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "warn"
+undocumented_unsafe_blocks = "deny"

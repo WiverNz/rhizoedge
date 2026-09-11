@@ -18,6 +18,10 @@
 //! host tests with fake adapters. This file is the loop that wires adapters to
 //! that logic; `src/board/` is the only place a GPIO number appears.
 
+// A panic in a test is a failed assertion, not an unhandled failure — the same
+// exemption `node-app` and the root workspace grant (see their Cargo.toml).
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 

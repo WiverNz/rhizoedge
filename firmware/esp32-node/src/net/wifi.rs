@@ -118,8 +118,11 @@ impl<'d> Station<'d> {
     /// The current RSSI, reported in status.
     #[must_use]
     pub fn rssi_dbm(&self) -> Option<i16> {
-        // SAFETY: fills a caller-owned `i32`; returns non-zero on failure.
         let mut rssi: i32 = 0;
+        // SAFETY: writes through a pointer to a live, caller-owned `i32` and
+        // has no other preconditions. A non-`ESP_OK` return leaves the local
+        // untouched, and the caller discards it rather than reading a value the
+        // driver never wrote.
         let code = unsafe { esp_idf_sys::esp_wifi_sta_get_rssi(&mut rssi) };
         (code == esp_idf_sys::ESP_OK).then_some(rssi as i16)
     }

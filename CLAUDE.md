@@ -526,6 +526,26 @@ operator could set a day and have the gate water on day-old data.
 `gate::MAX_FRESHNESS_SECONDS` (3 h — the slowest configurable cadence, tripled)
 is a backstop on whatever arrives, not the rule.
 
+**An unrecognised `connectivity_mode` reads as `isolated`, and the derivation
+carries no catch-all.** `from_projection` parses the column into a closed
+`StoredMode` first, so its own match is exhaustive — add a mode to the schema
+and the build fails until someone decides what it means for watering. The one
+wildcard a `&str` match must have lives in the parse and produces a *named*
+`Unrecognised` variant. It used to live in the decision and answer
+`Reconciling`, a **reachable** state, which is the opposite of what an
+unexplainable row warrants. The domain's `no_catch_all_arm_on_a_safety_match`
+reads `irrigation/gate.rs` only; each file that needs one gets its own, because
+each has a different answer to which wildcards are legitimate in it.
+
+**`firmware/esp32-node` denies `unwrap`/`expect` but *not* `unsafe_code`.** It
+is the ESP-IDF boundary and calls into C for the MAC, the RNG, and the heap
+counter; denying unsafe would mean an `allow` on each call and the lint would
+stop meaning anything. `undocumented_unsafe_blocks` is the rule that applies at
+a C boundary instead, and it found a real gap the moment it was switched on — a
+`// SAFETY:` comment in `net/wifi.rs` sitting above the local rather than above
+the block it described. CI already runs `cargo clippy -- -D warnings` on this
+crate, so the lints are enforced rather than decorative.
+
 **There are two staleness formulas and picking the wrong one breaks SAFETY-005.**
 `max_sample_age_seconds` is the control-freshness threshold: it takes the
 telemetry cadence and nothing else, and it is what M6-005 must call.

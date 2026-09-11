@@ -37,6 +37,50 @@ impl State {
         }
     }
 }
+/// The `devices.connectivity_mode` vocabulary, as it is stored.
+///
+/// A string column becomes a *type* before anything decides on it, because a
+/// `match` on `&str` can never be exhaustive: it needs a `_` arm, and that arm
+/// is where "a value we do not recognise" quietly acquires a meaning nobody
+/// chose. This one used to resolve an unrecognised mode to `Reconciling` — a
+/// **reachable** state — directly against the rule the derivation below states,
+/// and against SAFETY-012.
+///
+/// With the parse split out, [`from_projection`]'s match is exhaustive and
+/// carries no catch-all: a mode added to the schema fails to compile until
+/// someone decides what it means for watering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StoredMode {
+    /// The device answered.
+    Connected,
+    /// The device announced a bounded sleep.
+    Sleeping,
+    /// The device is known to be away.
+    Isolated,
+    /// The device is reachable and still replaying its buffer.
+    Reconciling,
+    /// Anything else the column holds.
+    ///
+    /// Unreachable through today's writers, which emit exactly the four above.
+    /// It exists because "unreachable through today's writers" is a claim about
+    /// code that can change, and the cost of being wrong about it is a device
+    /// that is reported as reachable when nothing knows where it is.
+    Unrecognised,
+}
+
+impl StoredMode {
+    /// The one place a stored string becomes a mode.
+    fn parse(raw: &str) -> Self {
+        match raw {
+            "connected" => Self::Connected,
+            "sleeping" => Self::Sleeping,
+            "isolated" => Self::Isolated,
+            "reconciling" => Self::Reconciling,
+            _ => Self::Unrecognised,
+        }
+    }
+}
+
 /// Derives the reported state from the bounded SQLite projection **and the
 /// edge's own clock**.
 ///
@@ -49,24 +93,36 @@ impl State {
 /// device permanently asleep, which is the precise failure the invariant exists
 /// to prevent.
 ///
-/// A `sleeping` row missing either half of its window is inconsistent, and
-/// inconsistency resolves to *absent*, never to a reachable state (SAFETY-012).
+/// **Inconsistency resolves to absent, never to a reachable state**
+/// (SAFETY-012). A `sleeping` row missing either half of its window is
+/// inconsistent, and so is a mode this build does not recognise: both answer
+/// [`State::OfflineUnexpectedly`]. Absent is the answer an operator can act on
+/// — it says a device needs attention — where `reconciling` says the opposite,
+/// that something transient is already resolving itself.
 pub fn from_projection(
     mode: &str,
     expected_wake_at: Option<i64>,
     overdue_at: Option<i64>,
     now_ms: i64,
 ) -> State {
-    match mode {
-        "connected" => State::Online,
-        "sleeping" => match (expected_wake_at, overdue_at) {
-            (Some(expected_until), Some(deadline)) if now_ms < deadline => {
-                State::SleepingExpected { expected_until }
+    match StoredMode::parse(mode) {
+        StoredMode::Connected => State::Online,
+        // Spelled out rather than closed with a `_` arm. A guard is not
+        // exhaustiveness — `if now_ms < deadline` would still need a fallback —
+        // so the completeness question and the deadline question are asked
+        // separately, and neither is answered by a wildcard.
+        StoredMode::Sleeping => match (expected_wake_at, overdue_at) {
+            (Some(expected_until), Some(deadline)) => {
+                if now_ms < deadline {
+                    State::SleepingExpected { expected_until }
+                } else {
+                    State::OfflineUnexpectedly
+                }
             }
-            _ => State::OfflineUnexpectedly,
+            (Some(_), None) | (None, Some(_)) | (None, None) => State::OfflineUnexpectedly,
         },
-        "isolated" => State::OfflineUnexpectedly,
-        _ => State::Reconciling,
+        StoredMode::Isolated | StoredMode::Unrecognised => State::OfflineUnexpectedly,
+        StoredMode::Reconciling => State::Reconciling,
     }
 }
 #[cfg(test)]
@@ -134,5 +190,76 @@ mod tests {
         assert_eq!(State::Online.expected_wake_at(), None);
         assert_eq!(State::OfflineUnexpectedly.expected_wake_at(), None);
         assert_eq!(State::Reconciling.expected_wake_at(), None);
+    }
+    /// **SAFETY-012, structurally.** A mode this build does not recognise is
+    /// *absent*, not reachable.
+    ///
+    /// The catch-all used to answer `Reconciling`, which reads to an operator
+    /// as "reachable, and already sorting itself out" — the opposite of what an
+    /// unrecognised value warrants. Nothing writes such a value today; that is
+    /// a claim about code that can change, and the cost of being wrong is a
+    /// device reported as reachable when nothing knows where it is.
+    #[test]
+    fn safety_012_an_unrecognised_mode_is_absent_not_reachable() {
+        for mode in [
+            "",
+            "online",
+            "offline",
+            "asleep",
+            "CONNECTED",
+            "reconciling ",
+        ] {
+            assert_eq!(
+                from_projection(mode, Some(900), Some(1_800), 0),
+                State::OfflineUnexpectedly,
+                "{mode:?} must not be reported as reachable"
+            );
+            assert_eq!(
+                from_projection(mode, Some(900), Some(1_800), 0).api_name(),
+                "isolated",
+                "{mode:?}"
+            );
+        }
+    }
+
+    /// An unrecognised mode advertises no wake, exactly as `isolated` does.
+    #[test]
+    fn an_unrecognised_mode_advertises_no_wake() {
+        assert_eq!(
+            from_projection("who knows", Some(900), Some(1_800), 0).expected_wake_at(),
+            None
+        );
+    }
+
+    /// **The only wildcard in this file turns a string into `Unrecognised`.**
+    ///
+    /// A `match` on `&str` cannot be exhaustive, so one catch-all is
+    /// unavoidable — the point of [`StoredMode`] is to concentrate it in the
+    /// parse, where it produces a *named* variant, and to leave the derivation
+    /// exhaustive so a mode added to the schema fails to compile until someone
+    /// decides what it means for watering.
+    ///
+    /// The domain's `no_catch_all_arm_on_a_safety_match` reads
+    /// `irrigation/gate.rs` and does not reach this crate; this is its sibling,
+    /// and the reason it is written per file rather than once is that each file
+    /// has its own answer to "which wildcards are legitimate here".
+    #[test]
+    fn the_only_catch_all_arm_produces_the_unrecognised_variant() {
+        let source = include_str!("connectivity.rs");
+        let offenders: Vec<(usize, &str)> = source
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with("//") && trimmed.starts_with("_ =>")
+            })
+            .filter(|(_, line)| !line.contains("Self::Unrecognised"))
+            .map(|(number, line)| (number + 1, line.trim()))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "a catch-all arm must not decide a connectivity state;              only the string parse may have one:
+{offenders:?}"
+        );
     }
 }
