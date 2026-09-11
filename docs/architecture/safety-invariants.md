@@ -321,7 +321,24 @@ This asymmetry is intentional and must be visible in the UI.
 
 **No power field may widen this window.** `max_sample_age` derives from the
 configured telemetry interval and from per-plant `MeasurementPolicy.stale_after`,
-and from nothing else. A battery device's `wake_interval_seconds` is a
+and from nothing else. **Neither half may be dropped.** The threshold is
+`min(policy.stale_after_ms, max(15 min, 3 x telemetry_interval))`, resolved by
+the edge adapter in `control::inputs::resolved_freshness` and passed into the
+gate as `IrrigationInputs::control_max_age` — the domain cannot compute it,
+because the cadence is a device row the domain may not read. An earlier revision
+passed the raw `MeasurementPolicy` list into the gate and applied only the policy
+half: `stale_after_ms` is validated solely as positive, so an operator could set
+a day and have the gate water on day-old data. The gate now clamps whatever it is
+handed to `gate::MAX_FRESHNESS_SECONDS` (three hours — the slowest cadence the
+edge will ever configure, tripled) as a backstop, so forgetting the cadence half
+again is bounded rather than unbounded.
+
+**One limit per kind, never one limit across kinds.** The same earlier revision
+took the *minimum* `stale_after_ms` across every configured kind, so a plant's
+ambient-temperature policy silently set its soil-moisture threshold. Each check
+now reads its own kind's resolved limit — `control_max_age` for the control
+sample, `tank_max_age` for the reservoir — and a plant may read the two from
+different devices with different cadences. A battery device's `wake_interval_seconds` is a
 *device-declared* field admitting values up to 86 400 seconds; it feeds the
 registry's connectivity/liveness indication and is bounded there
 ([PRD 040](../prd/040-device-registry-and-health.md) F-040-26), but it must never
@@ -338,6 +355,10 @@ a constant; NaN readings; a battery device declaring a very long wake interval.
 - `safety_005_stale_sample_blocks_auto` (property over random sample ages).
 - `safety_005_control_freshness_cannot_be_widened_by_a_declared_wake_interval`
   (unit, already green in M4's registry).
+- `safety_005_a_widened_stale_after_cannot_outlive_the_cadence_bound`
+  (edge-controller, end to end through `POST /water`).
+- `safety_005_an_unbounded_freshness_limit_is_clamped_to_the_ceiling` and
+  `the_tank_limit_and_the_control_limit_do_not_couple` (domain gate).
 - `safety_005_invalid_sample_blocks_auto` (unit: NaN, out-of-range, absent).
 - M8 scenarios `stale-sensor`, `invalid-sensor-value`.
 

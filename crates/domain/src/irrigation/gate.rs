@@ -177,7 +177,7 @@ pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
             // A stale tank level is `Uncertain`, never `StaleData`: `StaleData`
             // is the reason `manual` is allowed to skip, and manual watering is
             // never allowed to skip the reservoir (M6-005).
-            if age >= max_sample_age(inputs) {
+            if age >= bounded(inputs.tank_max_age) {
                 return Some(LockoutReason::Uncertain);
             }
         }
@@ -212,7 +212,7 @@ pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
                 // backwards clock must not be able to make stale data look
                 // fresh. The threshold comes from the telemetry cadence and the
                 // plant's own policy, and from no power field.
-                if sample.is_stale(inputs.now, max_sample_age(inputs)) {
+                if sample.is_stale(inputs.now, bounded(inputs.control_max_age)) {
                     return Some(LockoutReason::StaleData);
                 }
             }
@@ -232,22 +232,40 @@ pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
     None
 }
 
-/// The control-freshness threshold this evaluation uses.
+/// The absolute ceiling on any freshness limit this gate will honour, in
+/// seconds.
 ///
-/// The plant's own `MeasurementPolicy.stale_after` for the control kind when it
-/// has one, and otherwise the caller-supplied bound already folded into the
-/// policies. **No power field reaches this**: a battery device declaring an
-/// 86 400-second wake interval must not thereby make a three-day-old moisture
-/// reading actionable (PRD 040 F-040-26, ADR-018 §7). The edge adapter narrows
-/// `stale_after_ms` to `min(policy, max(15 min, 3 x telemetry interval))` before
-/// building these inputs, so the stricter of the two always wins.
-fn max_sample_age(inputs: &IrrigationInputs<'_>) -> chrono::Duration {
-    inputs
-        .measurement_policies
-        .iter()
-        .map(|policy| chrono::Duration::milliseconds(i64::from(policy.stale_after_ms)))
-        .min()
-        .unwrap_or_else(|| chrono::Duration::minutes(15))
+/// The last line of defence behind SAFETY-005, and deliberately a *backstop*
+/// rather than the rule. The rule is the caller's: resolve
+/// `min(policy.stale_after_ms, max(15 min, 3 x telemetry interval))` and pass
+/// the answer in. This clamp bounds what happens when the caller gets that
+/// wrong — which it once did, letting an operator-set `stale_after_ms` of a day
+/// authorise automatic watering on day-old soil data.
+///
+/// Three hours is `max_sample_age_seconds` evaluated at the slowest cadence the
+/// edge will ever configure: `DeviceConfig::validate` accepts
+/// `telemetry_interval_seconds` in `10..=3600`, and `3 x 3600 s` is three
+/// hours. No correctly resolved limit can exceed it, so clamping here can only
+/// ever catch a mistake — never tighten a legitimate configuration.
+/// `edge-controller`'s `the_domain_ceiling_matches_the_slowest_configurable_cadence`
+/// fails if the two ever drift apart.
+pub const MAX_FRESHNESS_SECONDS: i64 = 3 * 60 * 60;
+
+/// Clamps a caller-supplied freshness limit into the range the gate honours.
+///
+/// A non-positive or absurd limit is not an argument for permission
+/// (SAFETY-012): zero and below become the 15-minute floor, which refuses
+/// everything but the freshest reading, and anything past the ceiling becomes
+/// the ceiling.
+fn bounded(limit: chrono::Duration) -> chrono::Duration {
+    let ceiling = chrono::Duration::seconds(MAX_FRESHNESS_SECONDS);
+    if limit <= chrono::Duration::zero() {
+        chrono::Duration::minutes(15)
+    } else if limit > ceiling {
+        ceiling
+    } else {
+        limit
+    }
 }
 
 #[cfg(test)]
@@ -256,12 +274,12 @@ pub(crate) mod fixture {
     //! One fully-permitting set of inputs the tests bend one field at a time.
     use super::super::types::EvaluationMode;
     use super::*;
-    use crate::plant::{ActuatorBinding, AutomationPolicy, MeasurementPolicy, SensorBinding};
+    use crate::plant::{ActuatorBinding, AutomationPolicy, SensorBinding};
     use crate::profile::SoilSample;
     use crate::state::IrrigationState;
     use chrono::{DateTime, Duration, TimeZone, Utc};
     use rhizo_mqtt_contract::DeviceId;
-    use rhizo_mqtt_contract::payload::{ActuatorKind, MeasurementKind, SensorId};
+    use rhizo_mqtt_contract::payload::{ActuatorKind, SensorId};
 
     pub fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 8, 30, 12, 0, 0)
@@ -276,7 +294,11 @@ pub(crate) mod fixture {
         pub pre_dose: SoilSample,
         pub actuator: ActuatorBinding,
         pub bindings: Vec<SensorBinding>,
-        pub policies: Vec<MeasurementPolicy>,
+        /// The resolved control-freshness limit, as the edge adapter would have
+        /// narrowed it. The default is the 15-minute floor.
+        pub control_max_age: Duration,
+        /// The resolved reservoir-freshness limit.
+        pub tank_max_age: Duration,
         pub required: Vec<super::super::types::RequiredInput>,
     }
 
@@ -299,18 +321,8 @@ pub(crate) mod fixture {
                     kind: ActuatorKind::IrrigationPump,
                 },
                 bindings: Vec::new(),
-                policies: vec![MeasurementPolicy {
-                    kind: MeasurementKind::SoilMoisture,
-                    target_min: Some(28.0),
-                    target_max: Some(45.0),
-                    warning_low: None,
-                    warning_high: None,
-                    critical_low: None,
-                    critical_high: None,
-                    stale_after_ms: 900_000,
-                    hysteresis: None,
-                    confirm_duration_ms: Some(1_800_000),
-                }],
+                control_max_age: Duration::minutes(15),
+                tank_max_age: Duration::minutes(15),
                 required: Vec::new(),
             }
         }
@@ -345,7 +357,8 @@ pub(crate) mod fixture {
                 leak: LeakState::Clear,
                 sensor_bindings: &self.bindings,
                 actuator_binding: Some(&self.actuator),
-                measurement_policies: &self.policies,
+                control_max_age: self.control_max_age,
+                tank_max_age: self.tank_max_age,
                 automation: &self.automation,
                 delivered_last_24h_ml: 0.0,
                 doses_this_cycle: 0,
@@ -938,6 +951,87 @@ mod safety_gate {
             let mut inputs = scene.inputs();
             inputs.active_lockout = Some(LockoutReason::StaleData);
             assert_eq!(safety_gate(&inputs), None);
+        }
+        /// **SAFETY-005's backstop.** A freshness limit past the ceiling is
+        /// clamped to it, so a caller that forgets to apply the cadence bound
+        /// cannot authorise watering on arbitrarily old data.
+        ///
+        /// The ceiling is `3 x 3600 s`, the slowest cadence the edge will ever
+        /// configure, tripled. A day-long limit was what an operator could
+        /// previously set through `PUT /measurement-policies/{kind}`, which
+        /// validates `stale_after_ms` only as positive.
+        #[test]
+        fn safety_005_an_unbounded_freshness_limit_is_clamped_to_the_ceiling() {
+            let mut scene = Scene {
+                control_max_age: Duration::hours(24),
+                ..Scene::default()
+            };
+            scene.soil.received_at = now() - Duration::hours(4);
+            assert_eq!(
+                safety_gate(&scene.inputs()),
+                Some(LockoutReason::StaleData),
+                "a 24-hour limit must not authorise watering on 4-hour-old data"
+            );
+
+            // Inside the ceiling the caller's number is honoured unchanged, so
+            // the clamp catches mistakes without tightening real configuration.
+            scene.soil.received_at = now() - Duration::hours(2);
+            assert_eq!(safety_gate(&scene.inputs()), None);
+        }
+
+        /// A non-positive limit is uncertainty, not permission (SAFETY-012).
+        #[test]
+        fn safety_012_a_non_positive_freshness_limit_falls_back_to_the_floor() {
+            for limit in [Duration::zero(), Duration::seconds(-1)] {
+                let mut scene = Scene {
+                    control_max_age: limit,
+                    ..Scene::default()
+                };
+                scene.soil.received_at = now() - Duration::minutes(16);
+                assert_eq!(
+                    safety_gate(&scene.inputs()),
+                    Some(LockoutReason::StaleData),
+                    "{limit:?}"
+                );
+            }
+        }
+
+        /// **The two limits are separate numbers.** An earlier revision passed
+        /// the whole policy list and took the minimum across every kind, so a
+        /// tight reservoir policy silently tightened the soil threshold and a
+        /// loose one loosened it. Each check now reads only its own limit.
+        #[test]
+        fn the_tank_limit_and_the_control_limit_do_not_couple() {
+            // A stale tank with a fresh control reading blocks on the tank...
+            let mut scene = Scene {
+                tank_max_age: Duration::minutes(5),
+                ..Scene::default()
+            };
+            scene.soil.received_at = now();
+            let mut inputs = scene.inputs();
+            inputs.tank = Some(TankState::Level {
+                percent: 70.0,
+                age: Duration::minutes(10),
+            });
+            assert_eq!(safety_gate(&inputs), Some(LockoutReason::Uncertain));
+
+            // ...and tightening the tank limit further leaves the control
+            // reading's own threshold untouched.
+            let mut scene = Scene {
+                tank_max_age: Duration::seconds(1),
+                ..Scene::default()
+            };
+            scene.soil.received_at = now() - Duration::minutes(10);
+            let mut inputs = scene.inputs();
+            inputs.tank = Some(TankState::Level {
+                percent: 70.0,
+                age: Duration::zero(),
+            });
+            assert_eq!(
+                safety_gate(&inputs),
+                None,
+                "a 1-second tank limit must not make a 10-minute-old soil reading stale"
+            );
         }
     }
 }

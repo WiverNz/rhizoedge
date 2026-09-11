@@ -32,7 +32,7 @@ use rhizo_domain::irrigation::types::{
     RequiredInputState, TankState, WeightSample,
 };
 use rhizo_domain::irrigation::{evaluate, safety_gate};
-use rhizo_domain::plant::{ActuatorBinding, AutomationPolicy, MeasurementPolicy, SensorBinding};
+use rhizo_domain::plant::{ActuatorBinding, AutomationPolicy, SensorBinding};
 use rhizo_domain::profile::{PlantProfile, SoilSample};
 use rhizo_domain::state::{IrrigationState, LockoutReason};
 use rhizo_mqtt_contract::DeviceId;
@@ -54,7 +54,8 @@ struct Scene {
     pre_dose_weight: Option<WeightSample>,
     actuator: Option<ActuatorBinding>,
     bindings: Vec<SensorBinding>,
-    policies: Vec<MeasurementPolicy>,
+    control_max_age: Duration,
+    tank_max_age: Duration,
     required: Vec<RequiredInput>,
     tank: Option<TankState>,
     leak: LeakState,
@@ -96,18 +97,8 @@ impl Scene {
                 kind: ActuatorKind::IrrigationPump,
             }),
             bindings: Vec::new(),
-            policies: vec![MeasurementPolicy {
-                kind: MeasurementKind::SoilMoisture,
-                target_min: Some(28.0),
-                target_max: Some(45.0),
-                warning_low: None,
-                warning_high: None,
-                critical_low: None,
-                critical_high: None,
-                stale_after_ms: 900_000,
-                hysteresis: None,
-                confirm_duration_ms: Some(1_800_000),
-            }],
+            control_max_age: Duration::minutes(15),
+            tank_max_age: Duration::minutes(15),
             required: Vec::new(),
             tank: Some(TankState::Level {
                 percent: 70.0,
@@ -141,7 +132,8 @@ impl Scene {
             leak: self.leak,
             sensor_bindings: &self.bindings,
             actuator_binding: self.actuator.as_ref(),
-            measurement_policies: &self.policies,
+            control_max_age: self.control_max_age,
+            tank_max_age: self.tank_max_age,
             automation: &self.automation,
             delivered_last_24h_ml: self.delivered,
             doses_this_cycle: self.doses,

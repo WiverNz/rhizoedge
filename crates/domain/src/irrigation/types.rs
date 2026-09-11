@@ -24,7 +24,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::plant::{ActuatorBinding, AutomationPolicy, MeasurementPolicy, SensorBinding};
+use crate::plant::{ActuatorBinding, AutomationPolicy, SensorBinding};
 use crate::profile::SoilSample;
 use crate::recommend::Reason;
 use crate::state::{IrrigationState, LockoutReason};
@@ -230,8 +230,32 @@ pub struct IrrigationInputs<'a> {
     pub sensor_bindings: &'a [SensorBinding],
     /// The optional actuation route. `None` is a normal monitoring plant.
     pub actuator_binding: Option<&'a ActuatorBinding>,
-    /// Per-measurement policies, as configured on this plant.
-    pub measurement_policies: &'a [MeasurementPolicy],
+    /// The freshness limit the **control** measurement is judged against.
+    ///
+    /// **Resolved by the caller, not re-derived here.** It is
+    /// `min(the plant's own stale_after_ms, max(15 min, 3 x telemetry
+    /// interval))` — the stricter of the plant's policy and the cadence bound,
+    /// which is SAFETY-005's formula and PRD 040 F-040-26's requirement. The
+    /// gate clamps whatever arrives to [`MAX_FRESHNESS_SECONDS`] regardless, so
+    /// an adapter that forgets the cadence half cannot widen the window without
+    /// limit.
+    ///
+    /// It carries a single kind's limit on purpose. An earlier revision passed
+    /// the whole `MeasurementPolicy` list and took the minimum across every
+    /// kind, which coupled the soil threshold to the ambient-temperature policy
+    /// and read nothing like what its own documentation claimed.
+    ///
+    /// **No power field may reach this**: a battery device declaring an
+    /// 86 400-second wake interval must not thereby make a three-day-old
+    /// moisture reading actionable (ADR-018 §7).
+    pub control_max_age: Duration,
+    /// The freshness limit the **reservoir** reading is judged against.
+    ///
+    /// Resolved the same way as [`Self::control_max_age`], from the tank kind's
+    /// own policy and the tank device's own cadence. A plant may read its soil
+    /// from one device and its tank from another, so the two limits are
+    /// genuinely separate numbers and not one number used twice.
+    pub tank_max_age: Duration,
     /// The automation configuration: doses, budgets, and durations.
     pub automation: &'a AutomationPolicy,
     /// The rolling 24-hour total, **derived from `watering_events` rows**.
@@ -495,7 +519,8 @@ mod types {
             leak: LeakState::Unknown,
             sensor_bindings: &[],
             actuator_binding: None,
-            measurement_policies: &[],
+            control_max_age: Duration::minutes(15),
+            tank_max_age: Duration::minutes(15),
             automation: &automation,
             delivered_last_24h_ml: 0.0,
             doses_this_cycle: 0,

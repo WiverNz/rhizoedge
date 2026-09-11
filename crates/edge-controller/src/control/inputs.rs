@@ -26,9 +26,7 @@ use rhizo_domain::irrigation::types::{
     EvaluationMode, IrrigationInputs, LeakState, RequiredInput, RequiredInputState, TankState,
     WeightSample, state_from_str,
 };
-use rhizo_domain::plant::{
-    ActuatorBinding, AutomationPolicy, BindingRole, MeasurementPolicy, SensorBinding,
-};
+use rhizo_domain::plant::{ActuatorBinding, AutomationPolicy, BindingRole, SensorBinding};
 use rhizo_domain::profile::SoilSample;
 use rhizo_domain::state::IrrigationState;
 use rhizo_mqtt_contract::payload::MeasurementKind;
@@ -65,8 +63,11 @@ pub struct Gathered {
     pub bindings: Vec<SensorBinding>,
     /// The optional actuation route.
     pub actuator: Option<ActuatorBinding>,
-    /// Per-measurement policies.
-    pub policies: Vec<MeasurementPolicy>,
+    /// The resolved control-freshness limit, already narrowed by the cadence
+    /// bound. See [`resolved_freshness`].
+    pub control_max_age: Duration,
+    /// The resolved reservoir-freshness limit, narrowed the same way.
+    pub tank_max_age: Duration,
     /// Required measurements other than leak and tank.
     pub required: Vec<RequiredInput>,
     /// The rolling 24-hour total, derived from rows.
@@ -113,7 +114,8 @@ impl Gathered {
             leak: self.leak,
             sensor_bindings: &self.bindings,
             actuator_binding: self.actuator.as_ref(),
-            measurement_policies: &self.policies,
+            control_max_age: self.control_max_age,
+            tank_max_age: self.tank_max_age,
             automation: &self.automation,
             delivered_last_24h_ml: self.delivered_last_24h_ml,
             doses_this_cycle: self.doses_this_cycle,
@@ -257,7 +259,16 @@ pub async fn gather(
         leak,
         bindings: loaded.bindings(),
         actuator: loaded.actuator.clone(),
-        policies: loaded.policies.clone(),
+        control_max_age: resolved_freshness(db, loaded, loaded.control().map(|b| &b.binding))
+            .await?,
+        tank_max_age: resolved_freshness(
+            db,
+            loaded,
+            loaded
+                .binding_for(&MeasurementKind::TankLevel)
+                .map(|b| &b.binding),
+        )
+        .await?,
         required,
         delivered_last_24h_ml: delivered as f32,
         doses_this_cycle: stored.as_ref().map_or(0, |row| {
@@ -286,6 +297,37 @@ pub async fn gather(
         active_command_id: stored.and_then(|row| row.active_command_id),
         actuator_device,
     })
+}
+
+/// The freshness limit the gate judges one bound stream against.
+///
+/// **The cadence bound is applied here, and this is the only place it can be.**
+/// The domain cannot apply it — `max(15 min, 3 x telemetry interval)` needs the
+/// device's configured cadence, which is a row this adapter reads and the gate
+/// never sees. Passing the raw `MeasurementPolicy.stale_after_ms` through
+/// instead is what let an operator-set limit of a day authorise automatic
+/// watering on day-old soil data: `stale_after_ms` is validated only as
+/// positive, so it admits values up to about forty-nine days, and the cadence
+/// bound is the only thing that has ever capped it (SAFETY-005, PRD 040
+/// F-040-26).
+///
+/// An unbound kind answers the 15-minute floor rather than "no limit". There is
+/// nothing to read, so the gate refuses on absence long before a freshness
+/// limit matters — but the number it is handed must still be the conservative
+/// one, because absence is not permission (SAFETY-012).
+async fn resolved_freshness(
+    db: &EdgeDb,
+    loaded: &Loaded,
+    binding: Option<&SensorBinding>,
+) -> Result<Duration, rhizo_storage::StorageError> {
+    let Some(binding) = binding else {
+        return Ok(Duration::seconds(
+            crate::device::health::STALE_FLOOR_SECONDS,
+        ));
+    };
+    Ok(Duration::milliseconds(
+        freshness_ms(db, loaded, binding).await?,
+    ))
 }
 
 /// The plant's control-freshness threshold for one kind, in milliseconds.

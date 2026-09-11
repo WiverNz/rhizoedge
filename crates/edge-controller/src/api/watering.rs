@@ -1160,4 +1160,86 @@ mod water {
         let (status, _) = api.get("/api/v1/commands/unknown").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
+    /// **SAFETY-005, the regression this pass closed.** `stale_after_ms` is
+    /// validated only as positive, so an operator may set a day. The cadence
+    /// bound — `min(policy, max(15 min, 3 x telemetry interval))` — is what
+    /// stops that becoming a day-long licence to water on old data, and it was
+    /// applied on the *recommendation* path while the **gate** read the raw
+    /// stored value. A 4-hour-old reading was therefore accepted and a real
+    /// command published.
+    ///
+    /// Every policy is widened here, not just soil: the gate used to take the
+    /// minimum across all kinds, so a default leak or tank policy masked the
+    /// hole. Both halves are fixed, so both are widened to prove it.
+    #[tokio::test]
+    async fn safety_005_a_widened_stale_after_cannot_outlive_the_cadence_bound() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        for (kind, body) in [
+            (
+                "soil_moisture",
+                serde_json::json!({
+                    "target_min": 28.0,
+                    "target_max": 45.0,
+                    "stale_after_ms": 86_400_000i64,
+                    "confirm_duration_ms": 1_800_000,
+                }),
+            ),
+            (
+                "leak_state",
+                serde_json::json!({ "stale_after_ms": 86_400_000i64 }),
+            ),
+            (
+                "tank_level",
+                serde_json::json!({ "stale_after_ms": 86_400_000i64 }),
+            ),
+        ] {
+            let (status, value) = api
+                .json(
+                    "PUT",
+                    &format!("/api/v1/plants/monstera-01/measurement-policies/{kind}"),
+                    body,
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{value}");
+        }
+
+        // One hour with no soil reading. Leak and tank stay fresh, so the only
+        // thing that can refuse is the control sample's own age.
+        //
+        // One hour, deliberately: the device's cadence is 300 s, so the bound
+        // is max(15 min, 15 min) and an hour is far past it — while staying
+        // *inside* the domain's three-hour backstop. A four-hour sample would
+        // be refused by the clamp alone and this test would still pass with the
+        // adapter's narrowing removed, pinning nothing.
+        // `gate::safety_005_an_unbounded_freshness_limit_is_clamped_to_the_ceiling`
+        // is what covers the backstop.
+        api.clock.advance(chrono::Duration::hours(1));
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", false)
+            .await;
+        api.sample_from(
+            api.clock.now(),
+            "tank-0",
+            "reservoir",
+            "tank_level",
+            "percent",
+            70.0,
+        )
+        .await;
+
+        let (status, body) = api
+            .json(
+                "POST",
+                "/api/v1/plants/monstera-01/water",
+                serde_json::json!({ "ml": 30.0, "mode": "recommended" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "stale_data");
+        assert!(
+            api.transport.commands().is_empty(),
+            "nothing may be published for a refused dose"
+        );
+    }
 }

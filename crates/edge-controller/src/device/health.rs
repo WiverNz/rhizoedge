@@ -384,4 +384,20 @@ mod staleness {
         assert_eq!(row.get::<i64, _>("missed_wake_count"), 0);
         assert_eq!(row.get::<Option<i64>, _>("expected_wake_at"), None);
     }
+    /// The domain's backstop and this module's cadence formula must agree.
+    ///
+    /// `rhizo_domain::irrigation::gate::MAX_FRESHNESS_SECONDS` is documented as
+    /// "the slowest cadence the edge will ever configure, tripled" and the gate
+    /// clamps every freshness limit to it. The two constants live in different
+    /// crates because the domain may not read a device row, so nothing but this
+    /// test stops them drifting — and a drift would make the clamp either
+    /// tighter than a legitimate configuration or wider than the bound it is
+    /// meant to backstop.
+    #[test]
+    fn the_domain_ceiling_matches_the_slowest_configurable_cadence() {
+        assert_eq!(
+            rhizo_domain::irrigation::gate::MAX_FRESHNESS_SECONDS,
+            max_sample_age_seconds(MAX_CONFIGURABLE_INTERVAL_SECONDS),
+        );
+    }
 }
