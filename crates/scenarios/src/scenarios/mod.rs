@@ -636,6 +636,41 @@ fn duplicate_command<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     })
 }
 
+/// Both simulators' own state, for a failure message.
+///
+/// **PRD 080 F-080-15: the last known state, not a bare timeout.**
+/// [`wait_simulator`] has reported this since M8 and its comment says why — "did
+/// not reach the expected condition" on its own means a trip to the container
+/// to ask what it was. Two of the four waits in this file did not, and the gap
+/// cost a real investigation: a `scenario_battery_awake_cycle` failure said only
+/// which topics the broker had carried, and establishing that the device had in
+/// fact completed the dose and been acknowledged meant reading 2.7 MB of
+/// container logs. `pending_results` alone would have said it.
+///
+/// Both simulators are reported rather than one, because the caller is a
+/// predicate over MQTT and does not necessarily know which device it was
+/// waiting on — and because a battery scenario's answer is quite often in the
+/// *other* device's state. Each is best effort: a simulator that cannot be
+/// reached is itself a finding, and must not replace the original failure with
+/// a transport error.
+async fn device_states(h: &Harness) -> String {
+    let mut out = String::new();
+    for (name, url) in [
+        ("device-simulator", &h.simulator_url),
+        ("battery-simulator", &h.battery_url),
+    ] {
+        let state = match h.get_json(&format!("{url}/sim/state")).await {
+            Ok(state) => state.to_string(),
+            Err(error) => format!("<unreachable: {error}>"),
+        };
+        out.push_str(&format!(
+            "
+  {name}: {state}"
+        ));
+    }
+    out
+}
+
 async fn wait_mqtt(
     h: &Harness,
     predicate: impl Fn(&crate::harness::CapturedMqtt) -> bool,
@@ -659,7 +694,10 @@ async fn wait_mqtt(
         .collect();
     topics.sort_unstable();
     topics.dedup();
-    bail!("expected MQTT publication was not captured; topics seen: {topics:?}")
+    bail!(
+        "expected MQTT publication was not captured after {attempts} polls;          topics seen: {topics:?}; device state:{}",
+        device_states(h).await
+    )
 }
 
 /// Waits for an MQTT publication, budgeted in **wall-clock time**, and says
@@ -691,7 +729,6 @@ async fn wait_mqtt(
 async fn wait_mqtt_until(
     h: &Harness,
     budget: Duration,
-    sim_url: &str,
     what: &str,
     predicate: impl Fn(&crate::harness::CapturedMqtt) -> bool,
 ) -> Result<crate::harness::CapturedMqtt> {
@@ -709,15 +746,9 @@ async fn wait_mqtt_until(
                 .collect();
             topics.sort_unstable();
             topics.dedup();
-            // Best effort: a simulator that cannot be reached is itself the
-            // answer, and must not replace the original failure with a
-            // transport error.
-            let state = match h.get_json(&format!("{sim_url}/sim/state")).await {
-                Ok(state) => state.to_string(),
-                Err(error) => format!("<unreachable: {error}>"),
-            };
             bail!(
-                "waiting for {what} on MQTT gave up after {budget:?};                  topics seen: {topics:?}; simulator state: {state}"
+                "waiting for {what} on MQTT gave up after {budget:?};                  topics seen: {topics:?}; device state:{}",
+                device_states(h).await
             );
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -3596,25 +3627,15 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         // this takes even pinned to two CPUs — the wake is a quarter of a real
         // second at 3600x — so a timeout here means something stopped, not that
         // the machine was busy.
-        wait_mqtt_until(
-            h,
-            Duration::from_secs(60),
-            &h.battery_url,
-            "the command result",
-            |m| m.topic.ends_with("/commands/result"),
-        )
+        wait_mqtt_until(h, Duration::from_secs(60), "the command result", |m| {
+            m.topic.ends_with("/commands/result")
+        })
         .await?;
-        wait_mqtt_until(
-            h,
-            Duration::from_secs(60),
-            &h.battery_url,
-            "the sleep announcement",
-            |m| {
-                m.topic.ends_with("/status")
-                    && serde_json::from_slice::<Value>(&m.payload)
-                        .is_ok_and(|v| v["data"]["reason"] == "sleeping")
-            },
-        )
+        wait_mqtt_until(h, Duration::from_secs(60), "the sleep announcement", |m| {
+            m.topic.ends_with("/status")
+                && serde_json::from_slice::<Value>(&m.payload)
+                    .is_ok_and(|v| v["data"]["reason"] == "sleeping")
+        })
         .await?;
         let mqtt = h.mqtt().await;
         let result = mqtt
@@ -3651,7 +3672,6 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         let interrupted = wait_mqtt_until(
             h,
             Duration::from_secs(60),
-            &h.battery_url,
             "the interrupted result after a power cut mid-dose",
             |m| {
                 m.topic.ends_with("/commands/result")
@@ -3775,7 +3795,16 @@ async fn wait_simulator_url(
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    bail!("simulator state did not reach the expected condition")
+    // The last state, for the same reason `wait_simulator` reports it: this
+    // wait is used by the battery scenarios, which are the ones whose failures
+    // are hardest to reconstruct after the fact.
+    let last = h
+        .get_json(&format!("{url}/sim/state"))
+        .await
+        .unwrap_or_else(|error| json!({ "unreadable": error.to_string() }));
+    bail!(
+        "simulator state did not reach the expected condition after {attempts}          polls; last observed: {last}"
+    )
 }
 
 macro_rules! scenarios {
