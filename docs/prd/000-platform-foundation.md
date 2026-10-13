@@ -19,7 +19,7 @@ and consistent; that is a property of the foundation, not of good intentions.
 ## Goals
 
 1. A three-workspace Rust layout per [ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md).
-2. Rust **1.98.0** pinned so `-D warnings` is reproducible.
+2. Rust **1.99.0** pinned so `-D warnings` is reproducible.
 3. `fmt` / `clippy` / `test` green on an empty-but-real workspace.
 4. Docker Compose skeleton with Mosquitto configured for authenticated access.
 5. `rhizo-telemetry` providing tracing and metrics wiring.
@@ -53,7 +53,7 @@ clone → cargo test --workspace → green
 | ID | Requirement |
 |---|---|
 | F-000-01 | Root workspace with `exclude = ["firmware", "ui"]` and `[workspace.dependencies]` for all shared deps |
-| F-000-02 | `rust-toolchain.toml` pins **Rust 1.98.0** with `rustfmt` and `clippy` |
+| F-000-02 | `rust-toolchain.toml` pins **Rust 1.99.0** with `rustfmt` and `clippy` |
 | F-000-03 | `clippy.toml` with `disallowed-methods` reserved (populated in M1-013) |
 | F-000-04 | Workspace lints: `unwrap_used` and `expect_used` denied for library crates, allowed in tests |
 | F-000-05 | `rhizo-telemetry` builds a `tracing` subscriber selectable between JSON, compact, and pretty |
@@ -169,7 +169,7 @@ None. M0 is the root of the dependency graph.
    layers supplied the bad value — for environment variables as well as files.
    The full comparison is recorded in the module documentation of
    `crates/edge-controller/src/config/mod.rs`.
-2. **Exact pinned Rust version.** Resolved: **1.98.0**, recorded in
+2. **Exact pinned Rust version.** Originally resolved as **1.98.0**; raised to **1.99.0** on 2026-10-13, recorded in
    `rust-toolchain.toml`. The firmware workspace may differ; see
    [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md).
 

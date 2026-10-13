@@ -58,11 +58,11 @@ suite that can silently skip its own subject eventually proves nothing.
 
 ```bash
 cd firmware/node-app  && cargo test          # 139 tests, no board, no ESP-IDF
-cd firmware/esp32-node && cargo build --release   # needs the ESP toolchain
+cd firmware/esp32-node && cargo build --release --ignore-rust-version   # needs the ESP toolchain
 ```
 
 `firmware/node-app` is where every firmware safety test lives. It has no ESP-IDF
-dependency and runs on the host pin (1.98.0), so it needs no setup at all. See
+dependency and runs on the host pin (1.99.0), so it needs no setup at all. See
 [firmware/README.md](firmware/README.md).
 
 **`Metrics::new()` is a process-wide singleton.** It caches in a `OnceLock`, so
@@ -91,7 +91,7 @@ M9 built two workspaces, and the split is the thing to understand before
 touching either:
 
 ```text
-firmware/node-app/    host toolchain 1.98.0, NO esp-idf dependency
+firmware/node-app/    host toolchain 1.99.0, NO esp-idf dependency
                       every safety decision: the gate's caller, the ledger,
                       the budget, the policy store, the buffer, the wake
                       machine. 139 tests, no board, no setup.
@@ -256,9 +256,9 @@ what that means in code.
 - **Rust only.** No Go, no Node.js, no TypeScript. The Tauri UI uses the
   Cargo/Trunk workflow specifically to avoid `npm`. A `package.json` appearing
   anywhere is a defect.
-- **MSRV is Rust 1.98.0**; `rust-toolchain.toml` currently pins 1.98.0. The pin
+- **MSRV is Rust 1.99.0**; `rust-toolchain.toml` currently pins 1.99.0. The pin
   may move to a newer stable as a deliberate change, but **no change may silently
-  raise the MSRV**, and nothing goes below 1.98.0. The firmware workspace may pin
+  raise the MSRV**, and nothing goes below 1.99.0. The firmware workspace may pin
   a different ESP-compatible toolchain (ADR-007); the host workspace is never
   downgraded to match it.
 - **`rhizo-domain` is pure.** No I/O, no `Utc::now()`. Clippy enforces the clock
@@ -323,7 +323,7 @@ cargo run -p rhizo-docscheck
 
 # Needs the ESP toolchain (ADR-007). On Windows CARGO_TARGET_DIR must be 15
 # characters or fewer, or `esp-idf-sys` refuses the output directory.
-(cd firmware/esp32-node && cargo build --release)
+(cd firmware/esp32-node && cargo build --release --ignore-rust-version)
 ```
 
 `cargo test safety_` is the project's answer to "are the invariants still
@@ -936,7 +936,7 @@ learned this project from documents written earlier, these are the corrections:
 | Six hard-coded measurements, four telemetry topics | Typed `MeasurementKind` enum, **one batched telemetry topic** ([ADR-017](docs/adr/017-extensible-measurement-model.md)) |
 | Wide `measurements` table | Narrow typed-kind table with `batch_id` and `origin` |
 | 12 safety invariants | **20** — SAFETY-013…020 appended; the first twelve unchanged and never renumbered |
-| Rust pinned at exactly 1.98.0 | **MSRV 1.98.0**; the pin may move forward deliberately |
+| Rust pinned at exactly 1.98.0 | **MSRV 1.99.0**; the pin may move forward deliberately |
 | Devices sync SNTP from the internet | Devices take wall time from **the Edge over MQTT** (`edge.time`, never retained), so a site outage does not disable watering |
 
 Two things did **not** change and are worth restating: M0 was not reopened, and

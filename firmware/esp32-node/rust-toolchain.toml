@@ -7,7 +7,8 @@
 # reason the host workspace pins an exact stable: CI runs with `-D warnings`,
 # and a floating nightly turns a green main branch red with no code change.
 #
-# The host workspace stays on 1.98.0 and is never downgraded to match this.
+# The host workspace pins its own stable toolchain and is never downgraded
+# to match this embedded exception.
 # `rust-src` is what `build-std` compiles from.
 
 [toolchain]

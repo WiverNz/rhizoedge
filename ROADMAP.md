@@ -4,7 +4,7 @@ The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
 **Planning status:** complete. **Implementation status:** M0–M8 complete; **M9 in progress** — its board-free work is substantially complete and its hardware verification is pending a physical ESP32-C3.
-**Host Rust:** MSRV **1.98.0**; `rust-toolchain.toml` currently pins 1.98.0; the
+**Host Rust:** MSRV **1.99.0**; `rust-toolchain.toml` currently pins 1.99.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
 
@@ -601,7 +601,7 @@ validation · notifications **dispatched from a separate task** · backup with
 verified restore · systemd deployment for a Raspberry Pi · measurement
 downsampling that never aggregates the ledger · multi-device scenarios · UI at
 scale · **release CI publishing checksummed binaries from a `v*` tag** · **a CI
-matrix building on the MSRV 1.98.0 and on current stable, so the MSRV cannot rise
+matrix building on the MSRV 1.99.0 and on current stable, so the MSRV cannot rise
 by accident** · **an opt-in `observability` Compose profile adding Prometheus and
 Grafana, which nothing depends on** · **battery fleet operations: voltage trending, coalesced
 low-battery and missed-wake notifications, power-mode filtering, and deployment
@@ -950,27 +950,27 @@ never marked `DONE` on the basis of closed issues alone.
 ## 6. Toolchain
 
 ```text
-MSRV                 1.98.0    the minimum host Rust the project supports
-current tested pin   1.98.0    what rust-toolchain.toml selects today
+MSRV                 1.99.0    the minimum host Rust the project supports
+current tested pin   1.99.0    what rust-toolchain.toml selects today
 future pin           may move to any newer stable, deliberately
 ```
 
-- **MSRV is 1.98.0.** The host workspace and the UI must keep compiling on it.
+- **MSRV is 1.99.0.** The host workspace and the UI must keep compiling on it.
 - **The pin may be raised** to a newer stable as a standalone change. Raising the
   pin does not by itself raise the MSRV.
 - **No change may silently raise the MSRV.** Using a feature stabilised after
-  1.98.0 requires an explicit decision and an update to ADR-001, README, and this
+  1.99.0 requires an explicit decision and an update to ADR-001, README, and this
   section.
-- **Nothing is downgraded below 1.98.0**, including to match an embedded
+- **Nothing is downgraded below 1.99.0**, including to match an embedded
   constraint.
 - M13-014 adds a CI matrix verifying **both** the MSRV and current stable, so an
   accidental bump fails the build rather than reaching a user.
 
 | Component | Toolchain |
 |---|---|
-| Host workspace (`crates/*`) | MSRV **1.98.0**; currently pinned to 1.98.0 in `rust-toolchain.toml` |
+| Host workspace (`crates/*`) | MSRV **1.99.0**; currently pinned to 1.99.0 in `rust-toolchain.toml` |
 | UI workspace (`ui/rhizo-ui`) | same version plus the `wasm32-unknown-unknown` target |
-| Firmware (`firmware/esp32-node`) | 1.98.0 **where the Espressif ecosystem supports it**; otherwise a separately pinned ESP-compatible toolchain, documented as an embedded exception in [ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md) and verified by M9-001 |
+| Firmware (`firmware/esp32-node`) | `nightly-2026-07-01`, a separately pinned ESP-compatible toolchain, documented as an embedded exception in [ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md) and verified by M9-001 |
 
 The firmware workspace is excluded from the root workspace precisely so it can
 pin a different toolchain without affecting host development. The host
@@ -1032,8 +1032,8 @@ check across twenty resets — see [docs/reports/M9.md](docs/reports/M9.md) §8.
 M9-001 resolved the toolchain question empirically: stock Rust 1.98.0 **cannot**
 build `riscv32imc-esp-espidf` (a tier-3 target with no distributed `std`), so
 the firmware *image* workspace pins a dated nightly with `-Z build-std`. The
-host workspace and the firmware *application* workspace are both unchanged at
-1.98.0, so the safety logic is still compiled by the project MSRV
+host workspace and the firmware *application* workspace are now both pinned to
+1.99.0, so the safety logic is still compiled by the project MSRV
 (ADR-001, ADR-007).
 
 M8's report is [docs/reports/M8.md](docs/reports/M8.md).

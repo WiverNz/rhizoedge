@@ -54,8 +54,8 @@ jobs:
       - uses: actions/checkout@v4
 
       # Installs exactly what rust-toolchain.toml pins. The version lives in
-      # that file and nowhere else, so a bump is one deliberate edit rather
-      # than a hunt through the CI config.
+      # that file rather than a duplicated CI setting; Docker builders and
+      # firmware/node-app carry matching exact host pins.
       - name: Install the pinned toolchain
         run: |
           rustup show active-toolchain
@@ -355,16 +355,19 @@ jobs:
           echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"
           dirname "$LIBCLANG_PATH" >> "$GITHUB_PATH"
 
+      # Shared crates declare the host MSRV (1.99.0). The retained ESP nightly
+      # predates it; bypass only Cargo metadata here and compile the code to
+      # verify embedded compatibility. Host jobs enforce the MSRV normally.
       - name: Build the image
         if: steps.changed.outputs.run == 'true'
         working-directory: firmware/esp32-node
-        run: cargo build --release --no-default-features --features ${{ matrix.profile }}
+        run: cargo build --release --ignore-rust-version --no-default-features --features ${{ matrix.profile }}
 
       - name: cargo clippy
         if: steps.changed.outputs.run == 'true'
         working-directory: firmware/esp32-node
         run: >-
-          cargo clippy --release --all-targets
+          cargo clippy --release --ignore-rust-version --all-targets
           --no-default-features --features ${{ matrix.profile }} -- -D warnings
 
       # Zero or two board profiles must fail loudly and say why. Asserted on
@@ -376,14 +379,14 @@ jobs:
         working-directory: firmware/esp32-node
         run: |
           set -euo pipefail
-          if cargo build --release --no-default-features 2>/tmp/none.txt; then
+          if cargo build --release --ignore-rust-version --no-default-features 2>/tmp/none.txt; then
             echo "building with no board profile succeeded; the guard is gone" >&2
             exit 1
           fi
           grep -q "no board profile is selected" /tmp/none.txt
           grep -q "board-devkitm1" /tmp/none.txt
 
-          if cargo build --release --features board-devkitm1,board-xiao-esp32c3 2>/tmp/two.txt; then
+          if cargo build --release --ignore-rust-version --features board-devkitm1,board-xiao-esp32c3 2>/tmp/two.txt; then
             echo "building with two board profiles succeeded; the guard is gone" >&2
             exit 1
           fi

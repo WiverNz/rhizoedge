@@ -157,7 +157,7 @@ Milestones M0–M8 must therefore pass with **no hardware attached**.
 
 | Layer | Choice | ADR |
 |---|---|---|
-| All software and firmware | Rust **1.98.0** (host); see ADR-007 for firmware | [ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md) |
+| All software and firmware | Rust **1.99.0** (host); see ADR-007 for firmware | [ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md) |
 | Async runtime (host) | Tokio | ADR-001 |
 | Broker | Eclipse Mosquitto | [ADR-002](../adr/002-mqtt-topic-versioning-and-qos.md) |
 | MQTT client (host) | `rumqttc` | ADR-002 |

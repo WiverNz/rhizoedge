@@ -9,7 +9,7 @@ required for anything in this document.
 
 | Tool | Version | Needed for |
 |---|---|---|
-| Rust | **1.98.0**, pinned by `rust-toolchain.toml` | everything |
+| Rust | **1.99.0**, pinned by `rust-toolchain.toml` | everything |
 | Docker + Compose v2 | current | the full topology |
 | `sqlx-cli` | `cargo install sqlx-cli --no-default-features --features sqlite,postgres` | migrations, offline query cache |
 | `mosquitto-clients` | any | manual MQTT inspection |
@@ -551,7 +551,7 @@ Building the image itself needs the ESP toolchain and is a separate concern:
 
 ```bash
 cd firmware/esp32-node
-cargo build --release
+cargo build --release --ignore-rust-version
 ```
 
 Setting that up is documented in [firmware/README.md](../../firmware/README.md)

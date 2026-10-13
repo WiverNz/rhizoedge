@@ -35,7 +35,7 @@ Before changing protocol, safety, actuation, persistence semantics, clocks, or o
 ## Architecture constraints
 
 - Production/runtime implementation is Rust. Do not add Go, Node.js, TypeScript, npm, or `package.json` without an explicit architecture change. The UI uses Tauri/Leptos with Cargo/Trunk.
-- The host MSRV is Rust 1.98.0. Respect `rust-toolchain.toml`; never silently raise the MSRV or downgrade host Rust for embedded tooling. Firmware may use its separately documented ESP toolchain.
+- The host MSRV is Rust 1.99.0. Respect `rust-toolchain.toml`; never silently raise the MSRV or downgrade host Rust for embedded tooling. Firmware may use its separately documented ESP toolchain.
 - `rhizo-domain` is pure and obtains time through `Clock`; no direct wall-clock calls.
 - `rhizo-mqtt-contract` and `rhizo-policy` remain `no_std` compatible and are the shared firmware-facing crates.
 - While connected, the Edge owns high-level decisions and authoritative state. The device is always the final hardware safety boundary.

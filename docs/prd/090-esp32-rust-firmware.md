@@ -142,7 +142,7 @@ edge publishes command.water
 
 | ID | Requirement |
 |---|---|
-| F-090-01 | Own Cargo workspace, own `rust-toolchain.toml`, excluded from the root workspace. Pins **1.98.0 where the Espressif ecosystem supports it**; otherwise the ESP-compatible toolchain, recorded in [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md). The host workspace is never downgraded to match. |
+| F-090-01 | Own Cargo workspace, own `rust-toolchain.toml`, excluded from the root workspace. Pins **`nightly-2026-07-01`**, the ESP-compatible toolchain, recorded in [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md). The host workspace is never downgraded to match. |
 | F-090-02 | Target `riscv32imc-esp-espidf`; `esp-idf-svc` / `esp-idf-hal` pinned to exact versions |
 | F-090-03 | `cargo build --release` succeeds **with no board attached** |
 | F-090-04 | `rhizo-mqtt-contract` and `rhizo-policy` depended on by **path**, `default-features = false` |

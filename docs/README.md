@@ -82,7 +82,7 @@ normalised out of the project plan.
 
 | ADR | Decision |
 |---|---|
-| [ADR-001](adr/001-rust-workspace-and-crate-boundaries.md) | Three workspaces, crate boundaries, Rust 1.98.0 |
+| [ADR-001](adr/001-rust-workspace-and-crate-boundaries.md) | Three workspaces, crate boundaries, Rust 1.99.0 |
 | [ADR-002](adr/002-mqtt-topic-versioning-and-qos.md) | Topic hierarchy, QoS 1, retention, clean sessions |
 | [ADR-003](adr/003-edge-first-ownership-model.md) | Edge owns truth; cloud is an append-only replica |
 | [ADR-004](adr/004-sqlite-edge-persistence-model.md) | SQLite via `sqlx`; the dedup-and-persist transaction |

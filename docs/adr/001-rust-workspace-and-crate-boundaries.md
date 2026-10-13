@@ -75,27 +75,32 @@ The root workspace uses `[workspace.dependencies]` and every member writes
 `tokio = { workspace = true }`. This prevents the common failure where two
 crates disagree on a `chrono` or `uuid` version and types stop unifying.
 
-### Rust version policy: MSRV 1.98.0, pin may move forward
+### Rust version policy: MSRV 1.99.0, pin may move forward
+
+On 2026-10-13, the host MSRV and exact toolchain pin were deliberately raised
+from 1.98.0 to 1.99.0, including `firmware/node-app` and Docker builders.
+The ESP32 image retains `nightly-2026-07-01` (ADR-007). Historical milestone
+reports retain the versions used for their original verification.
 
 Two distinct things, previously conflated:
 
 ```text
-MSRV                  1.98.0   the minimum host Rust the project supports
-current tested pin    1.98.0   what rust-toolchain.toml selects today
+MSRV                  1.99.0   the minimum host Rust the project supports
+current tested pin    1.99.0   what rust-toolchain.toml selects today
 future pin            may move to any newer stable, deliberately
 ```
 
-- **MSRV is 1.98.0.** The host workspace and the UI must keep compiling on it.
-- **`rust-toolchain.toml` currently pins exactly `1.98.0`**, and that file is the
+- **MSRV is 1.99.0.** The host workspace and the UI must keep compiling on it.
+- **`rust-toolchain.toml` currently pins exactly `1.99.0`**, and that file is the
   truth about what CI and developers run today. An exact pin — never `stable` —
   is required so that `-D warnings` is reproducible: a new clippy lint in a later
   release must not turn a green main branch red with no code change.
 - **The pin may be raised to a newer stable** as a deliberate, standalone change.
   Raising the pin does not by itself raise the MSRV.
 - **No change may silently raise the MSRV.** Using a feature stabilised after
-  1.98.0 is an architectural decision requiring an explicit note in the change
+  1.99.0 is an architectural decision requiring an explicit note in the change
   and an update to this ADR, `README.md`, and `ROADMAP.md` §6.
-- **Nothing is ever downgraded below 1.98.0**, including to match an embedded
+- **Nothing is ever downgraded below 1.99.0**, including to match an embedded
   toolchain constraint ([ADR-007](007-esp32-rust-framework-and-toolchain.md)).
 
 The UI workspace uses the same version plus the `wasm32-unknown-unknown` target.

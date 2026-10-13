@@ -10,7 +10,7 @@
 >   and building a workspace: a tag produces checksummed archives for the
 >   components that exist by then, for targets that are actually tested. Nothing
 >   in M1–M8 depends on this.
-> - **MSRV matrix** so an accidental bump past 1.98.0 fails CI rather than
+> - **MSRV matrix** so an accidental bump past 1.99.0 fails CI rather than
 >   reaching a user on an older toolchain
 >   ([ADR-001](../adr/001-rust-workspace-and-crate-boundaries.md)).
 > - **Observability profile**, strictly opt-in. `docker compose up` without
@@ -159,7 +159,7 @@ a notification channel must not add a way for the control loop to block.
 | ID | Requirement |
 |---|---|
 | F-130-60 | A `v*` tag runs release CI and publishes checksummed archives whose binaries report the tagged version |
-| F-130-61 | CI builds on the MSRV 1.98.0 and current stable so an accidental MSRV increase fails visibly |
+| F-130-61 | CI builds on the MSRV 1.99.0 and current stable so an accidental MSRV increase fails visibly |
 | F-130-62 | An opt-in `observability` Compose profile adds Prometheus/Grafana; no normal service or test depends on it and plant history remains in SQL storage |
 
 ## Interfaces

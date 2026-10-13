@@ -53,8 +53,14 @@ espup install --targets all --std
 . $HOME/export-esp.sh             # Windows: . $HOME\export-esp.ps1
 
 cd firmware/esp32-node
-cargo build --release
+cargo build --release --ignore-rust-version
 ```
+
+The ESP32 image retains `nightly-2026-07-01`. Its build commands use
+`--ignore-rust-version` because the shared crates and `node-app` declare the
+host MSRV, now 1.99.0. This bypasses Cargo metadata checking only; the image
+build and Clippy still verify compiler compatibility. Do not use this flag
+for the root workspace or `firmware/node-app` host checks.
 
 ### Windows: `CARGO_TARGET_DIR` must be short
 
@@ -131,7 +137,7 @@ somebody might put in a shared space, so reopening it is explicit.
 Exactly one per build, selected by a Cargo feature:
 
 ```bash
-cargo build --release --no-default-features --features board-devkitm1
+cargo build --release --ignore-rust-version --no-default-features --features board-devkitm1
 ```
 
 | Profile | Board | State |
