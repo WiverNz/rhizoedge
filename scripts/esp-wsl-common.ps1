@@ -40,17 +40,21 @@ function Assert-Usbipd {
     }
 }
 
-# Returns every row of the "Connected:" section matching the ESP bridge, as
-# objects with BusId, VidPid, Device, and State.
+# Runs `usbipd list` and returns the matching rows; exits 2 if usbipd fails.
 function Find-EspDevice {
     $result = Invoke-Usbipd list
-    $output = $result.Output
     if ($result.ExitCode -ne 0) {
         Write-Host 'ERROR: `usbipd list` failed:' -ForegroundColor Red
-        $output | ForEach-Object { Write-Host "  $_" }
+        $result.Output | ForEach-Object { Write-Host "  $_" }
         exit 2
     }
+    return , (ConvertFrom-UsbipdList $result.Output)
+}
 
+# Parses `usbipd list` output and returns every row of its "Connected:" section
+# matching the ESP bridge, as objects with BusId, VidPid, Device, and State.
+# Pure, and never exits: esp-status.ps1 calls it to report rather than act.
+function ConvertFrom-UsbipdList([string[]]$output) {
     $inConnected = $false
     $hits = @()
     foreach ($line in $output) {

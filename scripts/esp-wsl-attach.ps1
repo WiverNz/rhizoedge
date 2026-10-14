@@ -57,6 +57,13 @@ if ($code -ne 0) {
         exit 0
     }
     Write-Host "ERROR: usbipd attach failed (exit $code)." -ForegroundColor Red
+    # Seen after a Windows program had opened the COM port. Retrying in this
+    # state was followed by a Windows bugcheck on the development machine, so
+    # the advice is to replug, never to retry or to bind with --force.
+    if (($out -join "`n") -match 'used by Windows|Device busy') {
+        Write-Host 'Windows still considers the device in use. Do not retry and do not use --force.'
+        Write-Host 'Close any program using the COM port, unplug and replug the board, then run this again.'
+    }
     exit $code
 }
 

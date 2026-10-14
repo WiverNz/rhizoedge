@@ -118,9 +118,53 @@ PowerShell helpers do that:
 - **Re-run attach after a WSL restart, `wsl --shutdown`, or unplugging the
   board.** Attachment does not survive any of them.
 
-Then, in WSL: `espflash list-ports` should list the CP2102N on `/dev/ttyUSB0`,
-and `espflash board-info --port /dev/ttyUSB0` should report an `esp32c3`. While
-the board is attached to WSL, Windows serial tools cannot open it.
+While the board is attached to WSL, Windows serial tools cannot open it.
+
+> **After using the board from Windows, replug it before attaching it to WSL
+> again.** Once a Windows program has opened the COM port, `usbipd attach` can
+> refuse with `Device busy (exported)` / "appears to be used by Windows" even
+> though nothing visibly holds the port. Retrying the attach in that state was
+> followed by a Windows bugcheck (BSOD) on the development machine. Unplug and
+> replug the board instead. Do not reach for `usbipd bind --force`.
+
+### Is the board ready? — `esp-status`
+
+**Run this first** whenever you, or an agent, are unsure whether the real
+ESP32-C3 is usable right now:
+
+```powershell
+.\scripts\esp-status.ps1           # native Windows (PowerShell 5.1 or 7)
+.\scripts\esp-status.ps1 -Json
+```
+
+```bash
+./scripts/esp-status.sh            # inside WSL2 or Linux
+./scripts/esp-status.sh --json
+```
+
+It finds the bridge by VID:PID `10c4:ea60` (it never assumes `COM5` or
+`/dev/ttyUSB0`), checks that the port can be opened, and reads the chip with
+`espflash board-info`. It reports the chip, revision, flash size, crystal,
+radios, and Secure Boot / Flash Encryption state. It never flashes, erases,
+binds, attaches, or detaches, but `board-info` does pulse the reset line, so
+running firmware restarts. The JSON output leaves out the MAC address.
+
+| Exit | State | Meaning |
+|---|---|---|
+| 0 | `READY` | verified, usable from this environment now |
+| 2 | `UNSUPPORTED` | `.ps1` run outside Windows (use the `.sh`); also the `.sh`'s usage error |
+| 10 | `ESPFLASH MISSING` | `espflash` not found |
+| 11 | `NOT CONNECTED` | no matching bridge visible; inside WSL this usually means "not attached" — run `.\scripts\esp-wsl-attach.ps1` from Windows |
+| 12 | `PERMISSION ERROR` | the tty exists but this user cannot open it (usually not in `dialout`) |
+| 13 | `ATTACHED TO WSL` | Windows only: present but owned by WSL2. **Not a fault.** `.\scripts\esp-wsl-detach.ps1` returns it |
+| 14 | `WRONG DEVICE` | the bridge answers, but the chip is not an ESP32-C3 |
+| 15 | `BOARD NOT RESPONDING` | the port opened but the chip did not answer within 60 s |
+| 16 | `MULTIPLE DEVICES` | more than one CP210x; refuses to guess |
+| 17 | `PORT BUSY` | another program holds the port (a serial monitor, usually) |
+
+Inside an agent sandbox the serial device and supplementary groups can be
+hidden, which reads as `NOT CONNECTED` or `PERMISSION ERROR`. Re-run outside the
+sandbox before concluding anything about the hardware.
 
 ## Flashing and monitoring
 
