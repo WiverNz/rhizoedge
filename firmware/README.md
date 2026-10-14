@@ -91,6 +91,37 @@ a warm rebuild after a source edit. Repeated builds need no network.
 
 ---
 
+## Reaching the board from WSL2 (Windows)
+
+On a Windows host that flashes from WSL2, the board's USB-UART bridge has to be
+handed to WSL with [usbipd-win](https://github.com/dorssel/usbipd-win). Two
+PowerShell helpers do that:
+
+```powershell
+.\scripts\esp-wsl-attach.ps1    # board -> WSL2, appears as /dev/ttyUSB0
+.\scripts\esp-wsl-detach.ps1    # board -> Windows, appears as a COM port again
+```
+
+- **Prerequisite:** `usbipd-win` installed on Windows.
+- **One-time bind, as Administrator.** A device usbipd has never shared shows
+  as `Not shared`, and the attach helper stops and prints the command to run in
+  an elevated PowerShell — `usbipd bind --busid <BUSID>`. It never elevates
+  itself. After that, attach and detach need no Administrator rights.
+- **The BUSID is discovered, not configured.** It depends on the USB port and
+  changes when the cable moves, so the helpers find the bridge by VID:PID
+  `10c4:ea60` (Silicon Labs CP210x, including the board's CP2102N) on every run.
+- **More than one matching CP210x connected:** the helpers list the matches
+  and refuse to guess. Unplug the extra one, or call `usbipd` with an explicit
+  `--busid`.
+- **Both are idempotent.** Attaching an attached board or detaching a detached
+  one reports it and exits 0.
+- **Re-run attach after a WSL restart, `wsl --shutdown`, or unplugging the
+  board.** Attachment does not survive any of them.
+
+Then, in WSL: `espflash list-ports` should list the CP2102N on `/dev/ttyUSB0`,
+and `espflash board-info --port /dev/ttyUSB0` should report an `esp32c3`. While
+the board is attached to WSL, Windows serial tools cannot open it.
+
 ## Flashing and monitoring
 
 ```bash
