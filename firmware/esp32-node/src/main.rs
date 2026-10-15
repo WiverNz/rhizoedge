@@ -87,8 +87,11 @@ fn main() {
     // Why this boot happened, before anything overwrites the latched cause.
     let wake_reason = hal::rtc_store::wake_reason();
     let rtc = hal::rtc_store::read();
-    let credited =
-        rhizo_node_app::budget::credit_elapsed(wake_reason, Some(&rtc), hal::clock::monotonic_ms());
+    let credited = rhizo_node_app::budget::credit_elapsed(
+        wake_reason,
+        Some(&rtc),
+        hal::rtc_store::counter_ms(),
+    );
     log::info!("wake_reason {wake_reason:?}, credited {}ms", credited.0);
 
     // ---------------------------------------------------------------- STEP 5
@@ -140,6 +143,8 @@ fn main() {
         "identity {device_id}, boot_generation {}",
         identity.boot_generation
     );
+
+    hal::console::before_network(&mut state, &mut nvs, &mut watchdog);
 
     // ---------------------------------------------------------------- STEP 6
     // Network. Everything above this line has already happened whether or not
@@ -260,6 +265,7 @@ fn main() {
                     &mut cycle,
                     &mut ring,
                     &mut driver,
+                    &mut watchdog,
                 );
                 log::warn!("session ended; reconnecting");
             }

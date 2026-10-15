@@ -137,3 +137,5 @@ firmware/esp32-node/src/app/wake_cycle.rs
 firmware/esp32-node/src/hal/sleep.rs
 firmware/esp32-node/src/hal/rtc_store.rs
 ```
+
+October hardware evidence: real 60-second sleep, timer wake, NVS config retained, and Wi-Fi/MQTT reconnect observed. Active-dose inhibition, durable result completion, accounting restoration and physical rails are not verified. See [M9 physical report](../../reports/M9.md).

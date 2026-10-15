@@ -44,10 +44,11 @@ pub enum Inbound {
 pub struct Session {
     client: EspMqttClient<'static>,
     events: Receiver<Inbound>,
+    device_id: DeviceId,
 }
 
 impl Session {
-    /// Connects, subscribes to the eight exact topics, and returns the session.
+    /// Starts an asynchronous connection. Subscribe only after `Connected`.
     ///
     /// The Last Will is composed here and passed to the constructor, so there
     /// is no window in which a connected client has no will.
@@ -64,7 +65,7 @@ impl Session {
 
         let (tx, events) = channel();
         let own = settings.device_id.clone();
-        let mut client = connect_cb(
+        let client = connect_cb(
             settings,
             &will_topic,
             will_payload.as_bytes(),
@@ -77,8 +78,19 @@ impl Session {
                 }
             },
         )?;
-        subscribe(&mut client, settings.device_id)?;
-        Ok(Self { client, events })
+        Ok(Self {
+            client,
+            events,
+            device_id: settings.device_id.clone(),
+        })
+    }
+
+    /// Establishes subscriptions after the broker accepts this connection.
+    ///
+    /// # Errors
+    /// Returns the transport error if any subscription cannot be sent.
+    pub fn subscribe(&mut self) -> Result<(), esp_idf_sys::EspError> {
+        subscribe(&mut self.client, &self.device_id)
     }
 
     /// The client, for publishing.

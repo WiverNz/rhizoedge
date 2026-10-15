@@ -53,7 +53,7 @@ actually done to it.
 | SAFETY-008 | Cloud unavailability never disables local monitoring | Edge | M7 | ENFORCED |
 | SAFETY-009 | Cloud unavailability never bypasses local watering safety | Edge | M7 | ENFORCED |
 | SAFETY-010 | Edge restart never re-executes a completed command | Edge | M6 | ENFORCED |
-| SAFETY-011 | Device restart during watering converges to pump-off | Device | M9 (fw), M11 (hw) | PLANNED — firmware logic host-tested; **HIL-1 not attempted** |
+| SAFETY-011 | Device restart during watering converges to pump-off | Device | M9 (fw), M11 (hw) | PLANNED — firmware logic host-tested; **HIL-1 unmeasured**; October bare-board bring-up does not prove GPIO safety |
 | SAFETY-012 | Uncertainty defaults to not watering | Edge domain + device | M6 | ENFORCED |
 | SAFETY-013 | Autonomous action requires a validated persisted policy | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator); firmware logic host-tested, hardware pending |
 | SAFETY-014 | Offline doses obey the same caps and hard limits as commanded doses | Device + Edge | M6 | ENFORCED |

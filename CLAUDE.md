@@ -8,8 +8,9 @@ Working notes for Claude Code sessions on this repository.
 
 **Planning is complete. M0 through M8 are implemented and green. M9 is IN
 PROGRESS: its board-free work is substantially complete and its hardware
-verification is pending a physical ESP32-C3 that has been ordered and has not
-arrived.**
+verification is underway on the connected ESP32-C3. Bare-board provisioning,
+Wi-Fi, MQTT and config have partial evidence; HIL safety measurements remain
+blocked on the external pull-down and pulse-capture equipment.**
 
 | | State |
 |---|---|
@@ -29,7 +30,7 @@ arrived.**
 | Post-M7 correction | ✅ done (2026-08-31) — `device.capabilities` (not `…_changed`), events for destructive changes, replayed history forwarded, and one type-checked catalogue; see [docs/reports/M7.md](docs/reports/M7.md) §Post-M7 correction and §14 below |
 | M8 | 18 issues, **DONE** — report in [docs/reports/M8.md](docs/reports/M8.md) |
 | M9 | 22 issues, **IN PROGRESS** — board-free work substantially complete, hardware verification pending; report in [docs/reports/M9.md](docs/reports/M9.md) |
-| M9-022 | ⬜ **next, and hardware-blocked** — needs the board and a multimeter |
+| M9-022 | ⬜ **next, and hardware-blocked** — needs completed physical criteria and oscilloscope/logic-analyzer evidence |
 | M15 | 14 issues, **PLANNED** — per-plant adaptive water model, added 2026-09-01 as planning only; see §15 |
 | M16 | 16 issues, **PLANNED** — verified watering, added 2026-09-01 as planning only; see §16 |
 

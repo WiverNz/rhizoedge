@@ -116,3 +116,16 @@ fn deep_sleep_wake_reason() -> WakeReason {
         _ => WakeReason::Unknown,
     }
 }
+
+/// RTC time across deep sleep, distinct from the since-boot esp_timer clock.
+/// The pinned ESP-IDF 5.5.1 public esp_rtc_time.h declares this C entry point;
+/// esp-idf-sys's default header set does not expose it.
+#[must_use]
+pub fn counter_ms() -> u64 {
+    extern "C" {
+        fn esp_rtc_get_time_us() -> u64;
+    }
+    // SAFETY: the IDF RTC counter accessor takes no pointers or arguments and
+    // serialises access internally. Its uint64_t ABI matches u64.
+    unsafe { esp_rtc_get_time_us() / 1000 }
+}

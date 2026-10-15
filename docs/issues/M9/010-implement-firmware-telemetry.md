@@ -70,3 +70,5 @@ cd firmware/esp32-node && cargo test telemetry::
 ```text
 firmware/esp32-node/src/app/telemetry.rs
 ```
+
+October physical bring-up: online status is observed but measurements remain absent; the image constructs an empty sensor batch. Do not close the physical telemetry criterion. See [M9 physical report](../../reports/M9.md).

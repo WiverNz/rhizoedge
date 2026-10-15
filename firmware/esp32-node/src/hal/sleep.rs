@@ -49,7 +49,7 @@ pub fn enter(
         return Err(NotSleeping::NotAuthorised);
     }
 
-    let slept_at_ms = crate::hal::clock::monotonic_ms();
+    let slept_at_ms = crate::hal::rtc_store::counter_ms();
     let sealed = RtcSleepState::seal(slept_at_ms, boot_generation, cooldown_remaining_ms);
     crate::hal::rtc_store::write(&sealed);
 

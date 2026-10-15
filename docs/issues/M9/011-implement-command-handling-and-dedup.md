@@ -169,3 +169,5 @@ firmware/esp32-node/src/app/command.rs
 firmware/esp32-node/src/app/ledger.rs
 firmware/esp32-node/src/safety/mod.rs
 ```
+
+October hardware evidence: a rejected command replayed its stored result after a user-performed USB power cycle and Edge ACKed it. No executed-dose or GPIO assertion is proved. A 17-command rejection-ledger experiment yielded only four unique retry results; saturation and reboot retry timing remain unresolved. See [M9 physical report](../../reports/M9.md).

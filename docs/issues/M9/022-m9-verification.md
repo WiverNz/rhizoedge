@@ -63,12 +63,12 @@ or from M9-017's event buffer; the reasoning for both is written out in M9-011
 and neither transfers. If the M9 report cannot state what happens when the
 ledger is full, M9 is not done.
 
-**HIL-1 is the gate that matters.** Put a multimeter on the pump driver input
+**HIL-1 is the gate that matters.** Capture the pump driver input with an oscilloscope or suitable logic analyzer
 and confirm it never asserts across twenty resets, a watchdog reset, and ten
 mid-boot power cuts. If the pump so much as twitches, the hardware pull-down is
 wrong and no firmware correctness compensates.
 
-Everything else in M9 can be verified on the host.
+Host tests complement, but do not replace, the physical criteria below.
 
 ## Acceptance criteria
 
@@ -98,7 +98,7 @@ Everything else in M9 can be verified on the host.
 - [ ] **With a board:** it connects, appears online, publishes telemetry, applies config.
 - [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
 - [ ] **With a board:** an oversized command is clamped or rejected.
-- [ ] **With a board:** HIL-1 passes on a multimeter.
+- [ ] **With a board:** HIL-1 passes with transient capture (DMM alone is insufficient).
 - [ ] **With a board:** blocking the `time` topic (or disconnecting the edge) refuses commands with `clock_unsynced` while telemetry continues.
 - [ ] Documentation updated; report recorded.
 
@@ -133,3 +133,5 @@ espflash flash target/riscv32imc-esp-espidf/release/esp32-node --monitor
 ROADMAP.md
 docs/testing/hil-runs/
 ```
+
+October 14–15 physical bring-up is recorded in [M9 report §10](../../reports/M9.md). Online/config evidence is partial; the grouped telemetry criterion remains unchecked. No HIL waveform or power-cut criterion is complete.

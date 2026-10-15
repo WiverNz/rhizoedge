@@ -30,8 +30,9 @@
 //! firmware helps, and the failure is a plant sitting in a puddle after a
 //! brownout.
 //!
-//! HIL-1 is what proves the wiring: a multimeter on the driver input across
-//! twenty resets, a watchdog reset, and ten mid-boot power cuts. **A board
+//! HIL-1 proves the wiring with transient capture on the driver input across
+//! twenty resets, a watchdog reset, and ten mid-boot power cuts. A DMM alone
+//! cannot exclude short pulses. **A board
 //! profile that cannot satisfy this is not a supported board**, and every
 //! future profile carries the same note against its own pump pin.
 //!

@@ -19,3 +19,6 @@ MCU = "esp32c3"
 # Pinned. `esp-idf-sys` clones and builds this itself; espup does not provide
 # it (M9-001).
 ESP_IDF_VERSION = "v5.5.1"
+# Explicitly track the repository defaults, including when reusing a build
+# cache created before this file existed.
+ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.defaults", relative = true }

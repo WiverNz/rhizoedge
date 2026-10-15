@@ -57,6 +57,27 @@ pub struct Console {
 }
 
 impl Console {
+    /// Handles a line, committing provisioning changes before reporting success.
+    ///
+    /// # Errors
+    /// Returns a storage error and restores the live credentials on failure.
+    pub fn handle_durable(
+        &mut self,
+        line: &str,
+        state: &mut PersistedState,
+        store: &mut impl crate::ports::NvsStore,
+    ) -> Result<ConsoleResponse, crate::ports::NvsError> {
+        let previous = state.provisioning.clone();
+        let response = self.handle(line, state);
+        if response != ConsoleResponse::Committed {
+            return Ok(response);
+        }
+        if let Err(error) = store.store(state) {
+            state.provisioning = previous;
+            return Err(error);
+        }
+        Ok(response)
+    }
     /// A console open for provisioning, as at the top of `main`.
     #[must_use]
     pub fn open(existing: &PersistedState) -> Self {
@@ -151,9 +172,80 @@ impl Console {
     }
 }
 
+/// Bounded serial line framing. An oversized line is discarded through its
+/// terminator so its suffix can never become a second provisioning command.
+#[derive(Default)]
+pub struct LineBuffer {
+    bytes: Vec<u8>,
+    overflow: bool,
+}
+
+impl LineBuffer {
+    /// Feeds one byte. Invalid UTF-8 and oversized lines return an empty line;
+    /// no rejected input is echoed (it may contain credentials).
+    pub fn push(&mut self, byte: u8) -> Option<String> {
+        if byte == b'\n' || byte == b'\r' {
+            let bytes = core::mem::take(&mut self.bytes);
+            let overflow = core::mem::replace(&mut self.overflow, false);
+            return Some(if overflow {
+                String::new()
+            } else {
+                String::from_utf8(bytes).unwrap_or_default()
+            });
+        }
+        if self.bytes.len() >= 512 {
+            self.overflow = true;
+        } else if !self.overflow {
+            self.bytes.push(byte);
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_oversized_serial_line_cannot_execute_its_suffix() {
+        let mut buffer = LineBuffer::default();
+        for byte in [b'x'; 513]
+            .into_iter()
+            .chain(b"provision commit".iter().copied())
+        {
+            assert!(buffer.push(byte).is_none());
+        }
+        assert_eq!(buffer.push(b'\n'), Some(String::new()));
+        for byte in b"provision show" {
+            buffer.push(*byte);
+        }
+        assert_eq!(buffer.push(b'\r').as_deref(), Some("provision show"));
+    }
+
+    #[test]
+    fn a_failed_durable_commit_keeps_the_previous_credentials() {
+        use crate::ports::NvsStore;
+        let mut state = PersistedState::default();
+        state.provisioning.device_id = Some("original-node".into());
+        let mut store = crate::fakes::FakeNvs::default();
+        store.store(&state).expect("initial write");
+        let mut console = Console::open(&state);
+        console.handle("provision device-id replacement-node", &mut state);
+        store.fail_writes(true);
+        assert!(
+            console
+                .handle_durable("provision commit", &mut state, &mut store)
+                .is_err()
+        );
+        assert_eq!(
+            state.provisioning.device_id.as_deref(),
+            Some("original-node")
+        );
+        assert_eq!(
+            store.load().expect("old state").provisioning,
+            state.provisioning
+        );
+    }
 
     #[test]
     fn provisioning_commands_stage_and_commit_to_storage() {

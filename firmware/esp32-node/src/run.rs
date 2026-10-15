@@ -67,13 +67,14 @@ pub struct Context<'a, N: NvsStore, P: Pump> {
 ///
 /// Returns when the session ends, so the caller can back off and reconnect —
 /// **without limit**, because a device that gives up needs a human.
-pub fn serve<N: NvsStore, P: Pump>(
+pub fn serve<N: NvsStore, P: Pump, W: Watchdog>(
     context: &mut Context<'_, N, P>,
     session: &mut Session,
     clock: &mut EdgeClock,
     cycle: &mut WakeCycle,
     ring: &mut TelemetryRing,
     driver: &mut IsolationDriver,
+    watchdog: &mut W,
 ) {
     let mut next_telemetry_ms = 0u64;
     let mut telemetry_cycles: u32 = 0;
@@ -81,12 +82,17 @@ pub fn serve<N: NvsStore, P: Pump>(
     let mut connected = false;
 
     loop {
+        watchdog.feed();
         let now_mono = monotonic_ms();
         cycle.sync_holds();
 
         for event in session.drain() {
             match event {
                 Inbound::Connected => {
+                    if let Err(error) = session.subscribe() {
+                        log::warn!("mqtt subscriptions failed ({error}); reconnecting");
+                        return;
+                    }
                     connected = true;
                     // Control returns to the edge. The driver forgets its
                     // evaluation instant, so the time this session lasts is
@@ -304,9 +310,14 @@ fn dispatch<N: NvsStore, P: Pump>(
     match topic {
         Topic::Time(_) => {
             if let Ok(envelope) = Envelope::<EdgeTime>::from_json(payload) {
+                let was_synced = clock.is_synced(now_mono);
                 if clock.apply(envelope.data.edge_time_ms, now_mono) {
                     log::info!("clock synchronised from the edge");
-                    publish_online_status(context, session, clock, cycle, now_mono);
+                    // Edge responds to status with time; announce only the
+                    // transition to synchronised to avoid a feedback loop.
+                    if !was_synced {
+                        publish_online_status(context, session, clock, cycle, now_mono);
+                    }
                 }
                 // An ignored `edge.time` updates nothing at all — not the
                 // clock, not the last applied value, and not the validity

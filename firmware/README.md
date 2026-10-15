@@ -178,7 +178,8 @@ On Linux, `espflash` needs `libudev-dev`.
 > input and confirm it reads inactive from power-on, through the bootloader, and
 > into `main`. The window before any Rust runs is not coverable from firmware —
 > only the external pull-down documented in `esp32-node/src/board/devkitm1.rs`
-> covers it. That is HIL-1's first case and it is not optional.
+> covers it. A DMM checks steady voltage only. HIL-1 additionally requires scope or
+> suitable logic-analyzer traces to rule out short boot/reset pulses.
 
 ---
 
@@ -197,13 +198,14 @@ provision show                  # secrets redacted, always
 provision commit
 ```
 
-Then reboot. The device derives `plant-node-<3-byte MAC hex>` when no identity
+A successful commit persists to NVS and reboots automatically. Input is not
+echoed. A provisioned board opens this console for five seconds after reset;
+unprovisioned boards wait for provisioning. The device derives `plant-node-<3-byte MAC hex>` when no identity
 is set, connects, publishes its retained status, and the edge auto-registers it
 with no plant attached.
 
-The console is closed once the network is up. `provision unlock` reopens it — a
-serial console reachable at runtime is a credential-disclosure path on a device
-somebody might put in a shared space, so reopening it is explicit.
+The physical image has no runtime serial reader. Reboot to use the pre-network
+window; `provision unlock` is a parser command, not a wired runtime entry point.
 
 ---
 

@@ -11,6 +11,7 @@
 
 pub mod battery;
 pub mod clock;
+pub mod console;
 pub mod nvs;
 pub mod pump;
 pub mod rail;

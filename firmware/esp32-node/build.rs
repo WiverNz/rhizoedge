@@ -6,4 +6,15 @@
 //! symbols rather than with anything that names the cause.
 fn main() {
     embuild::espidf::sysenv::output();
+    let Some(cfg) = embuild::espidf::sysenv::cfg_args() else {
+        panic!("ESP-IDF configuration is required");
+    };
+    assert!(
+        cfg.get("esp_idf_esp_task_wdt_panic").is_some(),
+        "watchdog must reset on timeout; check sdkconfig.defaults"
+    );
+    assert!(
+        cfg.get("esp_idf_esp_task_wdt_init").is_some(),
+        "task watchdog must be initialized"
+    );
 }

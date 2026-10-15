@@ -67,9 +67,14 @@ note is where that reference lands until the stage exists.
 
 ## HIL-1 — Boot safety (no water in the system)
 
-**Proves** SAFETY-011. **Prerequisite:** tubing disconnected, reservoir empty.
+**Proves** SAFETY-011. **Prerequisite:** tubing disconnected, reservoir empty,
+external pull-down fitted. Use an oscilloscope or suitable logic analyzer for
+transients; a DMM verifies steady voltage only and cannot exclude short pulses.
+Record capture bandwidth/sample rate, threshold, trigger and resolvable pulse
+width. Probe the actual board-profile actuator pin against board ground.
+The current devkitm1 profile is GPIO5, active high, with a 10 kΩ pull-down.
 
-- [ ] Power on with a multimeter on the pump driver input. **The pump line never
+- [ ] Power on while capturing the pump driver input. **The pump line never
       goes active during boot**, including the bootloader window before `main`
       runs.
 - [ ] Flash while powered. The pump does not pulse during flashing.

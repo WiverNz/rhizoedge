@@ -23,6 +23,7 @@
 .env.*
 !.env.example
 deploy/mosquitto/passwd
+/local/secrets/
 
 # Tauri / UI build output
 /ui/**/dist/

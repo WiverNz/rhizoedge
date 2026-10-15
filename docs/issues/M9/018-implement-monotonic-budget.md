@@ -75,3 +75,5 @@ cargo test safety_015
 ```text
 firmware/esp32-node/src/app/budget.rs
 ```
+
+October hardware finding: a 60-second sleep initially credited zero due to the wrong timer domain. The RTC accessor correction measures 60,603 ms, but applying it to nonzero budget/cooldown and reset-domain verification remain open. See [M9 physical report](../../reports/M9.md).

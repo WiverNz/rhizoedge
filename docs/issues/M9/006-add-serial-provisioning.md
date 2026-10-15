@@ -38,9 +38,9 @@ never appear in a binary or a log.
 
 ## Acceptance criteria
 
-- [ ] All provisioning commands work and persist to NVS.
+- [x] All provisioning commands work and persist to NVS.
 - [x] `show` redacts secrets.
-- [ ] Settings take effect after reboot.
+- [x] Settings take effect after reboot.
 - [ ] Provisioning is unavailable at runtime without an explicit unlock.
 - [x] One firmware image works for multiple devices.
 - [x] The procedure is documented.
@@ -65,3 +65,7 @@ espflash monitor  # then run the provisioning commands
 ```text
 firmware/esp32-node/src/provision.rs
 ```
+
+October physical evidence: UART device-id/Wi-Fi/MQTT/show/commit, automatic
+reboot and one USB power cycle retained the settings; see [M9 report](../../reports/M9.md).
+Runtime-unlock criterion remains unchecked: only the pre-network console is wired.

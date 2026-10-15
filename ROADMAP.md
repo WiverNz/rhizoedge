@@ -92,7 +92,7 @@ the 2026-08-26 architecture pass; the new requirements land in M1 and later.
 **M1–M8 are `DONE`.** **M9 is `IN PROGRESS`**: its toolchain question is
 resolved and ADR-007 corrected from a real machine (M9-001), the image builds
 for `riscv32imc-esp-espidf`, and every criterion that a host can settle has
-been settled — but no board has executed any of it, so the milestone's exit
+been tested on the host. Physical bring-up has now begun, but the milestone's exit
 criteria are not met and **M10 is not `READY`**. M10–M11 remain `PLANNED`
 because they depend on physical hardware. M12–M13 are `PLANNED` pending pinned Tauri/Leptos versions. M14 is
 `PLANNED` and produces documentation only. **M15 is `PLANNED` because its
@@ -1025,9 +1025,11 @@ The next work is **hardware-blocked**, not unstarted:
 M9-022 — M9 verification and exit criteria
 ```
 
-It needs one official Espressif ESP32-C3-DEVKITM-1-N4X and a multimeter. The
-first measurement, before a pump is wired to anything, is HIL-1's pump-line
-check across twenty resets — see [docs/reports/M9.md](docs/reports/M9.md) §8.
+The ESP32-C3 is connected and bare-board radio/config bring-up is underway.
+HIL-1 needs the external GPIO5 10 kΩ pull-down and an oscilloscope or suitable
+logic analyzer; a DMM cannot rule out short pulses. Its complete 20-reset and
+10-mid-boot-power-cut campaign remains pending — see the October evidence in
+[docs/reports/M9.md](docs/reports/M9.md) §10.
 
 M9-001 resolved the toolchain question empirically: stock Rust 1.98.0 **cannot**
 build `riscv32imc-esp-espidf` (a tier-3 target with no distributed `std`), so
