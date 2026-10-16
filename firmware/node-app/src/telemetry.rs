@@ -313,6 +313,38 @@ pub const UNSYNCED_STATUS_REPUBLISH_MS: u64 = 60_000;
 /// How often the heartbeat status is published, in telemetry intervals.
 pub const STATUS_HEARTBEAT_INTERVALS: u32 = 5;
 
+/// Explicit M9 bench adapters, never physical measurements. Configured channels
+/// use the normal sampler; their separate point and non-OK quality keep them
+/// advisory to both Edge and the offline evaluator. Leak stays unknown.
+pub fn bench_sample(
+    batch_id: Uuid,
+    configured: rhizo_mqtt_contract::payload::SensorConfig,
+) -> (TelemetryBatch, SensorErrors) {
+    use crate::fakes::{FakeLeak, FakeScale, FakeSoil, FakeTank};
+    let mut soil = FakeSoil::reading(32.5);
+    let mut tank = FakeTank::at(75.0);
+    let mut scale = FakeScale {
+        grams: Some(1234.0),
+    };
+    let mut leak = FakeLeak::failing();
+    let mut sensors = Sensors {
+        soil: configured.soil.then_some(&mut soil),
+        tank: configured.tank.then_some(&mut tank),
+        scale: configured.weight.then_some(&mut scale),
+        leak: configured.leak.then_some(&mut leak),
+        battery: None,
+    };
+    let (mut batch, errors) = sample(batch_id, &mut sensors, None);
+    for sample in &mut batch.samples {
+        sample.point = MeasurementPoint::parse("m9-bench")
+            .unwrap_or_else(|_| unreachable!("literal is a valid measurement point"));
+        if sample.quality == Quality::Ok {
+            sample.quality = Quality::Uncalibrated;
+        }
+    }
+    (batch, errors)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

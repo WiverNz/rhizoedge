@@ -50,6 +50,32 @@ Keep the antenna clear of wire bundles and metal. Record evidence for initial an
 
 Chip deep-sleep current is not USB board current: regulators, indicators, and USB circuitry contribute to complete board/system consumption. Every unmeasured power figure is **target/TBD**.
 
+### Optional SH1106 OLED: compatibility investigation
+
+**Reviewed 2026-10-15; source/documentation inspection only, not hardware validation.** An optional 1.3-inch SH1106 128×64 I2C module specified for 3.3 V can provisionally use **SDA = GPIO0, SCL = GPIO1, VCC = 3V3, GND = GND** on the official ESP32-C3-DEVKITM-1-N4X. This is a bench wiring option, not an implemented feature or a reserved production pin map. Confirm the actual module's supply requirements, pin order, and pull-ups before connecting with power removed.
+
+Verified against the current repository:
+
+- The [board profile](../../firmware/esp32-node/src/board/devkitm1.rs) constructs GPIO5 as active-high pump control, GPIO6 as sensor supply enable, and GPIO7 as RS485 supply enable. GPIO0/1/3/4/10 are unused by the application. GPIO7 is a supply enable, not RS485 DE/RE.
+- The [console adapter](../../firmware/esp32-node/src/hal/console.rs) uses ESP-IDF's configured console. On this board, the CP210x bridge connects to UART0 GPIO20/21; native USB Serial/JTAG uses the separate GPIO18/19 pair. Preserve both interfaces when allocating optional pins.
+- The [dependency manifest](../../firmware/esp32-node/Cargo.toml) pins `esp-idf-hal` 0.46.2, which provides `I2cDriver` and embedded-hal I2C implementations; the [SDK configuration](../../firmware/esp32-node/.cargo/config.toml) pins ESP-IDF v5.5.1. No I2C bus or SH1106 display initialization is implemented. Connecting the display alone will not produce useful output. The pinned HAL uses the legacy ESP-IDF I2C API; do not mix it with the new I2C driver on a later implementation.
+- The [sleep adapter](../../firmware/esp32-node/src/hal/sleep.rs) enables timer wake, not GPIO wake, and has no OLED shutdown or power-control handling. [Battery ADC support](../../firmware/esp32-node/src/hal/battery.rs) is an uninstantiated adapter on this board.
+
+Espressif's [board pinout](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32c3/hw-reference/esp32c3/user-guide-devkitm-1.html#header-block) exposes IO0 at J1 pin 9 and IO1 at J1 pin 10. Neither is a strapping pin: ESP32-C3 strapping pins are GPIO2/8/9. The [board schematic, sheet 2](https://dl.espressif.com/dl/schematics/SCH_ESP32-C3-DEVKITM-1_V1_20200915A.pdf) shows automatic programming through EN/GPIO9. Thus GPIO0/1 I2C pull-ups do not select boot/download mode or overlap UART0/flash. GPIO0/1 also serve ADC1 channels 0/1 and the external 32.768 kHz crystal pair; these functions cannot be used simultaneously with the OLED bus. The [GPIO reference](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32c3/api-reference/peripherals/gpio.html) confirms peripheral routing through the GPIO matrix and deep-sleep wake capability on GPIO0–5.
+
+**Future allocation remains open.** [M10 Modbus](../issues/M10/002-implement-modbus-rtu-client.md) needs UART and direction control; [PRD-100](../prd/100-real-soil-sensor.md) also defines an analog soil alternative; [PRD-110](../prd/110-real-pump-and-safety-hardware.md) needs tank/leak inputs. Battery sensing and the later [PRD-160 reservoir load cell](../prd/160-verified-watering.md) add possible requirements. None assigns these final GPIOs. Preserving the current outputs, UART, native USB, and avoiding strapping pins leaves five spare pins (0/1/3/4/10); an OLED leaves three. Conventional RS485 TX/RX/direction plus separate tank/leak inputs already needs five. This pin-budget inference means the complete node needs an allocation/interface review regardless of the OLED pair.
+
+For a removable bench display, GPIO0/1 is reasonable. **GPIO3 SDA + GPIO10 SCL is a provisional alternative** that preserves the crystal pair and more ADC/deep-sleep-wake-capable pins. It is not a committed assignment and does not resolve the overall pin shortage. Future boards need their own map under [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md).
+
+Electrical and power conditions still requiring validation:
+
+- Pull SDA/SCL up to **3.3 V only**. Inspect existing module resistors before adding more. For short wiring, about 4.7 kΩ is a starting point, subject to capacitance and measurement; see [ESP-IDF I2C guidance](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32c3/api-reference/peripherals/i2c.html). Start conservatively at 100 kHz when support is implemented.
+- Board 3V3 remains powered during deep sleep. A blank OLED is not evidence of negligible consumption; controller, charge pump, and module circuitry still matter. Firmware currently neither commands display-off nor switches OLED power.
+- Future power gating must prevent SDA/SCL from back-powering an unpowered OLED and coordinate pull-ups, GPIO state, and supply sequencing. Do not power the module from a GPIO. A line held low through 4.7 kΩ draws approximately 0.70 mA at 3.3 V (calculated, not measured).
+- Exact OLED active/standby current, pull-up arrangement, supply margin during Wi-Fi peaks, and complete-system sleep current remain unverified. Include the display in [M10-012 energy measurements](../issues/M10/012-measure-system-energy-budget.md) if fitted.
+
+**Conclusion:** GPIO0/1 has no identified current firmware conflict, conditional on correct 3.3 V wiring. Connection alone is expected to leave application logic unchanged, but changes electrical loading and sleep consumption. Display operation requires a separately authorized firmware change and hardware verification.
+
 ## M10 — real soil sensor
 
 M10 adds the selected physical soil path and proves calibration, stabilization, failure handling, and complete-system energy.

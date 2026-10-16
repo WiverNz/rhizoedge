@@ -51,6 +51,13 @@ pub fn enter(
 
     let slept_at_ms = crate::hal::rtc_store::counter_ms();
     let sealed = RtcSleepState::seal(slept_at_ms, boot_generation, cooldown_remaining_ms);
+    #[cfg(feature = "bench-corrupt-rtc")]
+    let sealed = {
+        let mut corrupt = sealed;
+        corrupt.checksum ^= 1;
+        log::warn!("BENCH: deliberately corrupting retained checksum");
+        corrupt
+    };
     crate::hal::rtc_store::write(&sealed);
 
     let micros = u64::from(wake_interval_seconds).saturating_mul(1_000_000);

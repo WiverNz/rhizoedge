@@ -192,6 +192,44 @@ pub fn credit_elapsed(
     }
 }
 
+/// Applies a validated sleep interval to the persisted offline accounting.
+/// Call before begin_boot; that boot's durable generation increment makes an
+/// old RTC snapshot ineligible for a second credit. Matching cooldown also
+/// rejects a snapshot that does not describe the loaded NVS state.
+pub fn restore_sleep_accounting(
+    state: &mut crate::persist::PersistedState,
+    reason: WakeReason,
+    rtc: Option<&RtcSleepState>,
+    rtc_now_ms: u64,
+) -> MonotonicMillis {
+    let Some(retained) = rtc else {
+        return MonotonicMillis(0);
+    };
+    if retained.boot_generation != state.boot_generation
+        || retained.cooldown_remaining_ms != state.offline_runtime.cooldown_remaining_ms
+    {
+        return MonotonicMillis(0);
+    }
+    let elapsed = credit_elapsed(reason, Some(retained), rtc_now_ms);
+    if elapsed.0 == 0 {
+        return elapsed;
+    }
+    let window = crate::policy::active(state)
+        .and_then(|set| set.policies.first())
+        .filter(|policy| policy.limits.window_ms > 0 && policy.validate().is_ok())
+        .map(|policy| u64::from(policy.limits.window_ms));
+    if let Some(window_ms) = window {
+        state.offline_runtime.credit_window(elapsed, window_ms);
+    }
+    state.offline_runtime.cooldown_remaining_ms = state
+        .offline_runtime
+        .cooldown_remaining_ms
+        .saturating_sub(elapsed.0);
+    // Sleep is not evidence of continuously dry samples; confirmation and
+    // dose count are untouched. The UTC-based command daily total is separate.
+    elapsed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

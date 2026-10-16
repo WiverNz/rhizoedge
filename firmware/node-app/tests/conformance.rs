@@ -549,3 +549,57 @@ fn conformance_budget_window_credits_identically() {
         );
     }
 }
+
+#[test]
+fn conformance_rtc_restore_credits_the_same_window_as_simulator() {
+    use rhizo_node_app::{
+        budget::restore_sleep_accounting,
+        persist::{PersistedState, VersionedPolicy},
+        power::{RtcSleepState, WakeReason},
+    };
+    let mut state = PersistedState {
+        boot_generation: 1,
+        ..PersistedState::default()
+    };
+    state.offline_runtime.budget_used_ml = 40.0;
+    state.offline_runtime.cooldown_remaining_ms = 120_000;
+    let mut set =
+        rhizo_mqtt_contract::Envelope::<rhizo_mqtt_contract::payload::OfflinePolicySet>::from_json(
+            include_bytes!("../../../test/fixtures/protocol/valid/policy-disabled.json"),
+        )
+        .unwrap()
+        .data;
+    set.policies[0].limits.window_ms = 90_000;
+    state.policy_active = Some(VersionedPolicy::seal(8, set));
+    let mut simulator = device_simulator::state::OfflineRuntime {
+        budget_window: device_simulator::state::BudgetWindow {
+            elapsed_ms: 0,
+            delivered_ml: 40.0,
+        },
+        ..device_simulator::state::OfflineRuntime::default()
+    };
+    for (reason, elapsed, expected) in [
+        (WakeReason::ColdBoot, 1_000_000, 0),
+        (WakeReason::Timer, 60_603, 60_603),
+        (WakeReason::Timer, 60_603, 60_603),
+        (WakeReason::Watchdog, 1_000_000, 0),
+    ] {
+        let rtc = RtcSleepState::seal(
+            1000,
+            state.boot_generation,
+            state.offline_runtime.cooldown_remaining_ms,
+        );
+        let granted = restore_sleep_accounting(&mut state, reason, Some(&rtc), 1000 + elapsed);
+        assert_eq!(granted.0, expected);
+        simulator.advance(expected, 90_000);
+        assert_eq!(
+            state.offline_runtime.budget_used_ml,
+            simulator.budget_window.delivered_ml
+        );
+        assert_eq!(
+            state.offline_runtime.window_elapsed_ms,
+            simulator.budget_window.elapsed_ms
+        );
+        state.boot_generation += 1;
+    }
+}

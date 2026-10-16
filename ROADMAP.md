@@ -3,7 +3,7 @@
 The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
-**Planning status:** complete. **Implementation status:** M0–M8 complete; **M9 in progress** — its board-free work is substantially complete and its hardware verification is pending a physical ESP32-C3.
+**Planning status:** complete. **Implementation status:** M0–M8 complete; **M9 in progress** — its board-free work is substantially complete and physical telemetry and selected RTC/accounting cases are verified on ESP32-C3; remaining hardware safety criteria are pending.
 **Host Rust:** MSRV **1.99.0**; `rust-toolchain.toml` currently pins 1.99.0; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).

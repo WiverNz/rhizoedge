@@ -87,12 +87,7 @@ fn main() {
     // Why this boot happened, before anything overwrites the latched cause.
     let wake_reason = hal::rtc_store::wake_reason();
     let rtc = hal::rtc_store::read();
-    let credited = rhizo_node_app::budget::credit_elapsed(
-        wake_reason,
-        Some(&rtc),
-        hal::rtc_store::counter_ms(),
-    );
-    log::info!("wake_reason {wake_reason:?}, credited {}ms", credited.0);
+    let rtc_now_ms = hal::rtc_store::counter_ms();
 
     // ---------------------------------------------------------------- STEP 5
     // Persistent state, and the interrupted-dose report that must precede
@@ -122,6 +117,16 @@ fn main() {
         log::warn!("nvs empty or unreadable; starting fresh and reporting nvs_reset");
     }
     let mut state = loaded.unwrap_or_default();
+    let credited = rhizo_node_app::budget::restore_sleep_accounting(
+        &mut state,
+        wake_reason,
+        Some(&rtc),
+        rtc_now_ms,
+    );
+    log::info!("wake_reason {wake_reason:?}, credited {}ms; accounting used_ml={} window_ms={} cooldown_ms={} rtc_valid={}",
+        credited.0, state.offline_runtime.budget_used_ml,
+        state.offline_runtime.window_elapsed_ms, state.offline_runtime.cooldown_remaining_ms,
+        rtc.checksum_valid());
     let identity = rhizo_node_app::identity::begin_boot(&mut state, None, &mut rng);
     let interrupted = rhizo_node_app::recovery::report_interrupted(&mut state, &mut nvs);
     if let Some(result) = interrupted.as_ref() {
@@ -132,6 +137,7 @@ fn main() {
     }
     if let Err(error) = nvs.store(&state) {
         log::error!("nvs commit failed at boot: {error}");
+        halt();
     }
 
     let mac = read_mac();

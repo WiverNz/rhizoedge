@@ -36,7 +36,9 @@ use rhizo_node_app::persist::{BootIdentity, PersistedState};
 use rhizo_node_app::policy::UpdateStep;
 use rhizo_node_app::ports::{NvsStore, Pump, Watchdog};
 use rhizo_node_app::power::{WakeCycle, WakeReason};
-use rhizo_node_app::telemetry::{ChemistryCurve, Sensors, TelemetryRing};
+use rhizo_node_app::telemetry::TelemetryRing;
+#[cfg(not(feature = "bench-sensors"))]
+use rhizo_node_app::telemetry::{ChemistryCurve, Sensors};
 use rhizo_node_app::{config, identity, policy, telemetry};
 
 use crate::hal::clock::{monotonic_ms, ClockAt, EdgeClock};
@@ -491,7 +493,11 @@ fn status_for<N: NvsStore, P: Pump>(
         boot_generation: context.identity.boot_generation,
         status: value,
         reason,
-        firmware_version: Some(rhizo_node_app::FIRMWARE_VERSION.to_owned()),
+        firmware_version: Some(if cfg!(feature = "bench-sensors") {
+            format!("{}-bench", rhizo_node_app::FIRMWARE_VERSION)
+        } else {
+            rhizo_node_app::FIRMWARE_VERSION.to_owned()
+        }),
         protocol_version: Some(rhizo_mqtt_contract::PROTOCOL_VERSION),
         applied_config_version: context.state.config_version,
         uptime_ms: Some(now_mono),
@@ -532,12 +538,13 @@ fn publish_online_status<N: NvsStore, P: Pump>(
 /// isolated path can never read *different* sensors — which would make an
 /// autonomous decision rest on inputs no published telemetry ever showed.
 ///
-/// M9 fits none of them (PRD 090 §Goals 6), so the batch is empty and
-/// `validate` rejects it; M10 fits the probes and nothing here changes.
+/// The explicit bench-sensors build feeds advisory fake samples through this
+/// same path. The default build reports no sensors until physical ones exist.
 fn read_batch<N: NvsStore, P: Pump>(
     context: &Context<'_, N, P>,
     now_mono: u64,
 ) -> Option<TelemetryBatch> {
+    #[cfg(not(feature = "bench-sensors"))]
     let mut sensors = Sensors {
         soil: None,
         tank: None,
@@ -545,9 +552,14 @@ fn read_batch<N: NvsStore, P: Pump>(
         scale: None,
         battery: None,
     };
+    #[cfg(not(feature = "bench-sensors"))]
     let curve: Option<ChemistryCurve> = None;
     let batch_id = uuid::Uuid::from_u64_pair(now_mono, context.identity.boot_generation);
+    #[cfg(not(feature = "bench-sensors"))]
     let (batch, errors) = telemetry::sample(batch_id, &mut sensors, curve);
+    #[cfg(feature = "bench-sensors")]
+    let (batch, errors) =
+        telemetry::bench_sample(batch_id, context.state.config.map_or_default(|c| c.sensors));
     if errors.total() > 0 {
         log::warn!("sensor errors this cycle: {errors:?}");
     }
@@ -691,7 +703,10 @@ fn announce_and_sleep<N: NvsStore, P: Pump>(
 
     // Persist before sleeping: RTC memory does not survive a power cut, and the
     // budget floor must.
-    let _ = context.nvs.store(context.state);
+    if let Err(error) = context.nvs.store(context.state) {
+        log::error!("sleep refused: accounting could not be persisted: {error}");
+        return;
+    }
 
     match cycle.request_sleep() {
         Ok(()) => {

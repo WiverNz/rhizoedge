@@ -240,3 +240,35 @@ one.
 2026-09-02 board-free pass, everything involving a radio, real flash, the RTC
 domain, deep sleep, or a GPIO measured with a meter is in the second category.
 A compile is not a board.
+
+
+## Explicit M9 bare-board verification features
+
+Use `--features bench-sensors` only for the M9 fake-sensor path. Configured
+channels publish at point `m9-bench`; scalar values are `uncalibrated`, leak is
+`null/fault`, and firmware status has a `-bench` suffix. These measurements are
+advisory and cannot establish safe sensor conditions for actuation. The default
+build still has no physical sensor adapters. Keep the pump disabled.
+
+`bench-accounting` additionally enables the pre-network serial command
+`bench seed-accounting`: it requires a disabled pump and no in-flight dose,
+raises used budget to at least 40 ml and cooldown to at least 120000 ms, and
+resets elapsed window credit to zero. It persists the fixture without changing
+credentials. Send `provision commit` afterward to reboot. This hook only makes
+accounting more conservative; it is not an actuator override.
+
+`bench-corrupt-rtc` implies `bench-accounting` and deliberately corrupts the
+retained checksum immediately before sleep. It is solely for the negative
+retention test and must be removed from the final flashed image.
+
+For the report's disabled policy with a 90000 ms window and 60-second sleeps,
+validate captured logs using:
+
+```bash
+python3 scripts/m9-check-accounting-log.py cold <after-power-cycle.log>
+python3 scripts/m9-check-accounting-log.py timer <two-timer-wakes.log>
+python3 scripts/m9-check-accounting-log.py invalid <corrupt-timer-wake.log>
+```
+
+These checks make no GPIO or HIL-1 assertion. External GPIO5 pull-down and
+transient capture remain separate physical prerequisites.

@@ -76,4 +76,4 @@ cargo test safety_015
 firmware/esp32-node/src/app/budget.rs
 ```
 
-October hardware finding: a 60-second sleep initially credited zero due to the wrong timer domain. The RTC accessor correction measures 60,603 ms, but applying it to nonzero budget/cooldown and reset-domain verification remain open. See [M9 physical report](../../reports/M9.md).
+October 15–16: measured RTC elapsed is now applied to retained accounting. Two real timer wakes each credited 60,603 ms; nonzero budget/cooldown survived a USB power cycle without credit; a deliberately corrupt RTC checksum on a real timer wake also credited zero. Physical brownout/watchdog/external-wake accounting classes and trusted-wall-clock advancement remain unproven. See [M9 physical report](../../reports/M9.md).

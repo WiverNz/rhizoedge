@@ -71,4 +71,4 @@ cd firmware/esp32-node && cargo test telemetry::
 firmware/esp32-node/src/app/telemetry.rs
 ```
 
-October physical bring-up: online status is observed but measurements remain absent; the image constructs an empty sensor batch. Do not close the physical telemetry criterion. See [M9 physical report](../../reports/M9.md).
+October 15–16: explicit bench-sensors image publishes advisory fake measurements through physical MQTT, Edge ingestion, SQLite and API. Default image retains the empty-sensor behavior. Physical sensor accuracy, global sequence and health-heartbeat criteria are not established by this test. See [M9 physical report](../../reports/M9.md).

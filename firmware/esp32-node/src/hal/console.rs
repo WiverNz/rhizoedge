@@ -49,6 +49,29 @@ pub fn before_network(
         if count == 1 {
             editing = true;
             if let Some(text) = line.push(byte) {
+                #[cfg(feature = "bench-accounting")]
+                if text == "bench seed-accounting" {
+                    if state.config.is_none_or(|c| c.pump.enabled) || state.in_flight_dose.is_some()
+                    {
+                        log::warn!(
+                            "bench seed refused: requires disabled pump and no in-flight dose"
+                        );
+                        continue;
+                    }
+                    let previous = state.clone();
+                    state.offline_runtime.budget_used_ml =
+                        state.offline_runtime.budget_used_ml.max(40.0);
+                    state.offline_runtime.cooldown_remaining_ms =
+                        state.offline_runtime.cooldown_remaining_ms.max(120_000);
+                    state.offline_runtime.window_elapsed_ms = 0;
+                    match store.store(state) {
+                        Ok(()) => log::info!("bench accounting seeded conservatively; used_ml={} window_ms={} cooldown_ms={}",
+                            state.offline_runtime.budget_used_ml, state.offline_runtime.window_elapsed_ms,
+                            state.offline_runtime.cooldown_remaining_ms),
+                        Err(_) => { *state = previous; log::error!("bench seed persistence failed"); }
+                    }
+                    continue;
+                }
                 if !text.is_empty() {
                     match console.handle_durable(&text, state, store) {
                         Ok(ConsoleResponse::Committed) => {

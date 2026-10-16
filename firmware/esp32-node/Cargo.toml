@@ -26,6 +26,11 @@ default = ["board-devkitm1"]
 # Exactly one board profile per build. Zero or two is a `compile_error!` in
 # `src/board/mod.rs` naming the available profiles (F-090-46).
 board-devkitm1 = []
+# Explicit advisory fake measurements for M9 bare-board verification only.
+bench-sensors = []
+# Explicit conservative accounting fixtures and RTC corruption injection.
+bench-accounting = []
+bench-corrupt-rtc = ["bench-accounting"]
 # Reserved. ADR-007 names the Seeed XIAO ESP32-C3 as a *candidate* battery
 # board; it is not purchased and nothing about it is measured, so M9 ships the
 # seam and not an unverifiable pin map. Selecting this feature today fails the

@@ -95,7 +95,7 @@ Host tests complement, but do not replace, the physical criteria below.
 - [x] PRD 090 Open question 5 is **resolved**, with the chosen capacity and
       behaviour recorded there and in ADR-014.
 - [x] The conformance test shows identical behaviour to the simulator.
-- [ ] **With a board:** it connects, appears online, publishes telemetry, applies config.
+- [x] **With a board:** it connects, appears online, publishes telemetry, applies config. (Explicit M9 fake-sensor bench image; report §11.)
 - [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
 - [ ] **With a board:** an oversized command is clamped or rejected.
 - [ ] **With a board:** HIL-1 passes with transient capture (DMM alone is insufficient).
@@ -134,4 +134,4 @@ ROADMAP.md
 docs/testing/hil-runs/
 ```
 
-October 14–15 physical bring-up is recorded in [M9 report §10](../../reports/M9.md). Online/config evidence is partial; the grouped telemetry criterion remains unchecked. No HIL waveform or power-cut criterion is complete.
+October 14–15 physical bring-up is recorded in [M9 report §10](../../reports/M9.md). The October 15–16 follow-up in report §11 completes the grouped online/config/telemetry criterion using explicit advisory fake sensors on the real board. No HIL waveform or power-cut criterion is complete.

@@ -9,7 +9,7 @@ Working notes for Claude Code sessions on this repository.
 **Planning is complete. M0 through M8 are implemented and green. M9 is IN
 PROGRESS: its board-free work is substantially complete and its hardware
 verification is underway on the connected ESP32-C3. Bare-board provisioning,
-Wi-Fi, MQTT and config have partial evidence; HIL safety measurements remain
+Wi-Fi, MQTT, config and explicit fake-sensor telemetry have physical evidence; selected RTC/accounting sleep, cold-reset and corrupt-retention cases pass. HIL safety measurements remain
 blocked on the external pull-down and pulse-capture equipment.**
 
 | | State |

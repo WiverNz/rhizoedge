@@ -57,7 +57,7 @@ actually done to it.
 | SAFETY-012 | Uncertainty defaults to not watering | Edge domain + device | M6 | ENFORCED |
 | SAFETY-013 | Autonomous action requires a validated persisted policy | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator); firmware logic host-tested, hardware pending |
 | SAFETY-014 | Offline doses obey the same caps and hard limits as commanded doses | Device + Edge | M6 | ENFORCED |
-| SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator); firmware `credit_elapsed` host-tested, hardware pending |
+| SAFETY-015 | Clock uncertainty never grants budget or shortens a cooldown | Device | M6 (sim), M9 (fw) | ENFORCED (evaluator, simulator); firmware restore integration host-tested; physical timer, cold power-cycle and corrupt-RTC cases evidenced in M9 report §11; other reset classes pending |
 | SAFETY-016 | Offline actions reconcile exactly once; no dose spans the seam twice | Edge + Device | M6 (edge), M9 (device) | ENFORCED (edge); firmware `event_id` stability host-tested, hardware pending |
 | SAFETY-017 | A required measurement that is missing or stale blocks autonomous action | Device | M6 | ENFORCED |
 | SAFETY-018 | A plant with no actuator binding has no actuation path at all | Edge | M5 | ENFORCED |
