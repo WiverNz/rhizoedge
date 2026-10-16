@@ -1292,3 +1292,11 @@ half, re-verified physically in M16-015.
 3. When an invariant moves to `ENFORCED`, the status column here and the
    milestone exit criteria in [ROADMAP.md](../../ROADMAP.md) are updated in the
    same change as the test.
+
+
+October 16–17 M9 evidence: real ESP32-C3 with compile-time virtual actuator
+verified single logical execution across USB power loss, full durable ledger
+without eviction, and result retries terminating on real Edge ACK. See
+[M9 report](../reports/M9.md) for the measured scope. Physical GPIO/pump safety
+is still unverified; this does not promote SAFETY-001 or SAFETY-011 to a fully
+hardware-verified invariant.

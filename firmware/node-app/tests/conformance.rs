@@ -603,3 +603,29 @@ fn conformance_rtc_restore_credits_the_same_window_as_simulator() {
         state.boot_generation += 1;
     }
 }
+
+/// An unacknowledged terminal result remains authoritative after intervening
+/// refusals age its command out of the bounded history ring.
+#[test]
+fn conformance_unacknowledged_result_outlives_dedup_ring() {
+    let mut device = simulator("pending-outlives-ring");
+    sync_clock(&mut device);
+    let inputs = inputs_from(&device, UtcMillis(EDGE_TIME_MS));
+    let first = command(900, 1.0);
+    let (sim_first, _) = simulator_result(&mut device, &first);
+    let mut firmware = Firmware::new();
+    let fw_first = firmware.result(&first, &inputs);
+    let ran = firmware.pump.total_run_ms;
+    for n in 901..918 {
+        let mut expired = command(n, 1.0);
+        expired.expires_at_ms = UtcMillis(0);
+        let _ = simulator_result(&mut device, &expired);
+        let _ = firmware.result(&expired, &inputs);
+    }
+    let (sim_replay, _) = simulator_result(&mut device, &first);
+    let fw_replay = firmware.result(&first, &inputs);
+    assert_eq!(Decision::from(&sim_first), Decision::from(&sim_replay));
+    assert_eq!(Decision::from(&fw_first), Decision::from(&fw_replay));
+    assert_eq!(Decision::from(&sim_replay), Decision::from(&fw_replay));
+    assert_eq!(firmware.pump.total_run_ms, ran);
+}

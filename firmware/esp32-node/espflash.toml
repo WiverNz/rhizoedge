@@ -1,0 +1,4 @@
+# Capacity-verified NVS layout; old boards require preserved-state migration.
+[idf]
+partition_table = "partitions.csv"
+partition_table_offset = 32768 # bootloader CONFIG_PARTITION_TABLE_OFFSET=0x8000

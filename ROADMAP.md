@@ -1042,3 +1042,10 @@ M8's report is [docs/reports/M8.md](docs/reports/M8.md).
 
 This pointer must move with the milestone table above; `rhizo-docscheck` fails
 the build if it names an issue from a milestone already marked `DONE`.
+
+
+October 17 M9 checkpoint: real ESP32-C3 **virtual-actuator** execution dedup
+across USB power loss, 16-entry durable saturation/ACK recovery, and reboot /
+lost-ACK retry termination are verified (M9 report §13). Production safety
+inputs and GPIO actuator selection remain unchanged. Electrical GPIO/HIL
+criteria remain pending. **M9 IN PROGRESS; M10 NOT READY, not started.**

@@ -1,0 +1,815 @@
+{
+  "scope": "Real ESP32-C3; virtual actuator only; no GPIO/HIL evidence",
+  "lost_ack": {
+    "command_id": "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+    "result_publications": 71,
+    "broker_ack_publications": 71,
+    "result_data": {
+      "command_id": "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+      "status": "completed",
+      "requested_ml": 1.0,
+      "delivered_ml": 1.0,
+      "duration_ms": 250,
+      "clamped": false,
+      "reason": null,
+      "delivered_today_ml": 38.0,
+      "origin": "edge_command"
+    },
+    "first_result_ns": 1792187839642177690,
+    "first_ack_ns": 1792187839645063522,
+    "edge_settled_at_ms": 1792187839642,
+    "post_ack_quiet_ms": 67640,
+    "reboot_executions": 0,
+    "saturation_terminal_rows": 16,
+    "saturation_completed_rows": 15,
+    "saturation_delivered_ml": 15
+  },
+  "ack_removal_steps": [
+    [
+      "07e3e70f-8b4e-4e2b-95d1-d5c311b69d83",
+      16,
+      15
+    ],
+    [
+      "e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae",
+      15,
+      14
+    ],
+    [
+      "2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8",
+      14,
+      13
+    ],
+    [
+      "d44bd904-b8b7-459e-9950-b4a38f192256",
+      13,
+      12
+    ],
+    [
+      "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+      12,
+      11
+    ],
+    [
+      "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+      11,
+      10
+    ],
+    [
+      "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+      10,
+      9
+    ],
+    [
+      "572b4710-5fb2-4516-a58a-5a4156834503",
+      9,
+      8
+    ],
+    [
+      "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+      8,
+      7
+    ],
+    [
+      "63969dc1-e73a-4c88-857b-9071541aaf2e",
+      7,
+      6
+    ],
+    [
+      "6b0cbf53-c11f-47b2-9d57-903833c33078",
+      6,
+      5
+    ],
+    [
+      "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+      5,
+      4
+    ],
+    [
+      "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+      4,
+      3
+    ],
+    [
+      "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+      3,
+      2
+    ],
+    [
+      "6e446889-62b8-429e-abb0-14023616953a",
+      2,
+      1
+    ],
+    [
+      "7363a027-c892-4314-874d-2ad1138f59d6",
+      1,
+      0
+    ]
+  ],
+  "lost_ack_edge_rows": [
+    {
+      "commands": [
+        {
+          "command_id": "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+          "device_id": "plant-node-579814",
+          "plant_id": "m9-virtual-bench-20261016",
+          "kind": "water",
+          "requested_ml": 1.0,
+          "mode": "manual",
+          "issued_at": 1792187838266,
+          "expires_at": 1792187958266,
+          "status": "completed",
+          "published_at": 1792187838266,
+          "settled_at": 1792187839642,
+          "reason": null
+        }
+      ]
+    },
+    {
+      "command_results": [
+        {
+          "message_id": "01a146b8-342d-7272-a760-99bf8d02a0ad",
+          "command_id": "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+          "device_id": "plant-node-579814",
+          "result_json": "{\"command_id\":\"0cbcaa6e-0cdf-4539-8d31-9e2000527ba0\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":38.0,\"origin\":\"edge_command\"}",
+          "received_at": 1792187839641,
+          "device_time_ms": 1792187839533,
+          "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+          "sequence": 18436819
+        }
+      ]
+    },
+    {
+      "watering_events": [
+        {
+          "watering_event_id": "01a146b8-349a-72d3-a478-a5aec2fe3cdf",
+          "plant_id": "m9-virtual-bench-20261016",
+          "device_id": "plant-node-579814",
+          "command_id": "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+          "mode": "manual",
+          "origin": "edge_command",
+          "started_at": 1792187838266,
+          "completed_at": 1792187839642,
+          "requested_ml": 1.0,
+          "delivered_ml": 1.0,
+          "status": "completed",
+          "reason_json": null
+        }
+      ]
+    }
+  ],
+  "saturation_edge": {
+    "command_results": [
+      {
+        "message_id": "01a1459f-efbc-71c7-b549-f03008f6db2a",
+        "command_id": "07e3e70f-8b4e-4e2b-95d1-d5c311b69d83",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"07e3e70f-8b4e-4e2b-95d1-d5c311b69d83\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":22.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169472695,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7786-a1aa-7038060ed49e",
+        "command_id": "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"18f117c7-7fde-4b20-8077-ece7d72aaf40\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":27.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169474058,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7adf-aef0-dedb8179d412",
+        "command_id": "2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":24.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169473239,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7895-9663-c704f8a60292",
+        "command_id": "572b4710-5fb2-4516-a58a-5a4156834503",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"572b4710-5fb2-4516-a58a-5a4156834503\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":29.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169474599,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7692-8e4a-d33510761e37",
+        "command_id": "63969dc1-e73a-4c88-857b-9071541aaf2e",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"63969dc1-e73a-4c88-857b-9071541aaf2e\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":31.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169475134,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7e18-98bd-65da987e4936",
+        "command_id": "6b0cbf53-c11f-47b2-9d57-903833c33078",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"6b0cbf53-c11f-47b2-9d57-903833c33078\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":32.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169475558,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7fc5-bbd0-a1f7ab72d200",
+        "command_id": "6e446889-62b8-429e-abb0-14023616953a",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"6e446889-62b8-429e-abb0-14023616953a\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":36.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169476482,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7df5-8027-7702536811c6",
+        "command_id": "7363a027-c892-4314-874d-2ad1138f59d6",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"7363a027-c892-4314-874d-2ad1138f59d6\",\"status\":\"rejected\",\"requested_ml\":1.0,\"delivered_ml\":null,\"duration_ms\":null,\"clamped\":false,\"reason\":\"result_ledger_full\",\"delivered_today_ml\":36.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169476773,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-71a7-ac37-ed5b0c490f2a",
+        "command_id": "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":34.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169475934,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7055-bbcc-ee7fd9b03c3d",
+        "command_id": "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"9a8d52e4-60c9-41f3-aac2-4456555e7e96\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":33.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169475652,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7ce3-abee-9672fd7a04a1",
+        "command_id": "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"c3a1317e-5046-4ba1-b2f0-2a5ed850b6be\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":26.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169473955,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7f6d-ba73-a577dd50f348",
+        "command_id": "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"d0edf8e8-6e42-48c4-a6de-5ac468c08962\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":30.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169474878,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7d51-a7df-f7a2ae005971",
+        "command_id": "d44bd904-b8b7-459e-9950-b4a38f192256",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"d44bd904-b8b7-459e-9950-b4a38f192256\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":25.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169473505,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-72cc-8c2a-ba2990d740d5",
+        "command_id": "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"e23e29e4-111c-4cca-89cd-08f6f5dc21da\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":28.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169474325,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-722e-9b00-58de6ea8a810",
+        "command_id": "e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":23.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169472959,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      },
+      {
+        "message_id": "01a1459f-efbc-7c49-9d45-29d27e3c8aa1",
+        "command_id": "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+        "device_id": "plant-node-579814",
+        "result_json": "{\"command_id\":\"e666bafe-6cc9-41cb-b943-5f64d65e882a\",\"status\":\"completed\",\"requested_ml\":1.0,\"delivered_ml\":1.0,\"duration_ms\":250,\"clamped\":false,\"reason\":null,\"delivered_today_ml\":35.0,\"origin\":\"edge_command\"}",
+        "received_at": 1792169476215,
+        "device_time_ms": 1792169471932,
+        "boot_id": "00000000-0000-7c05-8f2c-453c6f166dd6",
+        "sequence": 70179
+      }
+    ],
+    "watering_events": [
+      {
+        "watering_event_id": "01a1459f-f2b8-7143-bf27-3d8e5aaf0fda",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "07e3e70f-8b4e-4e2b-95d1-d5c311b69d83",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167530943,
+        "completed_at": 1792169472695,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-f80a-71a3-a3ee-d5f092fca992",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167537989,
+        "completed_at": 1792169474058,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-f4d7-7bf0-ac8f-d845c81695c4",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167534138,
+        "completed_at": 1792169473239,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-fa27-7d01-b08b-7bd0dd430a8a",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "572b4710-5fb2-4516-a58a-5a4156834503",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167541300,
+        "completed_at": 1792169474599,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-fc3e-7bc0-9fe1-f301d8b4d448",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "63969dc1-e73a-4c88-857b-9071541aaf2e",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167545007,
+        "completed_at": 1792169475134,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-fde6-7f43-b723-df1fbfe9654b",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "6b0cbf53-c11f-47b2-9d57-903833c33078",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167546772,
+        "completed_at": 1792169475558,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a145a0-0182-74b2-9896-20ba272d8285",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "6e446889-62b8-429e-abb0-14023616953a",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167555322,
+        "completed_at": 1792169476482,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-ff5e-7e81-8c6c-d34b3b9b96a5",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167551078,
+        "completed_at": 1792169475934,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-fe44-7121-b364-6d6572d26bf7",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167548693,
+        "completed_at": 1792169475652,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-f7a3-7610-8098-ee043422e52e",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167537663,
+        "completed_at": 1792169473955,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-fb3e-7a12-a412-0f5c1959ec9d",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167543274,
+        "completed_at": 1792169474878,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-f5e2-7720-8cba-62305f4e3cbc",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "d44bd904-b8b7-459e-9950-b4a38f192256",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167535754,
+        "completed_at": 1792169473505,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-f915-7bd3-9147-cbaef880a562",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167539527,
+        "completed_at": 1792169474325,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a1459f-f3bf-7361-a704-2dd640b79cae",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167532427,
+        "completed_at": 1792169472959,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      },
+      {
+        "watering_event_id": "01a145a0-0077-7c91-b1f3-3b6ac335cd2e",
+        "plant_id": "m9-virtual-bench-20261016",
+        "device_id": "plant-node-579814",
+        "command_id": "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+        "mode": "manual",
+        "origin": "edge_command",
+        "started_at": 1792167553257,
+        "completed_at": 1792169476215,
+        "requested_ml": 1.0,
+        "delivered_ml": 1.0,
+        "status": "completed",
+        "reason_json": null
+      }
+    ]
+  },
+  "saturated_cold_boot": {
+    "loaded": {
+      "daily": {
+        "day_epoch": 0,
+        "delivered_ml": 36.0
+      },
+      "dedup": [
+        "2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8",
+        "d44bd904-b8b7-459e-9950-b4a38f192256",
+        "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+        "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+        "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+        "572b4710-5fb2-4516-a58a-5a4156834503",
+        "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+        "63969dc1-e73a-4c88-857b-9071541aaf2e",
+        "6b0cbf53-c11f-47b2-9d57-903833c33078",
+        "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+        "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+        "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+        "6e446889-62b8-429e-abb0-14023616953a",
+        "7363a027-c892-4314-874d-2ad1138f59d6",
+        "8c6b791a-557a-4513-aa64-8f896f229e41",
+        "0165fa23-e3d4-41fe-8810-fcbad8ae3b91"
+      ],
+      "generation": 383,
+      "in_flight": null,
+      "label": "loaded",
+      "offline": {
+        "budget_used_ml": 40.0,
+        "confirm_elapsed_ms": 0,
+        "cooldown_remaining_ms": 120000,
+        "cycle": "idle",
+        "dose_count": 0,
+        "window_elapsed_ms": 0
+      },
+      "pending": [
+        "07e3e70f-8b4e-4e2b-95d1-d5c311b69d83",
+        "e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae",
+        "2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8",
+        "d44bd904-b8b7-459e-9950-b4a38f192256",
+        "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+        "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+        "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+        "572b4710-5fb2-4516-a58a-5a4156834503",
+        "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+        "63969dc1-e73a-4c88-857b-9071541aaf2e",
+        "6b0cbf53-c11f-47b2-9d57-903833c33078",
+        "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+        "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+        "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+        "6e446889-62b8-429e-abb0-14023616953a",
+        "7363a027-c892-4314-874d-2ad1138f59d6"
+      ],
+      "unacknowledged_ml": 15.0
+    },
+    "boundary_log": [
+      "W (10094) esp32_node::run: VIRTUAL_RESULT command_id=07e3e70f-8b4e-4e2b-95d1-d5c311b69d83 monotonic_ms=9469",
+      "W (10354) esp32_node::run: VIRTUAL_RESULT command_id=e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae monotonic_ms=9469",
+      "W (10594) esp32_node::run: VIRTUAL_RESULT command_id=2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8 monotonic_ms=9469",
+      "W (10864) esp32_node::run: VIRTUAL_RESULT command_id=d44bd904-b8b7-459e-9950-b4a38f192256 monotonic_ms=9469",
+      "W (11104) esp32_node::run: VIRTUAL_RESULT command_id=c3a1317e-5046-4ba1-b2f0-2a5ed850b6be monotonic_ms=9469",
+      "W (11364) esp32_node::run: VIRTUAL_RESULT command_id=18f117c7-7fde-4b20-8077-ece7d72aaf40 monotonic_ms=9469",
+      "W (11604) esp32_node::run: VIRTUAL_RESULT command_id=e23e29e4-111c-4cca-89cd-08f6f5dc21da monotonic_ms=9469",
+      "W (11864) esp32_node::run: VIRTUAL_RESULT command_id=572b4710-5fb2-4516-a58a-5a4156834503 monotonic_ms=9469",
+      "W (12134) esp32_node::run: VIRTUAL_RESULT command_id=d0edf8e8-6e42-48c4-a6de-5ac468c08962 monotonic_ms=9469",
+      "W (12374) esp32_node::run: VIRTUAL_RESULT command_id=63969dc1-e73a-4c88-857b-9071541aaf2e monotonic_ms=9469",
+      "W (12634) esp32_node::run: VIRTUAL_RESULT command_id=6b0cbf53-c11f-47b2-9d57-903833c33078 monotonic_ms=9469",
+      "W (12874) esp32_node::run: VIRTUAL_RESULT command_id=9a8d52e4-60c9-41f3-aac2-4456555e7e96 monotonic_ms=9469",
+      "W (13134) esp32_node::run: VIRTUAL_RESULT command_id=968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2 monotonic_ms=9469",
+      "W (13404) esp32_node::run: VIRTUAL_RESULT command_id=e666bafe-6cc9-41cb-b943-5f64d65e882a monotonic_ms=9469",
+      "W (13644) esp32_node::run: VIRTUAL_RESULT command_id=6e446889-62b8-429e-abb0-14023616953a monotonic_ms=9469",
+      "W (13924) esp32_node::run: VIRTUAL_RESULT command_id=7363a027-c892-4314-874d-2ad1138f59d6 monotonic_ms=9469",
+      "I (14664) esp32_node::run: config: IgnoredNotNewer { offered: 11 }",
+      "W (25114) esp32_node::run: VIRTUAL_RESULT command_id=07e3e70f-8b4e-4e2b-95d1-d5c311b69d83 monotonic_ms=24589",
+      "W (25354) esp32_node::run: VIRTUAL_RESULT command_id=e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae monotonic_ms=24589",
+      "W (25614) esp32_node::run: VIRTUAL_RESULT command_id=2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8 monotonic_ms=24589",
+      "W (25874) esp32_node::run: VIRTUAL_RESULT command_id=d44bd904-b8b7-459e-9950-b4a38f192256 monotonic_ms=24589",
+      "W (26114) esp32_node::run: VIRTUAL_RESULT command_id=c3a1317e-5046-4ba1-b2f0-2a5ed850b6be monotonic_ms=24589",
+      "W (26374) esp32_node::run: VIRTUAL_RESULT command_id=18f117c7-7fde-4b20-8077-ece7d72aaf40 monotonic_ms=24589",
+      "W (26614) esp32_node::run: VIRTUAL_RESULT command_id=e23e29e4-111c-4cca-89cd-08f6f5dc21da monotonic_ms=24589",
+      "W (26874) esp32_node::run: VIRTUAL_RESULT command_id=572b4710-5fb2-4516-a58a-5a4156834503 monotonic_ms=24589",
+      "W (27144) esp32_node::run: VIRTUAL_RESULT command_id=d0edf8e8-6e42-48c4-a6de-5ac468c08962 monotonic_ms=24589",
+      "W (27374) esp32_node::run: VIRTUAL_RESULT command_id=63969dc1-e73a-4c88-857b-9071541aaf2e monotonic_ms=24589",
+      "W (27644) esp32_node::run: VIRTUAL_RESULT command_id=6b0cbf53-c11f-47b2-9d57-903833c33078 monotonic_ms=24589",
+      "W (27914) esp32_node::run: VIRTUAL_RESULT command_id=9a8d52e4-60c9-41f3-aac2-4456555e7e96 monotonic_ms=24589",
+      "W (28154) esp32_node::run: VIRTUAL_RESULT command_id=968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2 monotonic_ms=24589",
+      "W (28424) esp32_node::run: VIRTUAL_RESULT command_id=e666bafe-6cc9-41cb-b943-5f64d65e882a monotonic_ms=24589",
+      "W (28664) esp32_node::run: VIRTUAL_RESULT command_id=6e446889-62b8-429e-abb0-14023616953a monotonic_ms=24589",
+      "W (28934) esp32_node::run: VIRTUAL_RESULT command_id=7363a027-c892-4314-874d-2ad1138f59d6 monotonic_ms=24589",
+      "W (40594) esp32_node::run: VIRTUAL_RESULT command_id=07e3e70f-8b4e-4e2b-95d1-d5c311b69d83 monotonic_ms=40069",
+      "W (40864) esp32_node::run: VIRTUAL_RESULT command_id=e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae monotonic_ms=40069",
+      "W (41104) esp32_node::run: VIRTUAL_RESULT command_id=2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8 monotonic_ms=40069",
+      "W (41374) esp32_node::run: VIRTUAL_RESULT command_id=d44bd904-b8b7-459e-9950-b4a38f192256 monotonic_ms=40069",
+      "W (41644) esp32_node::run: VIRTUAL_RESULT command_id=c3a1317e-5046-4ba1-b2f0-2a5ed850b6be monotonic_ms=40069",
+      "W (41884) esp32_node::run: VIRTUAL_RESULT command_id=18f117c7-7fde-4b20-8077-ece7d72aaf40 monotonic_ms=40069",
+      "W (42154) esp32_node::run: VIRTUAL_RESULT command_id=e23e29e4-111c-4cca-89cd-08f6f5dc21da monotonic_ms=40069",
+      "W (42394) esp32_node::run: VIRTUAL_RESULT command_id=572b4710-5fb2-4516-a58a-5a4156834503 monotonic_ms=40069",
+      "W (42664) esp32_node::run: VIRTUAL_RESULT command_id=d0edf8e8-6e42-48c4-a6de-5ac468c08962 monotonic_ms=40069",
+      "W (42934) esp32_node::run: VIRTUAL_RESULT command_id=63969dc1-e73a-4c88-857b-9071541aaf2e monotonic_ms=40069",
+      "W (43174) esp32_node::run: VIRTUAL_RESULT command_id=6b0cbf53-c11f-47b2-9d57-903833c33078 monotonic_ms=40069",
+      "W (43444) esp32_node::run: VIRTUAL_RESULT command_id=9a8d52e4-60c9-41f3-aac2-4456555e7e96 monotonic_ms=40069",
+      "W (43724) esp32_node::run: VIRTUAL_RESULT command_id=968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2 monotonic_ms=40069",
+      "W (43964) esp32_node::run: VIRTUAL_RESULT command_id=e666bafe-6cc9-41cb-b943-5f64d65e882a monotonic_ms=40069",
+      "W (44234) esp32_node::run: VIRTUAL_RESULT command_id=6e446889-62b8-429e-abb0-14023616953a monotonic_ms=40069",
+      "W (44474) esp32_node::run: VIRTUAL_RESULT command_id=7363a027-c892-4314-874d-2ad1138f59d6 monotonic_ms=40069",
+      "W (55664) esp32_node::run: VIRTUAL_RESULT command_id=07e3e70f-8b4e-4e2b-95d1-d5c311b69d83 monotonic_ms=55139",
+      "W (55904) esp32_node::run: VIRTUAL_RESULT command_id=e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae monotonic_ms=55139",
+      "W (56174) esp32_node::run: VIRTUAL_RESULT command_id=2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8 monotonic_ms=55139",
+      "W (56444) esp32_node::run: VIRTUAL_RESULT command_id=d44bd904-b8b7-459e-9950-b4a38f192256 monotonic_ms=55139",
+      "W (56674) esp32_node::run: VIRTUAL_RESULT command_id=c3a1317e-5046-4ba1-b2f0-2a5ed850b6be monotonic_ms=55139",
+      "W (56954) esp32_node::run: VIRTUAL_RESULT command_id=18f117c7-7fde-4b20-8077-ece7d72aaf40 monotonic_ms=55139",
+      "W (57224) esp32_node::run: VIRTUAL_RESULT command_id=e23e29e4-111c-4cca-89cd-08f6f5dc21da monotonic_ms=55139",
+      "W (57464) esp32_node::run: VIRTUAL_RESULT command_id=572b4710-5fb2-4516-a58a-5a4156834503 monotonic_ms=55139",
+      "W (57724) esp32_node::run: VIRTUAL_RESULT command_id=d0edf8e8-6e42-48c4-a6de-5ac468c08962 monotonic_ms=55139",
+      "W (57964) esp32_node::run: VIRTUAL_RESULT command_id=63969dc1-e73a-4c88-857b-9071541aaf2e monotonic_ms=55139",
+      "W (58224) esp32_node::run: VIRTUAL_RESULT command_id=6b0cbf53-c11f-47b2-9d57-903833c33078 monotonic_ms=55139",
+      "W (58494) esp32_node::run: VIRTUAL_RESULT command_id=9a8d52e4-60c9-41f3-aac2-4456555e7e96 monotonic_ms=55139",
+      "W (58734) esp32_node::run: VIRTUAL_RESULT command_id=968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2 monotonic_ms=55139",
+      "W (59004) esp32_node::run: VIRTUAL_RESULT command_id=e666bafe-6cc9-41cb-b943-5f64d65e882a monotonic_ms=55139",
+      "W (59274) esp32_node::run: VIRTUAL_RESULT command_id=6e446889-62b8-429e-abb0-14023616953a monotonic_ms=55139",
+      "W (59524) esp32_node::run: VIRTUAL_RESULT command_id=7363a027-c892-4314-874d-2ad1138f59d6 monotonic_ms=55139",
+      "W (70704) esp32_node::run: VIRTUAL_RESULT command_id=07e3e70f-8b4e-4e2b-95d1-d5c311b69d83 monotonic_ms=70179",
+      "W (70944) esp32_node::run: VIRTUAL_RESULT command_id=e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae monotonic_ms=70179",
+      "W (71214) esp32_node::run: VIRTUAL_RESULT command_id=2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8 monotonic_ms=70179",
+      "W (71464) esp32_node::run: VIRTUAL_RESULT command_id=d44bd904-b8b7-459e-9950-b4a38f192256 monotonic_ms=70179",
+      "W (71724) esp32_node::run: VIRTUAL_RESULT command_id=c3a1317e-5046-4ba1-b2f0-2a5ed850b6be monotonic_ms=70179",
+      "W (71994) esp32_node::run: VIRTUAL_RESULT command_id=18f117c7-7fde-4b20-8077-ece7d72aaf40 monotonic_ms=70179",
+      "W (72244) esp32_node::run: VIRTUAL_RESULT command_id=e23e29e4-111c-4cca-89cd-08f6f5dc21da monotonic_ms=70179",
+      "W (72504) esp32_node::run: VIRTUAL_RESULT command_id=572b4710-5fb2-4516-a58a-5a4156834503 monotonic_ms=70179",
+      "W (72774) esp32_node::run: VIRTUAL_RESULT command_id=d0edf8e8-6e42-48c4-a6de-5ac468c08962 monotonic_ms=70179",
+      "W (73014) esp32_node::run: VIRTUAL_RESULT command_id=63969dc1-e73a-4c88-857b-9071541aaf2e monotonic_ms=70179",
+      "W (73274) esp32_node::run: VIRTUAL_RESULT command_id=6b0cbf53-c11f-47b2-9d57-903833c33078 monotonic_ms=70179",
+      "W (73504) esp32_node::run: VIRTUAL_RESULT command_id=9a8d52e4-60c9-41f3-aac2-4456555e7e96 monotonic_ms=70179",
+      "W (73774) esp32_node::run: VIRTUAL_RESULT command_id=968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2 monotonic_ms=70179",
+      "W (74044) esp32_node::run: VIRTUAL_RESULT command_id=e666bafe-6cc9-41cb-b943-5f64d65e882a monotonic_ms=70179",
+      "W (74294) esp32_node::run: VIRTUAL_RESULT command_id=6e446889-62b8-429e-abb0-14023616953a monotonic_ms=70179",
+      "W (74574) esp32_node::run: VIRTUAL_RESULT command_id=7363a027-c892-4314-874d-2ad1138f59d6 monotonic_ms=70179",
+      "W (75324) esp32_node::run: VIRTUAL_ACK command_id=07e3e70f-8b4e-4e2b-95d1-d5c311b69d83",
+      "W (75564) esp32_node::run: VIRTUAL_ACK command_id=e2b0e803-f2a5-4b86-aaf4-bf5e03b14dae",
+      "W (75784) esp32_node::run: VIRTUAL_ACK command_id=2c4465b8-7a7f-4be5-ab9f-b56ec1b108a8",
+      "W (76014) esp32_node::run: VIRTUAL_ACK command_id=d44bd904-b8b7-459e-9950-b4a38f192256",
+      "W (76224) esp32_node::run: VIRTUAL_ACK command_id=c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+      "W (76434) esp32_node::run: VIRTUAL_ACK command_id=18f117c7-7fde-4b20-8077-ece7d72aaf40",
+      "W (76654) esp32_node::run: VIRTUAL_ACK command_id=e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+      "W (76854) esp32_node::run: VIRTUAL_ACK command_id=572b4710-5fb2-4516-a58a-5a4156834503",
+      "W (77044) esp32_node::run: VIRTUAL_ACK command_id=d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+      "W (77234) esp32_node::run: VIRTUAL_ACK command_id=63969dc1-e73a-4c88-857b-9071541aaf2e",
+      "W (77434) esp32_node::run: VIRTUAL_ACK command_id=6b0cbf53-c11f-47b2-9d57-903833c33078",
+      "W (77614) esp32_node::run: VIRTUAL_ACK command_id=9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+      "W (77804) esp32_node::run: VIRTUAL_ACK command_id=968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+      "W (77954) esp32_node::run: VIRTUAL_ACK command_id=e666bafe-6cc9-41cb-b943-5f64d65e882a",
+      "W (78114) esp32_node::run: VIRTUAL_ACK command_id=6e446889-62b8-429e-abb0-14023616953a",
+      "W (78284) esp32_node::run: VIRTUAL_ACK command_id=7363a027-c892-4314-874d-2ad1138f59d6",
+      "W (718034) esp32_node::run: VIRTUAL_DELIVERY generation=384 command_id=d4aa6ad2-5ff2-44bd-a638-21a2ba56ef12",
+      "W (718194) esp32_node::bench: VIRTUAL_EXEC count=1 run_ms=250",
+      "W (718374) esp32_node::run: VIRTUAL_HANDLED command_id=d4aa6ad2-5ff2-44bd-a638-21a2ba56ef12 actuated=true unledgered=false",
+      "W (718464) esp32_node::run: VIRTUAL_RESULT command_id=d4aa6ad2-5ff2-44bd-a638-21a2ba56ef12 monotonic_ms=717509",
+      "W (719054) esp32_node::run: VIRTUAL_ACK command_id=d4aa6ad2-5ff2-44bd-a638-21a2ba56ef12",
+      "I (14972594) esp32_node::run: config: IgnoredNotNewer { offered: 11 }",
+      "W (18437344) esp32_node::run: VIRTUAL_DELIVERY generation=384 command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+      "W (18437494) esp32_node::bench: VIRTUAL_EXEC count=2 run_ms=250",
+      "W (18437674) esp32_node::run: VIRTUAL_HANDLED command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 actuated=true unledgered=false",
+      "W (18437764) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18436819",
+      "W (18452734) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18452209",
+      "W (18468114) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18467589",
+      "W (18483524) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18482999",
+      "W (18498934) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18498409",
+      "W (18514314) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18513789",
+      "W (18529684) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18529159",
+      "W (18545104) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18544579",
+      "W (18560104) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18559579",
+      "W (18575524) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18574999",
+      "W (18590934) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18590409",
+      "W (18606284) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=18605759"
+    ]
+  },
+  "lost_ack_reset": {
+    "loaded": {
+      "daily": {
+        "day_epoch": 0,
+        "delivered_ml": 38.0
+      },
+      "dedup": [
+        "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+        "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+        "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+        "572b4710-5fb2-4516-a58a-5a4156834503",
+        "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+        "63969dc1-e73a-4c88-857b-9071541aaf2e",
+        "6b0cbf53-c11f-47b2-9d57-903833c33078",
+        "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+        "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+        "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+        "6e446889-62b8-429e-abb0-14023616953a",
+        "7363a027-c892-4314-874d-2ad1138f59d6",
+        "8c6b791a-557a-4513-aa64-8f896f229e41",
+        "0165fa23-e3d4-41fe-8810-fcbad8ae3b91",
+        "d4aa6ad2-5ff2-44bd-a638-21a2ba56ef12",
+        "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0"
+      ],
+      "generation": 385,
+      "in_flight": null,
+      "label": "loaded",
+      "offline": {
+        "budget_used_ml": 40.0,
+        "confirm_elapsed_ms": 0,
+        "cooldown_remaining_ms": 120000,
+        "cycle": "idle",
+        "dose_count": 0,
+        "window_elapsed_ms": 0
+      },
+      "pending": [
+        "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0"
+      ],
+      "unacknowledged_ml": 1.0
+    },
+    "boundary_log": [
+      "W (10004) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=9379",
+      "I (10584) esp32_node::run: config: IgnoredNotNewer { offered: 11 }",
+      "W (25034) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=24509",
+      "W (40414) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=39889",
+      "W (55434) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=54909",
+      "W (70824) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=70299",
+      "W (86234) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=85709",
+      "W (101614) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=101089",
+      "W (116634) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=116109",
+      "W (132014) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=131489",
+      "W (147424) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=146899",
+      "W (162844) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=162319",
+      "W (177874) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=177349",
+      "W (193264) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=192739",
+      "W (208674) esp32_node::run: VIRTUAL_RESULT command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0 monotonic_ms=208149",
+      "W (209274) esp32_node::run: VIRTUAL_ACK command_id=0cbcaa6e-0cdf-4539-8d31-9e2000527ba0",
+      "I (277234) esp32_node::run: config: Applied { config_version: 12 }"
+    ]
+  },
+  "final_disabled_reset": {
+    "loaded": {
+      "daily": {
+        "day_epoch": 0,
+        "delivered_ml": 38.0
+      },
+      "dedup": [
+        "c3a1317e-5046-4ba1-b2f0-2a5ed850b6be",
+        "18f117c7-7fde-4b20-8077-ece7d72aaf40",
+        "e23e29e4-111c-4cca-89cd-08f6f5dc21da",
+        "572b4710-5fb2-4516-a58a-5a4156834503",
+        "d0edf8e8-6e42-48c4-a6de-5ac468c08962",
+        "63969dc1-e73a-4c88-857b-9071541aaf2e",
+        "6b0cbf53-c11f-47b2-9d57-903833c33078",
+        "9a8d52e4-60c9-41f3-aac2-4456555e7e96",
+        "968bdceb-a7aa-4d9d-87a5-7ecce1e70ec2",
+        "e666bafe-6cc9-41cb-b943-5f64d65e882a",
+        "6e446889-62b8-429e-abb0-14023616953a",
+        "7363a027-c892-4314-874d-2ad1138f59d6",
+        "8c6b791a-557a-4513-aa64-8f896f229e41",
+        "0165fa23-e3d4-41fe-8810-fcbad8ae3b91",
+        "d4aa6ad2-5ff2-44bd-a638-21a2ba56ef12",
+        "0cbcaa6e-0cdf-4539-8d31-9e2000527ba0"
+      ],
+      "generation": 387,
+      "in_flight": null,
+      "label": "loaded",
+      "offline": {
+        "budget_used_ml": 40.0,
+        "confirm_elapsed_ms": 0,
+        "cooldown_remaining_ms": 120000,
+        "cycle": "idle",
+        "dose_count": 0,
+        "window_elapsed_ms": 0
+      },
+      "pending": [],
+      "unacknowledged_ml": -0.0
+    },
+    "boundary_log": [
+      "I (10384) esp32_node::run: config: IgnoredNotNewer { offered: 12 }"
+    ]
+  }
+}

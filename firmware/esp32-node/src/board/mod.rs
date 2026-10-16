@@ -59,7 +59,11 @@ compile_error!(
      to application, safety, sensor, pump, or networking code."
 );
 
-#[cfg(feature = "board-devkitm1")]
+#[cfg(all(feature = "board-devkitm1", not(feature = "bench-virtual-actuator")))]
+mod devkitm1;
+
+#[cfg(all(feature = "board-devkitm1", feature = "bench-virtual-actuator"))]
+#[path = "virtual_devkitm1.rs"]
 mod devkitm1;
 
 #[cfg(feature = "board-devkitm1")]

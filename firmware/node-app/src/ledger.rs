@@ -214,6 +214,14 @@ impl PendingLedger {
         Ok(())
     }
 
+    /// Starts a new monotonic clock domain. Result identities and publication
+    /// counts remain durable; old boot timestamps cannot schedule this boot.
+    pub fn reset_retry_clock(&mut self) {
+        for entry in &mut self.entries {
+            entry.last_published_ms = None;
+        }
+    }
+
     /// Applies a `command.result.ack` (protocol §5.14).
     ///
     /// Returns whether an entry was removed. An acknowledgement for a

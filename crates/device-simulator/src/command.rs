@@ -317,12 +317,16 @@ impl Device {
     fn decide(&self, command: &WaterCommand) -> Decision {
         let state = self.store().state();
         let previous: Vec<PreviousCommand<'_>> = state
-            .command_ring
+            .pending_results
             .iter()
-            .map(|record| PreviousCommand {
+            .map(|result| PreviousCommand {
+                command_id: result.command_id,
+                result,
+            })
+            .chain(state.command_ring.iter().map(|record| PreviousCommand {
                 command_id: record.command_id,
                 result: &record.result,
-            })
+            }))
             .collect();
         let guard = DeviceGuardState {
             previous: &previous,

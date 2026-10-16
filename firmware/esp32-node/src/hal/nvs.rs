@@ -102,7 +102,10 @@ impl NvsStore for EspNvsStore {
     }
 
     fn store(&mut self, state: &PersistedState) -> Result<(), NvsError> {
-        let mut payload = serde_json::to_vec(state).map_err(|_| NvsError::WriteFailed)?;
+        let mut payload = serde_json::to_vec(state).map_err(|error| {
+            log::error!("NVS write failed: {error}");
+            NvsError::WriteFailed
+        })?;
         if payload.len() + 4 > MAX_BLOB {
             return Err(NvsError::OutOfSpace);
         }
@@ -112,13 +115,19 @@ impl NvsStore for EspNvsStore {
         let target = 1 - self.active;
         self.nvs
             .set_blob(SLOTS[usize::from(target)], &payload)
-            .map_err(|_| NvsError::WriteFailed)?;
+            .map_err(|error| {
+                log::error!("NVS write failed: {error}");
+                NvsError::WriteFailed
+            })?;
         // The one operation that makes the new state current. Everything before
         // it wrote only to the inactive slot.
-        self.nvs
-            .set_u8(ACTIVE_KEY, target)
-            .map_err(|_| NvsError::WriteFailed)?;
+        self.nvs.set_u8(ACTIVE_KEY, target).map_err(|error| {
+            log::error!("NVS write failed: {error}");
+            NvsError::WriteFailed
+        })?;
         self.active = target;
+        #[cfg(feature = "bench-virtual-actuator")]
+        crate::bench::snapshot("committed", state);
         Ok(())
     }
 }

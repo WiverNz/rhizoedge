@@ -391,3 +391,21 @@ Negative, accepted:
   behaviour**, against the six points in §Device-side pending-result ledger;
   M9-022 verifies it. Until then the requirement is stated and unimplemented,
   which is the honest position: no firmware exists yet.
+
+
+### M9 physical verification corrections (2026-10-16)
+
+An unacknowledged terminal result is authoritative duplicate evidence even when
+intervening refusals have aged its ID out of the bounded command history. Both
+firmware and simulator now feed pending results before history into the same
+shared validator. Otherwise replay can replace a delivered result with a refusal
+or execute again once capacity is freed. This does not change the ledger's
+capacity or permit eviction. Conformance covers history rollover by refusals.
+
+Firmware resets only pending-result scheduling timestamps at boot. The previous
+boot's monotonic publication instant cannot delay a new boot's retry. Result
+identity, payload, publication count and delivered accounting remain persisted;
+unacknowledged results are immediately due on reconnect and then retain the
+normal 15-second cadence. The simulator already republishes pending results on
+reconnect. Real ESP32-C3 virtual-actuator evidence is in M9 report §13; this is
+not GPIO evidence.

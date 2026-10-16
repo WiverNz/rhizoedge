@@ -170,4 +170,11 @@ firmware/esp32-node/src/app/ledger.rs
 firmware/esp32-node/src/safety/mod.rs
 ```
 
-October hardware evidence: a rejected command replayed its stored result after a user-performed USB power cycle and Edge ACKed it. No executed-dose or GPIO assertion is proved. A 17-command rejection-ledger experiment yielded only four unique retry results; saturation and reboot retry timing remain unresolved. See [M9 physical report](../../reports/M9.md).
+October 16–17 hardware follow-up: real ESP32-C3 with the compile-time virtual
+actuator proved executed-dose dedup across USB power loss, all 16 ledger slots
+surviving two saturated power cycles, refusal at 15 with a reserved refusal
+slot, no eviction, real Edge ACK capacity recovery, and post-reboot lost-ACK
+retry termination. The earlier four-ID experiment was inconclusive and is not
+used as evidence. Exact IDs, counts and fixes are in [M9 report §13](../../reports/M9.md)
+and [virtual bench evidence](../../testing/m9-virtual-actuator-2026-10-16.md).
+No physical GPIO/pump behavior is proved.

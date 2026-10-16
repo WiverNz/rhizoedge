@@ -1,5 +1,5 @@
 //! Retained sleep accounting uses measured elapsed time exactly once.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use rhizo_mqtt_contract::{Envelope, payload::OfflinePolicySet};
 use rhizo_node_app::{
     budget::restore_sleep_accounting,
@@ -105,4 +105,31 @@ fn missing_retention_and_invalid_policy_never_replenish_a_window() {
     assert_eq!(state.offline_runtime.budget_used_ml, 40.0);
     assert_eq!(state.offline_runtime.window_elapsed_ms, 30000);
     assert_eq!(state.offline_runtime.cooldown_remaining_ms, 30000);
+}
+
+/// A durable result's old monotonic publication instant is meaningless after
+/// reboot; resetting scheduling must preserve its identity and accounting.
+#[test]
+fn reboot_makes_unacknowledged_results_due_without_changing_accounting() {
+    use rhizo_mqtt_contract::payload::CommandResult;
+    use rhizo_node_app::{fakes::CountingRng, identity::begin_boot};
+    let result: CommandResult = serde_json::from_value(serde_json::json!({
+        "command_id":"018fd7b1-4c2e-7f10-a3b8-9d1e2f304050",
+        "status":"completed", "requested_ml":4.0, "delivered_ml":4.0,
+        "duration_ms":1000, "clamped":false, "delivered_today_ml":4.0,
+        "origin":"edge_command"
+    }))
+    .expect("valid result");
+    let mut state = rhizo_node_app::persist::PersistedState::default();
+    state.daily.delivered_ml = 4.0;
+    state.pending_results.insert(result.clone()).expect("space");
+    state
+        .pending_results
+        .mark_published(result.command_id, 86_400_000);
+    let bytes = serde_json::to_vec(&state).expect("encode");
+    let mut restored = serde_json::from_slice(&bytes).expect("decode");
+    begin_boot(&mut restored, None, &mut CountingRng::new(1));
+    assert_eq!(restored.daily.delivered_ml, 4.0);
+    assert_eq!(restored.pending_results.due(0), vec![&result]);
+    assert_eq!(restored.pending_results.entries()[0].publish_count, 1);
 }

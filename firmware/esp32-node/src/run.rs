@@ -349,6 +349,12 @@ fn dispatch<N: NvsStore, P: Pump>(
                 // awake for ever — or asleep mid-dose.
                 let hold = cycle.acquire_hold();
                 let inputs = gate_inputs(context, clock, now_mono);
+                #[cfg(feature = "bench-virtual-actuator")]
+                log::warn!(
+                    "VIRTUAL_DELIVERY generation={} command_id={}",
+                    context.state.boot_generation,
+                    envelope.data.command_id
+                );
                 let handled = handle_water(
                     context.state,
                     context.nvs,
@@ -356,6 +362,16 @@ fn dispatch<N: NvsStore, P: Pump>(
                     &envelope.data,
                     &inputs,
                 );
+                #[cfg(feature = "bench-virtual-actuator")]
+                {
+                    log::warn!(
+                        "VIRTUAL_HANDLED command_id={} actuated={} unledgered={}",
+                        envelope.data.command_id,
+                        handled.actuated,
+                        handled.unledgered
+                    );
+                    crate::bench::snapshot("handled", context.state);
+                }
                 if handled.saturation_raised {
                     log::error!(
                         "pending-result ledger saturated: actuation refused until the edge \
@@ -370,6 +386,8 @@ fn dispatch<N: NvsStore, P: Pump>(
         }
         Topic::CommandResultAck(_) => {
             if let Ok(envelope) = Envelope::<CommandResultAck>::from_json(payload) {
+                #[cfg(feature = "bench-virtual-actuator")]
+                log::warn!("VIRTUAL_ACK command_id={}", envelope.data.command_id);
                 let cleared = rhizo_node_app::command::acknowledge_result(
                     context.state,
                     envelope.data.command_id,
@@ -426,8 +444,14 @@ fn gate_inputs<N: NvsStore, P: Pump>(
         // to read yet and the shared gate refuses `Unknown`. That is
         // fail-closed and correct: a device with no leak sensor cannot water,
         // and M10 is what fits one.
+        #[cfg(not(feature = "bench-virtual-actuator"))]
         leak: LeakState::Unknown,
+        #[cfg(not(feature = "bench-virtual-actuator"))]
         tank_percent: None,
+        #[cfg(feature = "bench-virtual-actuator")]
+        leak: LeakState::Clear,
+        #[cfg(feature = "bench-virtual-actuator")]
+        tank_percent: Some(75.0),
         tank_min_percent: config.map_or(15.0, |c| c.tank.min_percent),
         pump_enabled: config.is_some_and(|c| c.pump.enabled),
         pump_faulted: context.pump.is_faulted(),
@@ -493,7 +517,12 @@ fn status_for<N: NvsStore, P: Pump>(
         boot_generation: context.identity.boot_generation,
         status: value,
         reason,
-        firmware_version: Some(if cfg!(feature = "bench-sensors") {
+        firmware_version: Some(if cfg!(feature = "bench-virtual-actuator") {
+            format!(
+                "{}-VIRTUAL-ACTUATOR-BENCH",
+                rhizo_node_app::FIRMWARE_VERSION
+            )
+        } else if cfg!(feature = "bench-sensors") {
             format!("{}-bench", rhizo_node_app::FIRMWARE_VERSION)
         } else {
             rhizo_node_app::FIRMWARE_VERSION.to_owned()
@@ -597,6 +626,11 @@ fn publish_result<N: NvsStore, P: Pump>(
         MessageKind::CommandResult,
         now_mono,
         result.clone(),
+    );
+    #[cfg(feature = "bench-virtual-actuator")]
+    log::warn!(
+        "VIRTUAL_RESULT command_id={} monotonic_ms={now_mono}",
+        result.command_id
     );
     let topic = Topic::CommandResult(context.device_id.clone());
     publish(session.client(), &topic, &envelope);

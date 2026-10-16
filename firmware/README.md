@@ -272,3 +272,30 @@ python3 scripts/m9-check-accounting-log.py invalid <corrupt-timer-wake.log>
 
 These checks make no GPIO or HIL-1 assertion. External GPIO5 pull-down and
 transient capture remain separate physical prerequisites.
+
+
+### Real-board virtual actuator (M9 only)
+
+`--features bench-virtual-actuator,bench-sensors` selects a compile-time-only
+adapter that constructs no actuator or peripheral GPIO output. Default builds
+still select `GpioPump` and unknown leak/missing tank inputs. There is no runtime
+switch. The virtual build supplies explicit clear-leak/75% tank fixtures to the
+unchanged validator; all other checks, NVS, dedup, ledger and MQTT paths remain
+shared. Startup profile and firmware status contain `VIRTUAL-ACTUATOR-BENCH`.
+Keep every load disconnected. This image cannot prove physical actuation.
+
+`VIRTUAL_DELIVERY` names each incoming command and generation; `VIRTUAL_EXEC`
+counts boundary calls within that boot; `VIRTUAL_HANDLED` identifies execution
+versus replay/refusal; `VIRTUAL_STATE` logs redacted loaded/committed ledger and
+accounting state. Pair the boot-local counter with generation, command IDs and
+continuous UART capture across the planned power-cycle segments. No credentials
+are logged. Broker capture and Edge database queries provide independent result
+and accounting counts. Do not describe simulated delivered amounts as water.
+
+
+**Partition table:** flash from `firmware/esp32-node` using its `espflash.toml`,
+or supply `--partition-table firmware/esp32-node/partitions.csv
+--partition-table-offset 0x8000` from the root.
+The 192 KiB NVS partition is required for the durable ledger. Previously flashed
+boards using the default 24 KiB NVS require a preserved-state migration first;
+see M9 report §13. Never erase NVS to make saturation pass.

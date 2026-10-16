@@ -28,6 +28,8 @@ default = ["board-devkitm1"]
 board-devkitm1 = []
 # Explicit advisory fake measurements for M9 bare-board verification only.
 bench-sensors = []
+# Compile-time only: no actuator or peripheral GPIO construction.
+bench-virtual-actuator = []
 # Explicit conservative accounting fixtures and RTC corruption injection.
 bench-accounting = []
 bench-corrupt-rtc = ["bench-accounting"]

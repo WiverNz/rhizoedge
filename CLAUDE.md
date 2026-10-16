@@ -1183,3 +1183,10 @@ their successor. It is independent of M15 in both directions — M15's
 `DoseResponseObservation` already carries `verified` and weights unverified
 observations at half, so M16 improves it on arrival with no change to either
 design. If both are built, **M16 first** is the better order.
+
+
+October 17 M9 checkpoint: real ESP32-C3 **virtual-actuator** execution dedup
+across USB power loss, 16-entry durable saturation/ACK recovery, and reboot /
+lost-ACK retry termination are verified (M9 report §13). Production safety
+inputs and GPIO actuator selection remain unchanged. Electrical GPIO/HIL
+criteria remain pending. **M9 IN PROGRESS; M10 NOT READY, not started.**

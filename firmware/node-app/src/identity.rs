@@ -59,6 +59,7 @@ pub fn begin_boot(
     rng: &mut impl Rng,
 ) -> BootIdentity {
     state.boot_generation = state.boot_generation.saturating_add(1);
+    state.pending_results.reset_retry_clock();
     let mut adapter = RngAdapter(rng);
     let boot_id = BootId::new_v7(now.unwrap_or(UtcMillis(0)), &mut adapter);
     BootIdentity {

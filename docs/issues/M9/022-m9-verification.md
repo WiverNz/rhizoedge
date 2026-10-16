@@ -96,7 +96,7 @@ Host tests complement, but do not replace, the physical criteria below.
       behaviour recorded there and in ADR-014.
 - [x] The conformance test shows identical behaviour to the simulator.
 - [x] **With a board:** it connects, appears online, publishes telemetry, applies config. (Explicit M9 fake-sensor bench image; report §11.)
-- [ ] **With a board:** a duplicate `command_id` across a power cycle is deduplicated.
+- [x] **With a board:** a duplicate `command_id` across a power cycle is deduplicated. (Real ESP32-C3 NVS and virtual execution, October 16–17; report §13. No GPIO/pump claim.)
 - [ ] **With a board:** an oversized command is clamped or rejected.
 - [ ] **With a board:** HIL-1 passes with transient capture (DMM alone is insufficient).
 - [ ] **With a board:** blocking the `time` topic (or disconnecting the edge) refuses commands with `clock_unsynced` while telemetry continues.

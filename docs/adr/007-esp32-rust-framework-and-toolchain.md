@@ -644,3 +644,18 @@ Negative, accepted:
   <https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32c3/esp32-c3-devkitm-1/user_guide.html>
 - Seeed XIAO ESP32-C3 (candidate battery board, unpurchased):
   <https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/>
+
+
+### 2026-10-16 physical storage correction
+
+The M9 saturation bench demonstrated that espflash's default 24 KiB NVS
+partition cannot hold the durable ledger and both CRC-protected 32 KiB state
+slots. `firmware/esp32-node/partitions.csv` now reserves 192 KiB at 0x3d0000
+on the 4 MiB reference board. Factory starts at the unchanged 0x10000 and ends
+at 0x3d0000; PHY remains 0xf000/0x1000. Use the checked-in `espflash.toml` from
+the firmware directory or pass the partition table and `--partition-table-offset 0x8000` explicitly. Existing boards
+require a preserved-state migration before switching tables; do not simply
+flash and interpret an empty relocated NVS as new state. See the M9 report for
+migration evidence. Protocol, ledger capacity and no-eviction semantics remain
+unchanged. The host layout check reserves room for two maximum blobs, a
+replacement blob and GC metadata and rejects overlapping/out-of-flash regions.

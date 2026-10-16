@@ -27,6 +27,8 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
 use rhizo_node_app::ports::{NvsStore, Pump, Watchdog};
 
+#[cfg(feature = "bench-virtual-actuator")]
+mod bench;
 mod board;
 mod hal;
 mod net;
@@ -117,6 +119,8 @@ fn main() {
         log::warn!("nvs empty or unreadable; starting fresh and reporting nvs_reset");
     }
     let mut state = loaded.unwrap_or_default();
+    #[cfg(feature = "bench-virtual-actuator")]
+    crate::bench::snapshot("loaded", &state);
     let credited = rhizo_node_app::budget::restore_sleep_accounting(
         &mut state,
         wake_reason,

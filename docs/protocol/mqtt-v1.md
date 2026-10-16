@@ -988,6 +988,10 @@ acknowledgement from the edge establishes that.
 - A result that cannot be published MUST be persisted to NVS and published after
   the next boot. So must one that was published and not acknowledged: the
   retained copy is what makes a reboot mid-flight harmless.
+- A retained unacknowledged terminal result remains authoritative duplicate
+  evidence even after its ID ages out of a bounded command-history ring. Boot
+  must not interpret a prior boot's monotonic retry timestamp in the new clock
+  domain; pending results are due after reconnect.
 - A device MAY bound how many unacknowledged results it holds. It MUST NOT
   bound how long it retries one.
 - **A device MUST NOT silently discard an unacknowledged result in a way that

@@ -87,13 +87,20 @@ pub fn authorise(
     command: &WaterCommand,
     inputs: &GateInputs,
 ) -> Authorisation {
+    // Unacknowledged terminal results remain authoritative even after refusals
+    // age their IDs out of the bounded history ring. Consult them first.
     let previous: Vec<PreviousCommand<'_>> = state
-        .dedup_ring
+        .pending_results
+        .entries()
         .iter()
         .map(|entry| PreviousCommand {
-            command_id: entry.command_id,
+            command_id: entry.result.command_id,
             result: &entry.result,
         })
+        .chain(state.dedup_ring.iter().map(|entry| PreviousCommand {
+            command_id: entry.command_id,
+            result: &entry.result,
+        }))
         .collect();
 
     let guard = DeviceGuardState {

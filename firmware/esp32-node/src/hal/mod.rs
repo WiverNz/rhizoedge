@@ -13,7 +13,9 @@ pub mod battery;
 pub mod clock;
 pub mod console;
 pub mod nvs;
+#[cfg(not(feature = "bench-virtual-actuator"))]
 pub mod pump;
+#[cfg(not(feature = "bench-virtual-actuator"))]
 pub mod rail;
 pub mod rng;
 pub mod rtc_store;

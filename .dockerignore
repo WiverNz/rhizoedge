@@ -9,3 +9,7 @@ deploy/mosquitto/passwd
 .agents/
 .codex/
 deploy/artifacts/
+
+# Local ESP bench credentials/backups and nested firmware build outputs.
+local/
+**/target/

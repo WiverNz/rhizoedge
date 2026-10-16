@@ -24,12 +24,11 @@ pub fn previous(ring: &[DedupEntry], command_id: CommandId) -> Option<&CommandRe
 
 /// Records an executed command, evicting the oldest entry when full.
 ///
-/// Eviction here is safe and is **not** the ledger's question. Losing the
-/// oldest dedup entry can only mean a very old `command_id` is executed twice
-/// if the edge re-sends it after sixteen intervening commands — and the edge
-/// never re-sends a settled command, because a retry reuses the same
-/// `command_id` only while the command is still in flight. Nothing about the
-/// delivered-water accounting depends on this ring.
+/// This is bounded history, not the pending-result ledger. The command gate
+/// also consults unacknowledged results before this ring, so history eviction
+/// never forgets an unsettled delivery. Once acknowledged and aged out of this
+/// ring, an ID is no longer remembered; the edge never retries settled commands.
+/// Delivered-water accounting is retained independently of history eviction.
 pub fn record(ring: &mut Vec<DedupEntry>, command_id: CommandId, result: CommandResult) {
     if let Some(existing) = ring.iter_mut().find(|entry| entry.command_id == command_id) {
         existing.result = result;
