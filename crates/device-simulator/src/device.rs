@@ -1384,6 +1384,13 @@ impl Device {
         if isolated_ms > 0 {
             tracing::info!(isolated_ms, "reconnected after running alone");
         }
+        // The edge has control again, so the next isolation's first refusal is
+        // always recorded, as the firmware's `IsolationDriver::on_edge_control`
+        // does. Without this a refusal buffered before the first connect — and
+        // acknowledged out of the buffer by its replay — silences the same
+        // refusal in every later isolation, and the edge never learns why
+        // *that* isolation did not water.
+        self.set_last_offline_refusal(None);
         let mut publications = vec![self.status_publication(DeviceStatusValue::Online, None)?];
         // Flush the bounded ring, oldest first. A device MUST NOT flush a
         // backlog beyond it (protocol §8 step 5) — the ring is the bound.

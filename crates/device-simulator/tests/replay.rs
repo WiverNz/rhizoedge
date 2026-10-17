@@ -444,3 +444,34 @@ fn policy_envelope() -> Vec<u8> {
     }))
     .unwrap()
 }
+
+#[test]
+fn every_isolation_records_its_own_first_refusal() {
+    // The firmware clears its remembered refusal when the edge regains control
+    // (`IsolationDriver::on_edge_control`). The simulator did not, so a refusal
+    // buffered before the first connect, then replayed and acknowledged, left
+    // every later isolation of the same unprovisioned device with no audit
+    // record at all. `scenario_history_gap` found it on CI.
+    let state_file = scratch_state_file().display().to_string();
+    let mut device = Device::new(&settings_at(&state_file));
+
+    // Booted but not yet connected: an unprovisioned device refuses.
+    device.evaluate_offline_autonomy(0);
+    assert_eq!(device.buffered_events(), 1);
+    let replayed: Vec<_> = batches(&device.on_connected().unwrap())
+        .into_iter()
+        .flat_map(|b| b.events)
+        .collect();
+    let through = replayed.iter().map(|e| e.device_seq).max().unwrap();
+    assert!(device.acknowledge_events(through).changed());
+    assert_eq!(device.buffered_events(), 0);
+
+    device.on_disconnected();
+    device.evaluate_offline_autonomy(0);
+    device.evaluate_offline_autonomy(0);
+    assert_eq!(
+        device.buffered_events(),
+        1,
+        "the new isolation records its refusal once, not zero times"
+    );
+}
