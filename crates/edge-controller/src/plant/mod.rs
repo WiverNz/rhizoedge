@@ -556,3 +556,81 @@ pub async fn record_irrigation_transition(
 pub fn plant_required_kinds(loaded: &Loaded) -> Vec<MeasurementKind> {
     required_kinds(&loaded.bindings())
 }
+
+#[cfg(test)]
+mod lockout_names {
+    use rhizo_domain::LockoutReason;
+    use rhizo_storage::repo::lockout::{DERIVED_REASONS, HOLD_REASONS, LATCH_REASONS};
+
+    /// Every reason, by an exhaustive match: a new variant fails to compile
+    /// here until someone decides which list it belongs to.
+    fn all() -> [LockoutReason; 12] {
+        let every = [
+            LockoutReason::Leak,
+            LockoutReason::TankLow,
+            LockoutReason::StaleData,
+            LockoutReason::SensorFault,
+            LockoutReason::DailyLimit,
+            LockoutReason::MaxDosesReached,
+            LockoutReason::NoDeliveryDetected,
+            LockoutReason::Uncertain,
+            LockoutReason::ClockUnsynced,
+            LockoutReason::PumpFault,
+            LockoutReason::NoActuator,
+            LockoutReason::Unknown,
+        ];
+        for reason in every {
+            match reason {
+                LockoutReason::Leak
+                | LockoutReason::TankLow
+                | LockoutReason::StaleData
+                | LockoutReason::SensorFault
+                | LockoutReason::DailyLimit
+                | LockoutReason::MaxDosesReached
+                | LockoutReason::NoDeliveryDetected
+                | LockoutReason::Uncertain
+                | LockoutReason::ClockUnsynced
+                | LockoutReason::PumpFault
+                | LockoutReason::NoActuator
+                | LockoutReason::Unknown => {}
+            }
+        }
+        every
+    }
+
+    /// The storage layer classifies lockouts by name, and can't see the enum.
+    /// Each name is in exactly one list, the lists name nothing else, and the
+    /// latches are exactly the reasons the gate refuses to auto-clear (F-060-41).
+    #[test]
+    fn the_storage_lists_partition_every_lockout_reason() {
+        let mut listed: Vec<&str> = LATCH_REASONS
+            .iter()
+            .chain(HOLD_REASONS.iter())
+            .chain(DERIVED_REASONS.iter())
+            .copied()
+            .collect();
+        listed.sort_unstable();
+        let mut names: Vec<String> = all().into_iter().map(super::lockout_name).collect();
+        names.sort_unstable();
+        assert_eq!(listed, names, "each reason in exactly one list");
+
+        for reason in all() {
+            let name = super::lockout_name(reason);
+            assert_eq!(
+                LATCH_REASONS.contains(&name.as_str()),
+                !rhizo_domain::irrigation::is_auto_clearable(reason),
+                "{name}"
+            );
+            // And each list is exactly the domain's class of that name.
+            let class = rhizo_domain::irrigation::lockout_class(reason);
+            let listed = if LATCH_REASONS.contains(&name.as_str()) {
+                rhizo_domain::irrigation::LockoutClass::Latch
+            } else if HOLD_REASONS.contains(&name.as_str()) {
+                rhizo_domain::irrigation::LockoutClass::Hold
+            } else {
+                rhizo_domain::irrigation::LockoutClass::Derived
+            };
+            assert_eq!(listed, class, "{name}");
+        }
+    }
+}

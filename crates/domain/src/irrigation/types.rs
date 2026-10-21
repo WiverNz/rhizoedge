@@ -292,24 +292,40 @@ pub struct IrrigationInputs<'a> {
     /// which predates ADR-016's binding roles; without it a plant that requires
     /// pot weight would water on a silent scale.
     pub required_inputs: &'a [RequiredInput],
-    /// The lockout currently persisted against this plant, if any.
+    /// Every **latched** lockout recorded against this plant (F-060-41).
     ///
-    /// Read so an **explicit-clear** lockout (F-060-41) survives the condition
-    /// that raised it: a leak that dried out does not silently re-enable
-    /// watering, because the burst joint has not necessarily been fixed. An
-    /// auto-clearing lockout (F-060-40) is ignored here and re-derived from
-    /// current inputs, which is exactly what "clears when the condition
-    /// resolves" means. Absent from PRD 060's illustrative struct; without it
-    /// no lockout could outlive one tick.
-    pub active_lockout: Option<LockoutReason>,
-    /// Until when an auto-clearing lockout is nevertheless **held**.
+    /// Each is an independent record: a leak that dried out does not silently
+    /// re-enable watering, because the burst joint has not necessarily been
+    /// fixed, and a leak latched on top of `no_delivery_detected` does not
+    /// replace it. Any one blocks. Absent from PRD 060's illustrative struct;
+    /// without it no lockout could outlive one tick.
+    pub latched: &'a [LockoutReason],
+    /// Every recorded [`Hold`], expired or not: the gate compares each deadline
+    /// with [`Self::now`], so an expired one blocks nothing and an active one
+    /// blocks whatever the inputs say. F-060-51's mechanism; also absent from
+    /// PRD 060's illustrative struct, which states the requirement without
+    /// naming a field for it.
     ///
-    /// F-060-51's only mechanism: a forward clock step of more than ten minutes
-    /// locks every plant `Uncertain` for one cooldown, and `Uncertain` would
-    /// otherwise clear on the very next tick because nothing about the inputs is
-    /// wrong. Also absent from PRD 060's illustrative struct, which states the
-    /// requirement without naming a field for it.
-    pub lockout_held_until: Option<DateTime<Utc>>,
+    /// Derived conditions (stale data, tank low, an unknown leak signal, ...)
+    /// are **not** inputs here: the gate derives them from the inputs above on
+    /// every call, which is what "clears when the condition resolves" means
+    /// (F-060-40).
+    pub holds: &'a [Hold],
+}
+
+/// A time-bounded block recorded by a writer that knows its deadline: a
+/// forward clock step (F-060-51) or a device's `clock_unsynced` refusal.
+///
+/// Not the `Uncertain` the gate *derives* from a silent sensor or an open
+/// reconciliation. That one is an answer, recomputed on every call and
+/// recorded by no one; a `Hold` is a record that blocks until its deadline even
+/// when every input looks fine, and expiring touches nothing else.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Hold {
+    /// Why the plant is held: `uncertain` or `clock_unsynced`.
+    pub reason: LockoutReason,
+    /// The edge instant the hold ends; it blocks while `now < until`.
+    pub until: DateTime<Utc>,
 }
 
 /// What the machine decided.
@@ -409,6 +425,63 @@ pub fn state_from_str(name: &str) -> IrrigationState {
         "wait_for_absorption" => IrrigationState::WaitForAbsorption,
         "recheck" => IrrigationState::Recheck,
         _ => IrrigationState::Locked,
+    }
+}
+
+/// How a lockout reason may be recorded, if at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockoutClass {
+    /// Explicit-clear (F-060-41): recorded once, removed only by an operator
+    /// clearing that one reason.
+    Latch,
+    /// Recorded only with a deadline, as a [`Hold`]. `Uncertain` is in this
+    /// class because a forward clock step records it; the `Uncertain` the gate
+    /// derives from a silent sensor is an answer and is never recorded.
+    Hold,
+    /// Re-derived from live inputs on every pass; never recorded (F-060-40).
+    Derived,
+}
+
+/// The class of a lockout reason. Exhaustive, with no catch-all: a new reason
+/// fails to compile until someone decides how it is recorded. `Unknown` — a
+/// stored name nobody recognises — is a latch, because an unreadable lockout is
+/// not an absent one (SAFETY-012) and a hold would expire on its own.
+#[must_use]
+pub const fn lockout_class(reason: LockoutReason) -> LockoutClass {
+    match reason {
+        LockoutReason::Leak
+        | LockoutReason::PumpFault
+        | LockoutReason::NoDeliveryDetected
+        | LockoutReason::MaxDosesReached
+        | LockoutReason::Unknown => LockoutClass::Latch,
+        LockoutReason::Uncertain | LockoutReason::ClockUnsynced => LockoutClass::Hold,
+        LockoutReason::StaleData
+        | LockoutReason::SensorFault
+        | LockoutReason::TankLow
+        | LockoutReason::DailyLimit
+        | LockoutReason::NoActuator => LockoutClass::Derived,
+    }
+}
+
+/// Which of several blocking reasons is *shown*: lower ranks first. Fixed, so
+/// the reported reason never depends on the order reasons were raised in. It
+/// decides nothing about *whether* watering is refused — every recorded reason
+/// refuses on its own.
+#[must_use]
+pub const fn display_rank(reason: LockoutReason) -> u8 {
+    match reason {
+        LockoutReason::Leak => 0,
+        LockoutReason::PumpFault => 1,
+        LockoutReason::NoDeliveryDetected => 2,
+        LockoutReason::MaxDosesReached => 3,
+        LockoutReason::Unknown => 4,
+        LockoutReason::ClockUnsynced => 5,
+        LockoutReason::Uncertain => 6,
+        LockoutReason::NoActuator => 7,
+        LockoutReason::TankLow => 8,
+        LockoutReason::SensorFault => 9,
+        LockoutReason::StaleData => 10,
+        LockoutReason::DailyLimit => 11,
     }
 }
 
@@ -531,8 +604,8 @@ mod types {
             dry_duration: Duration::zero(),
             reconciling: false,
             required_inputs: &[],
-            active_lockout: None,
-            lockout_held_until: None,
+            latched: &[],
+            holds: &[],
         };
         assert!(inputs.latest_soil.is_none());
         assert!(inputs.tank.is_none());
@@ -604,6 +677,57 @@ mod types {
             LockoutReason::Unknown,
         ] {
             assert!(!is_auto_clearable(reason), "{reason:?}");
+        }
+    }
+
+    /// The three classes, and their agreement with clearability: a reason is a
+    /// latch exactly when it is not auto-clearable, and every rank is distinct
+    /// so the shown reason is a total order.
+    #[test]
+    fn lockout_classes_agree_with_clearability_and_ranks_are_distinct() {
+        let every = [
+            LockoutReason::Leak,
+            LockoutReason::TankLow,
+            LockoutReason::StaleData,
+            LockoutReason::SensorFault,
+            LockoutReason::DailyLimit,
+            LockoutReason::MaxDosesReached,
+            LockoutReason::NoDeliveryDetected,
+            LockoutReason::Uncertain,
+            LockoutReason::ClockUnsynced,
+            LockoutReason::PumpFault,
+            LockoutReason::NoActuator,
+            LockoutReason::Unknown,
+        ];
+        for reason in every {
+            assert_eq!(
+                lockout_class(reason) == LockoutClass::Latch,
+                !is_auto_clearable(reason),
+                "{reason:?}"
+            );
+        }
+        assert_eq!(lockout_class(LockoutReason::Unknown), LockoutClass::Latch);
+        assert_eq!(lockout_class(LockoutReason::Uncertain), LockoutClass::Hold);
+        assert_eq!(
+            lockout_class(LockoutReason::ClockUnsynced),
+            LockoutClass::Hold
+        );
+        let mut ranks: Vec<u8> = every.iter().map(|r| display_rank(*r)).collect();
+        ranks.sort_unstable();
+        ranks.dedup();
+        assert_eq!(ranks.len(), every.len());
+        // Every latch outranks every hold, and every hold every derived reason.
+        for a in every {
+            for b in every {
+                let order = |r| match lockout_class(r) {
+                    LockoutClass::Latch => 0,
+                    LockoutClass::Hold => 1,
+                    LockoutClass::Derived => 2,
+                };
+                if order(a) < order(b) {
+                    assert!(display_rank(a) < display_rank(b), "{a:?} vs {b:?}");
+                }
+            }
         }
     }
 

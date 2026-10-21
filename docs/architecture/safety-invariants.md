@@ -283,7 +283,10 @@ then the operator reset) and `safety_003_removing_the_pump_does_not_rewrite_a_le
 **Open:** a forward clock step (F-060-51) still writes a held `uncertain` over a
 latched `leak`, which then auto-clears after the hold, and a detected leak
 replaces another explicit-clear reason. Both are recorded in
-[docs/reports/M9.md](../reports/M9.md) §14 for a decision; neither is fixed.
+[docs/reports/M9.md](../reports/M9.md) §14; neither is fixed. The remedy — one
+`plant_lockouts` row per reason — is being cut over in stages (§15). Stage 1
+(2026-10-21) added the table and its backfill; **no decision reads it yet**, so
+SAFETY-003 is not closed by it.
 
 ---
 

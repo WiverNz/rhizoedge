@@ -28,7 +28,7 @@ use proptest::prelude::*;
 use proptest::test_runner::FileFailurePersistence;
 use rhizo_domain::irrigation::budget;
 use rhizo_domain::irrigation::types::{
-    EvaluationMode, IrrigationDecision, IrrigationInputs, LeakState, RequiredInput,
+    EvaluationMode, Hold, IrrigationDecision, IrrigationInputs, LeakState, RequiredInput,
     RequiredInputState, TankState, WeightSample,
 };
 use rhizo_domain::irrigation::{evaluate, safety_gate};
@@ -68,8 +68,8 @@ struct Scene {
     online: bool,
     dry: Duration,
     reconciling: bool,
-    lockout: Option<LockoutReason>,
-    held_until: Option<DateTime<Utc>>,
+    latched: Vec<LockoutReason>,
+    holds: Vec<Hold>,
 }
 
 impl Scene {
@@ -114,8 +114,8 @@ impl Scene {
             online: true,
             dry: Duration::minutes(45),
             reconciling: false,
-            lockout: None,
-            held_until: None,
+            latched: Vec::new(),
+            holds: Vec::new(),
         }
     }
 
@@ -144,8 +144,8 @@ impl Scene {
             dry_duration: self.dry,
             reconciling: self.reconciling,
             required_inputs: &self.required,
-            active_lockout: self.lockout,
-            lockout_held_until: self.held_until,
+            latched: &self.latched,
+            holds: &self.holds,
         }
     }
 }

@@ -398,8 +398,7 @@ mod machine {
     fn row_a_resolved_auto_clearing_lockout_returns_to_the_cycle() {
         let mut scene = Scene::at(IrrigationState::Locked);
         scene.soil.moisture_vwc = Some(40.0);
-        let mut inputs = scene.inputs();
-        inputs.active_lockout = Some(LockoutReason::TankLow);
+        let inputs = scene.inputs();
         let decision = evaluate(inputs);
         assert_eq!(decision, IrrigationDecision::Idle);
         let inputs = scene.inputs();
@@ -411,7 +410,7 @@ mod machine {
     fn row_an_explicit_lockout_does_not_clear_itself() {
         let scene = Scene::at(IrrigationState::Locked);
         let mut inputs = scene.inputs();
-        inputs.active_lockout = Some(LockoutReason::MaxDosesReached);
+        inputs.latched = &[LockoutReason::MaxDosesReached];
         assert_eq!(
             evaluate(inputs),
             IrrigationDecision::Lock {

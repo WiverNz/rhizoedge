@@ -3,6 +3,7 @@ pub mod binding;
 pub mod command;
 pub mod ingest;
 pub mod intent;
+pub mod lockout;
 pub mod outbox;
 pub mod plant;
 pub mod profile;

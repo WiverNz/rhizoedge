@@ -449,8 +449,8 @@ pub async fn clear_lockout(
     // comes straight back, the condition is still active and clearing it would
     // be a lie the next tick would immediately contradict.
     let mut trial = gathered.inputs(now, mode);
-    trial.active_lockout = None;
-    trial.lockout_held_until = None;
+    trial.latched = &[];
+    trial.holds = &[];
     if safety_gate(&trial) == Some(reason) {
         return lockout_conflict(reason, loaded.plant.lockout_since, None);
     }

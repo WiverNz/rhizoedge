@@ -78,6 +78,8 @@ them, and `ledger_tables_are_not_in_retention_source` fails if anyone tries.
 | Fact | Where |
 |---|---|
 | Current block and reason | `plants.lockout_reason`, `lockout_since`, `lockout_until` |
+| Every independent block (latches, holds) | `plant_lockouts` — written alongside the column since migration `0002`; **not yet read by any decision** (cutover in progress, M9 report §15) |
+| What the `0002` migration carried over | `plant_events` kind `lockout_migrated` (`warning` for an unrecognised reason) |
 | Who cleared it and when | `plants.lockout_cleared_by`, `lockout_cleared_at` |
 | **Every block and unblock, with reason** | `plant_events` kinds `lockout_set` / `lockout_cleared` |
 | Device-side refusal reason | `command_results.result_json.reason`, `commands.reason` |

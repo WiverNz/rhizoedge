@@ -29,6 +29,7 @@ pub use gate::{LeakLockout, LeakResetRefused, safety_gate};
 pub use machine::{absorption_until, delivery_evidence, evaluate, next_state};
 pub use no_delivery::{DeliveryEvidence, no_delivery_detected};
 pub use types::{
-    EvaluationMode, IrrigationDecision, IrrigationInputs, LeakState, RequiredInput,
-    RequiredInputState, TankState, WeightSample, is_auto_clearable, state_from_str, state_name,
+    EvaluationMode, Hold, IrrigationDecision, IrrigationInputs, LeakState, LockoutClass,
+    RequiredInput, RequiredInputState, TankState, WeightSample, display_rank, is_auto_clearable,
+    lockout_class, state_from_str, state_name,
 };

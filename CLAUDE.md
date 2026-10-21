@@ -219,8 +219,8 @@ crates/                eleven implemented/building workspace crates:
                        mqtt-contract, policy, domain, storage, telemetry,
                        cloud-client, testkit, edge-controller, device-simulator,
                        cloud-api, scenarios
-migrations/edge/       0001_initial.sql — the only migration, and the canonical
-                       pre-release baseline holding the whole schema through M6
+migrations/edge/       0001_initial.sql — the canonical baseline (schema through
+                       M6); 0002_plant_lockouts.sql — the first forward migration
 crates/domain/data/    presets.v1.json — the embedded species catalogue,
                        compiled in with include_str! (M5-017). Twenty-two
                        curated entries; every value carries its provenance,
@@ -427,10 +427,12 @@ fallback attribution emits the rest, from the transaction that decides the
 answer. A replayed device-side `lockout.set` stays a `device.event` — ADR-005's
 `lockout.set` is the *plant* lockout, with a plant-shaped payload.
 
-**There is one migration, and pre-release it keeps absorbing schema changes.**
-`0001_initial.sql` is the whole schema; `canonical_baseline_contains_the_final_schema`
-asserts that it is the only one, which fails the moment a file is added — on
-purpose, because that is when to ask whether the first release has happened. If
+**`0001` is the baseline and `0002_plant_lockouts` is the first forward
+migration.** `canonical_baseline_contains_the_final_schema` pins the migration
+count, which fails the moment a file is added — on purpose, because that is when
+to ask whether the change is forward or belongs in the baseline. `0002` is
+forward because it carries live alarms out of `plants.lockout_reason`; folding it
+into the baseline would have meant recreating databases and losing them. If
 `sqlx migrate run` says `migration N was previously applied but is missing in the
 resolved migrations`, your `data/edge.sqlite` is older than the current baseline:
 delete and re-create it (`local-development.md` §9). Nothing is corrupted.
@@ -681,7 +683,7 @@ mode but `detected`; that is not the M6 rule.
 
 **`IrrigationInputs` has six fields PRD 060's illustrative struct does not**, and
 each is required by a normative requirement the struct predates: `dry_duration`,
-`pre_dose_weight`, `required_inputs`, `active_lockout`, `lockout_held_until`, and
+`pre_dose_weight`, `required_inputs`, `latched`, `holds`, and
 `reconciling`. The tuning constants arrive through `AutomationPolicy` rather than
 a `profile` field, because a machine that read a profile at evaluation time would
 make editing a template silently rewrite twelve plants' rules (ADR-016).
@@ -1065,7 +1067,7 @@ unchanged and were never renumbered.
 | `trend::fit` computes a slope nothing consumes | A longer-horizon `DryingRate` answers "when will this plant be dry?" |
 | 21 safety invariants | **22** — SAFETY-022 appended |
 | 256 issues, 15 milestones | **270 issues, 16 milestones** |
-| One migration, the canonical baseline | M15-002 is the first forward migration; `canonical_baseline_contains_the_final_schema` firing is the *intended* trigger, not a surprise |
+| One migration, the canonical baseline | M15-002 adds a forward migration (no longer the first: `0002_plant_lockouts` landed 2026-10-21); `canonical_baseline_contains_the_final_schema` firing is the *intended* trigger, not a surprise |
 
 Five things did **not** change, and each is load-bearing:
 

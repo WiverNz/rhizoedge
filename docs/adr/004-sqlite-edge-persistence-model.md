@@ -414,13 +414,20 @@ never edited after being applied anywhere. Migrations run automatically at
 startup before any other subsystem — a controller that cannot migrate must not
 serve traffic or make decisions.
 
-**One file exists: `0001_initial.sql`**, the canonical pre-release baseline,
-holding the whole schema through M6. While no release exists it may keep
-absorbing development-only schema changes (`versioning-policy.md` §4); after the
-first deployment it and every later migration are immutable.
+**`0001_initial.sql`** is the canonical pre-release baseline, holding the whole
+schema through M6. While no release exists it may keep absorbing
+development-only schema changes (`versioning-policy.md` §4); after the first
+deployment it and every later migration are immutable.
 
-With a single migration there is no *upgrade* left for the automatic backup in
-`storage::migrate::run` to precede. It still runs on a fresh create, though:
+**`0002_plant_lockouts.sql`** (2026-10-21) is the first forward migration. It
+adds the per-reason `plant_lockouts` table and backfills it from
+`plants.lockout_reason`, fail-closed, so a database carrying a latched alarm
+keeps it; folding it into the baseline would have required recreating the
+database and losing that state. Pinned by
+`migrate::tests::a_v1_database_backs_up_and_carries_every_alarm_into_plant_lockouts`.
+
+The automatic backup in `storage::migrate::run` precedes that upgrade. It also
+runs on a fresh create:
 `EdgeDb::connect` sets `journal_mode = WAL`, which writes the 4 KiB header before
 migration, so a brand-new database is non-empty and gets a 4 KiB backup of
 nothing. Harmless, and pinned by

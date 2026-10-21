@@ -35,7 +35,7 @@
 
 use crate::state::LockoutReason;
 
-use super::types::{IrrigationInputs, LeakState, RequiredInputState, TankState, is_auto_clearable};
+use super::types::{IrrigationInputs, LeakState, RequiredInputState, TankState, display_rank};
 
 /// The persisted lifecycle of a leak lockout.
 ///
@@ -119,9 +119,10 @@ impl LeakLockout {
 /// of a sticky one therefore erases the sticky one, which is why a silent leak
 /// sensor (step 2) is consulted only *after* step 3. The documented sequence (M6-002) is leak, leak-unknown, tank-unknown,
 /// tank-low, tank-stale, sample-absent, sample-invalid, sample-stale, daily-cap.
-/// Four structural checks bracket it: the actuator (SAFETY-018), a sticky
-/// explicit lockout (F-060-41), reconciliation (SAFETY-016), and the required
-/// measurements a binding declared (SAFETY-017).
+/// Four structural checks bracket it: the actuator (SAFETY-018), the recorded
+/// lockouts — every latch (F-060-41) and every active hold (F-060-51) —,
+/// reconciliation (SAFETY-016), and the required measurements a binding
+/// declared (SAFETY-017).
 #[must_use]
 pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
     // Step 0 (SAFETY-018). A monitoring-only plant is a normal plant with no
@@ -141,19 +142,24 @@ pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
         LeakState::Clear => false,
     };
 
-    // Step 3 (F-060-41). An explicit-clear lockout outlives the condition that
-    // raised it. An auto-clearing one is deliberately *not* consulted: it is
-    // re-derived from the current inputs below, which is what "clears when the
-    // condition resolves" means — unless the edge is *holding* it for a fixed
-    // period, which is how F-060-51's forward clock step keeps a plant locked
-    // for one cooldown even though every input looks fine the instant after.
-    if let Some(reason) = inputs.active_lockout {
-        let held = inputs
-            .lockout_held_until
-            .is_some_and(|until| inputs.now < until);
-        if held || !is_auto_clearable(reason) {
-            return Some(reason);
-        }
+    // Step 3 (F-060-41, F-060-51). Every recorded lockout refuses on its own:
+    // each latch, which outlives the condition that raised it, and each hold
+    // whose deadline is still ahead, which keeps a plant locked for one
+    // cooldown after a forward clock step even though every input looks fine.
+    // They are independent records, so whether the gate refuses cannot depend
+    // on how many there are or the order they were raised in; the reason
+    // *shown* is the best-ranked one, never "the latest". Derived conditions
+    // are not consulted here: they are re-derived from the inputs below, which
+    // is what "clears when the condition resolves" means (F-060-40).
+    let recorded = inputs.latched.iter().copied().chain(
+        inputs
+            .holds
+            .iter()
+            .filter(|hold| inputs.now < hold.until)
+            .map(|hold| hold.reason),
+    );
+    if let Some(reason) = recorded.min_by_key(|reason| display_rank(*reason)) {
+        return Some(reason);
     }
 
     // Step 2 (SAFETY-012). Absence of a leak reading is not absence of a leak.
@@ -381,8 +387,8 @@ pub(crate) mod fixture {
                 dry_duration: Duration::minutes(45),
                 reconciling: false,
                 required_inputs: &self.required,
-                active_lockout: None,
-                lockout_held_until: None,
+                latched: &[],
+                holds: &[],
             }
         }
     }
@@ -397,7 +403,7 @@ pub(crate) mod fixture {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod safety_gate {
-    use super::super::types::EvaluationMode;
+    use super::super::types::{EvaluationMode, Hold, LockoutClass, lockout_class};
     use super::fixture::{Scene, now};
     use super::*;
     use crate::state::IrrigationState;
@@ -436,10 +442,11 @@ mod safety_gate {
         }
     }
 
-    /// F-060-41: an explicit lockout survives the condition that raised it, and
-    /// F-060-40: an auto-clearing one does not.
+    /// F-060-41: a latch survives the condition that raised it, and F-060-51:
+    /// an expired hold blocks nothing. Derived conditions (F-060-40) are not
+    /// recorded at all, so there is nothing of theirs to outlive.
     #[test]
-    fn sticky_lockouts_survive_and_auto_clearing_ones_do_not() {
+    fn every_latch_blocks_and_an_expired_hold_does_not() {
         let scene = Scene::default();
         for reason in [
             LockoutReason::Leak,
@@ -448,40 +455,41 @@ mod safety_gate {
             LockoutReason::MaxDosesReached,
             LockoutReason::Unknown,
         ] {
+            let latched = [reason];
             let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(reason);
+            inputs.latched = &latched;
             assert_eq!(safety_gate(&inputs), Some(reason), "{reason:?}");
         }
-        for reason in [
-            LockoutReason::StaleData,
-            LockoutReason::SensorFault,
-            LockoutReason::TankLow,
-            LockoutReason::DailyLimit,
-            LockoutReason::Uncertain,
-        ] {
+        for reason in [LockoutReason::Uncertain, LockoutReason::ClockUnsynced] {
+            let holds = [Hold {
+                reason,
+                until: now() - Duration::minutes(1),
+            }];
             let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(reason);
-            assert_eq!(
-                safety_gate(&inputs),
-                None,
-                "{reason:?} clears when its condition does"
-            );
+            inputs.holds = &holds;
+            assert_eq!(safety_gate(&inputs), None, "{reason:?} has expired");
         }
     }
 
-    /// F-060-51: a held lockout does not clear early, and stops holding the
-    /// moment its deadline passes.
+    /// F-060-51: a hold does not clear early, and stops holding the moment its
+    /// deadline passes.
     #[test]
-    fn a_held_auto_clearing_lockout_stays_until_its_deadline() {
+    fn a_hold_stays_until_its_deadline() {
         let scene = Scene::default();
+        let holds = [Hold {
+            reason: LockoutReason::Uncertain,
+            until: now() + Duration::hours(6),
+        }];
         let mut inputs = scene.inputs();
-        inputs.active_lockout = Some(LockoutReason::Uncertain);
-        inputs.lockout_held_until = Some(now() + Duration::hours(6));
+        inputs.holds = &holds;
         assert_eq!(safety_gate(&inputs), Some(LockoutReason::Uncertain));
 
+        let holds = [Hold {
+            reason: LockoutReason::Uncertain,
+            until: now(),
+        }];
         let mut inputs = scene.inputs();
-        inputs.active_lockout = Some(LockoutReason::Uncertain);
-        inputs.lockout_held_until = Some(now());
+        inputs.holds = &holds;
         assert_eq!(
             safety_gate(&inputs),
             None,
@@ -568,7 +576,7 @@ mod safety_gate {
             (
                 "explicit lockout",
                 |i: &mut IrrigationInputs<'_>| {
-                    i.active_lockout = Some(LockoutReason::NoDeliveryDetected);
+                    i.latched = &[LockoutReason::NoDeliveryDetected];
                 },
                 LockoutReason::NoDeliveryDetected,
             ),
@@ -733,14 +741,15 @@ mod safety_gate {
         fn safety_003_an_unknown_signal_does_not_displace_a_sticky_lockout() {
             let scene = Scene::default();
             for reason in STICKY {
-                assert!(!is_auto_clearable(reason), "{reason:?}");
+                assert_eq!(lockout_class(reason), LockoutClass::Latch, "{reason:?}");
                 for mode in [
                     EvaluationMode::Automatic,
                     EvaluationMode::ManualRequest { ml: 30.0 },
                     EvaluationMode::RecommendedRequest { ml: 30.0 },
                 ] {
+                    let latched = [reason];
                     let mut inputs = scene.inputs();
-                    inputs.active_lockout = Some(reason);
+                    inputs.latched = &latched;
                     inputs.leak = LeakState::Unknown;
                     inputs.mode = mode;
                     assert_eq!(safety_gate(&inputs), Some(reason), "{reason:?} {mode:?}");
@@ -748,14 +757,14 @@ mod safety_gate {
             }
         }
 
-        /// The tick loop, folded: each answer becomes the next tick's
-        /// `active_lockout`, exactly as the edge persists it. Through a silent
-        /// sensor and its healthy return, `Leak` is never replaced and never
-        /// becomes something that would clear itself.
+        /// The tick loop, folded: a writer records an answer only if it is a
+        /// latch, and records it *alongside* what is already there. Through a
+        /// silent sensor and its healthy return, `Leak` stays latched and is
+        /// shown on every pass.
         #[test]
         fn safety_003_a_leak_lockout_survives_a_silent_sensor_and_its_return() {
             let scene = Scene::default();
-            let mut persisted = Some(LockoutReason::Leak);
+            let mut latched = vec![LockoutReason::Leak];
             for signal in [
                 LeakState::Unknown,
                 LeakState::Unknown,
@@ -765,10 +774,17 @@ mod safety_gate {
                 LeakState::Clear,
             ] {
                 let mut inputs = scene.inputs();
-                inputs.active_lockout = persisted;
+                inputs.latched = &latched;
                 inputs.leak = signal;
-                persisted = safety_gate(&inputs);
-                assert_eq!(persisted, Some(LockoutReason::Leak), "after {signal:?}");
+                let answer = safety_gate(&inputs);
+                assert_eq!(answer, Some(LockoutReason::Leak), "after {signal:?}");
+                if let Some(reason) = answer
+                    && lockout_class(reason) == LockoutClass::Latch
+                    && !latched.contains(&reason)
+                {
+                    latched.push(reason);
+                }
+                assert_eq!(latched, [LockoutReason::Leak]);
             }
         }
 
@@ -778,8 +794,9 @@ mod safety_gate {
         fn detected_outranks_a_sticky_lockout() {
             let scene = Scene::default();
             for reason in STICKY {
+                let latched = [reason];
                 let mut inputs = scene.inputs();
-                inputs.active_lockout = Some(reason);
+                inputs.latched = &latched;
                 inputs.leak = LeakState::Detected;
                 assert_eq!(
                     safety_gate(&inputs),
@@ -789,32 +806,34 @@ mod safety_gate {
             }
         }
 
-        /// With no latched lockout — none at all, or only an auto-clearing one —
-        /// an unknown signal still refuses, as `Uncertain` (SAFETY-012).
+        /// With no latch and no active hold — nothing recorded, or only expired
+        /// holds — an unknown signal still refuses, as `Uncertain` (SAFETY-012).
         #[test]
         fn unknown_without_a_sticky_lockout_is_uncertain() {
             let scene = Scene::default();
-            for active in [
-                None,
-                Some(LockoutReason::StaleData),
-                Some(LockoutReason::SensorFault),
-                Some(LockoutReason::TankLow),
-                Some(LockoutReason::DailyLimit),
-                Some(LockoutReason::ClockUnsynced),
-                Some(LockoutReason::Uncertain),
-            ] {
+            let expired = [
+                Hold {
+                    reason: LockoutReason::ClockUnsynced,
+                    until: now() - Duration::minutes(1),
+                },
+                Hold {
+                    reason: LockoutReason::Uncertain,
+                    until: now(),
+                },
+            ];
+            for holds in [&expired[..0], &expired[..1], &expired[..]] {
                 let mut inputs = scene.inputs();
-                inputs.active_lockout = active;
+                inputs.holds = holds;
                 inputs.leak = LeakState::Unknown;
                 assert_eq!(
                     safety_gate(&inputs),
                     Some(LockoutReason::Uncertain),
-                    "{active:?}"
+                    "{holds:?}"
                 );
             }
         }
 
-        /// After the operator's reset (`active_lockout` gone) the gate grants
+        /// After the operator's reset (the latch gone) the gate grants
         /// nothing on that account: every other check still has to pass.
         #[test]
         fn after_a_reset_every_other_check_still_applies() {
@@ -835,6 +854,287 @@ mod safety_gate {
             assert_eq!(safety_gate(&inputs), Some(LockoutReason::Uncertain));
 
             assert_eq!(safety_gate(&scene.inputs()), None);
+        }
+    }
+
+    /// Independent recorded lockouts: several latches and holds at once.
+    /// Reached by `cargo test -p rhizo-domain gate::recorded`.
+    mod recorded {
+        use super::*;
+        use proptest::prelude::*;
+
+        const MODES: [EvaluationMode; 3] = [
+            EvaluationMode::Automatic,
+            EvaluationMode::ManualRequest { ml: 30.0 },
+            EvaluationMode::RecommendedRequest { ml: 30.0 },
+        ];
+
+        fn active_hold(reason: LockoutReason) -> Hold {
+            Hold {
+                reason,
+                until: now() + Duration::hours(6),
+            }
+        }
+
+        fn expired_hold(reason: LockoutReason) -> Hold {
+            Hold {
+                reason,
+                until: now() - Duration::minutes(1),
+            }
+        }
+
+        /// The gate's answer for `latched` and `holds` on an otherwise
+        /// permitting scene, in every mode — asserting the modes agree, because
+        /// no recorded lockout is one `manual` may skip (F-060-05).
+        fn answer(latched: &[LockoutReason], holds: &[Hold]) -> Option<LockoutReason> {
+            let scene = Scene::default();
+            let answers: Vec<Option<LockoutReason>> = MODES
+                .iter()
+                .map(|mode| {
+                    let mut inputs = scene.inputs();
+                    inputs.latched = latched;
+                    inputs.holds = holds;
+                    inputs.mode = *mode;
+                    safety_gate(&inputs)
+                })
+                .collect();
+            assert!(
+                answers.windows(2).all(|pair| pair[0] == pair[1]),
+                "{answers:?}"
+            );
+            answers[0]
+        }
+
+        /// Every latch at once: refused, with the best-ranked reason shown;
+        /// clearing them one at a time leaves the rest refusing, each in turn.
+        #[test]
+        fn several_latches_each_refuse_until_the_last_is_cleared() {
+            let mut latched = vec![
+                LockoutReason::Unknown,
+                LockoutReason::MaxDosesReached,
+                LockoutReason::NoDeliveryDetected,
+                LockoutReason::PumpFault,
+                LockoutReason::Leak,
+            ];
+            for expected in [
+                LockoutReason::Leak,
+                LockoutReason::PumpFault,
+                LockoutReason::NoDeliveryDetected,
+                LockoutReason::MaxDosesReached,
+                LockoutReason::Unknown,
+            ] {
+                assert_eq!(answer(&latched, &[]), Some(expected));
+                latched.retain(|reason| *reason != expected);
+            }
+            assert_eq!(answer(&latched, &[]), None);
+        }
+
+        /// Leak with each other explicit-clear fault: both refuse, the leak is
+        /// shown, and clearing the leak leaves the fault refusing on its own.
+        #[test]
+        fn safety_003_leak_with_another_latch_clears_independently() {
+            for other in [
+                LockoutReason::PumpFault,
+                LockoutReason::NoDeliveryDetected,
+                LockoutReason::MaxDosesReached,
+            ] {
+                assert_eq!(
+                    answer(&[other, LockoutReason::Leak], &[]),
+                    Some(LockoutReason::Leak),
+                    "{other:?}"
+                );
+                assert_eq!(answer(&[other], &[]), Some(other), "leak cleared");
+                assert_eq!(
+                    answer(&[LockoutReason::Leak], &[]),
+                    Some(LockoutReason::Leak),
+                    "{other:?} cleared"
+                );
+                assert_eq!(answer(&[], &[]), None);
+            }
+        }
+
+        /// A latch with an active clock-step hold: both refuse independently,
+        /// the latch is shown; clearing the latch leaves the hold, and the
+        /// hold's expiry leaves the latch.
+        #[test]
+        fn safety_003_a_latch_and_an_active_clock_hold_are_independent() {
+            let held = [active_hold(LockoutReason::Uncertain)];
+            let lapsed = [expired_hold(LockoutReason::Uncertain)];
+            assert_eq!(
+                answer(&[LockoutReason::Leak], &held),
+                Some(LockoutReason::Leak)
+            );
+            assert_eq!(
+                answer(&[], &held),
+                Some(LockoutReason::Uncertain),
+                "the leak reset inside the hold: the hold still refuses"
+            );
+            assert_eq!(
+                answer(&[LockoutReason::Leak], &lapsed),
+                Some(LockoutReason::Leak),
+                "the hold expired: the latch still refuses"
+            );
+            assert_eq!(answer(&[], &lapsed), None);
+        }
+
+        /// A device's `clock_unsynced` hold is a hold like any other.
+        #[test]
+        fn a_clock_unsynced_hold_and_a_latch_are_independent() {
+            let held = [
+                active_hold(LockoutReason::ClockUnsynced),
+                active_hold(LockoutReason::Uncertain),
+            ];
+            assert_eq!(
+                answer(&[LockoutReason::NoDeliveryDetected], &held),
+                Some(LockoutReason::NoDeliveryDetected)
+            );
+            assert_eq!(answer(&[], &held), Some(LockoutReason::ClockUnsynced));
+            assert_eq!(answer(&[], &held[1..]), Some(LockoutReason::Uncertain));
+        }
+
+        /// A silent leak sensor with latches recorded shows the latch, not the
+        /// derived `Uncertain` — and with only an expired hold, `Uncertain`.
+        #[test]
+        fn safety_003_an_unknown_leak_signal_with_latches_shows_the_latch() {
+            let scene = Scene::default();
+            let latched = [LockoutReason::MaxDosesReached, LockoutReason::PumpFault];
+            for mode in MODES {
+                let mut inputs = scene.inputs();
+                inputs.latched = &latched;
+                inputs.leak = LeakState::Unknown;
+                inputs.mode = mode;
+                assert_eq!(
+                    safety_gate(&inputs),
+                    Some(LockoutReason::PumpFault),
+                    "{mode:?}"
+                );
+            }
+        }
+
+        /// No latch, no active hold: a derived condition still refuses, and is
+        /// the reason shown.
+        #[test]
+        fn a_derived_condition_refuses_with_nothing_recorded() {
+            let scene = Scene::default();
+            let lapsed = [expired_hold(LockoutReason::Uncertain)];
+            let mut inputs = scene.inputs();
+            inputs.holds = &lapsed;
+            inputs.tank = Some(TankState::Level {
+                percent: 1.0,
+                age: Duration::zero(),
+            });
+            assert_eq!(safety_gate(&inputs), Some(LockoutReason::TankLow));
+        }
+
+        /// Nothing recorded and nothing derived: permitted. Without this every
+        /// refusal above could pass vacuously.
+        #[test]
+        fn nothing_recorded_and_nothing_derived_permits() {
+            assert_eq!(answer(&[], &[]), None);
+            assert_eq!(
+                answer(
+                    &[],
+                    &[
+                        expired_hold(LockoutReason::Uncertain),
+                        expired_hold(LockoutReason::ClockUnsynced)
+                    ]
+                ),
+                None
+            );
+        }
+
+        /// A stored name nobody recognises reads as `Unknown`, which is a latch
+        /// and refuses in every mode, alone or beside others.
+        #[test]
+        fn an_unrecognised_stored_reason_refuses() {
+            assert_eq!(
+                answer(&[LockoutReason::Unknown], &[]),
+                Some(LockoutReason::Unknown)
+            );
+            assert_eq!(
+                answer(
+                    &[LockoutReason::Unknown],
+                    &[active_hold(LockoutReason::Uncertain)]
+                ),
+                Some(LockoutReason::Unknown)
+            );
+        }
+
+        fn any_reason() -> impl Strategy<Value = LockoutReason> {
+            prop_oneof![
+                Just(LockoutReason::Leak),
+                Just(LockoutReason::TankLow),
+                Just(LockoutReason::StaleData),
+                Just(LockoutReason::SensorFault),
+                Just(LockoutReason::DailyLimit),
+                Just(LockoutReason::MaxDosesReached),
+                Just(LockoutReason::NoDeliveryDetected),
+                Just(LockoutReason::Uncertain),
+                Just(LockoutReason::ClockUnsynced),
+                Just(LockoutReason::PumpFault),
+                Just(LockoutReason::NoActuator),
+                Just(LockoutReason::Unknown),
+            ]
+        }
+
+        fn any_leak() -> impl Strategy<Value = LeakState> {
+            prop_oneof![
+                Just(LeakState::Clear),
+                Just(LeakState::Unknown),
+                Just(LeakState::Detected),
+            ]
+        }
+
+        proptest! {
+            /// Any records, in any order, with any leak signal: the answer —
+            /// refused or not, and which reason — is the same for every
+            /// permutation, and the gate refuses exactly when a leak is
+            /// detected or unknown, or any latch or unexpired hold exists.
+            /// Anything the caller passes as latched refuses, whatever its
+            /// class: misclassifying a record must never grant watering.
+            #[test]
+            fn the_answer_is_independent_of_record_order(
+                latched in proptest::collection::vec(any_reason(), 0..6),
+                holds in proptest::collection::vec(
+                    (any_reason(), -120i64..120),
+                    0..4,
+                ),
+                leak in any_leak(),
+                rotate in 0usize..8,
+            ) {
+                let scene = Scene::default();
+                let holds: Vec<Hold> = holds
+                    .into_iter()
+                    .map(|(reason, minutes)| Hold {
+                        reason,
+                        until: now() + Duration::minutes(minutes),
+                    })
+                    .collect();
+                let mut latched_reordered = latched.clone();
+                latched_reordered.reverse();
+                if !latched_reordered.is_empty() {
+                    let by = rotate % latched_reordered.len();
+                    latched_reordered.rotate_left(by);
+                }
+                let mut holds_reordered = holds.clone();
+                holds_reordered.reverse();
+
+                let mut first = scene.inputs();
+                first.latched = &latched;
+                first.holds = &holds;
+                first.leak = leak;
+                let mut second = scene.inputs();
+                second.latched = &latched_reordered;
+                second.holds = &holds_reordered;
+                second.leak = leak;
+                let answer = safety_gate(&first);
+                prop_assert_eq!(answer, safety_gate(&second));
+
+                let recorded = !latched.is_empty()
+                    || holds.iter().any(|hold| now() < hold.until);
+                let expected_refusal = recorded || leak != LeakState::Clear;
+                prop_assert_eq!(answer.is_some(), expected_refusal);
+            }
         }
     }
 
@@ -889,7 +1189,6 @@ mod safety_gate {
         fn a_refill_clears_it_automatically() {
             let scene = Scene::default();
             let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(LockoutReason::TankLow);
             inputs.tank = Some(TankState::Level {
                 percent: 5.0,
                 age: Duration::minutes(1),
@@ -897,7 +1196,6 @@ mod safety_gate {
             assert_eq!(safety_gate(&inputs), Some(LockoutReason::TankLow));
 
             let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(LockoutReason::TankLow);
             inputs.tank = Some(TankState::Level {
                 percent: 80.0,
                 age: Duration::minutes(1),
@@ -979,14 +1277,13 @@ mod safety_gate {
         fn a_valid_sample_clears_it_automatically() {
             let mut scene = Scene::default();
             scene.soil.moisture_vwc = None;
-            let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(LockoutReason::SensorFault);
-            assert_eq!(safety_gate(&inputs), Some(LockoutReason::SensorFault));
+            assert_eq!(
+                safety_gate(&scene.inputs()),
+                Some(LockoutReason::SensorFault)
+            );
 
             scene.soil.moisture_vwc = Some(20.0);
-            let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(LockoutReason::SensorFault);
-            assert_eq!(safety_gate(&inputs), None);
+            assert_eq!(safety_gate(&scene.inputs()), None);
         }
 
         /// SAFETY-017's edge half, and its converse.
@@ -1080,9 +1377,7 @@ mod safety_gate {
         fn fresh_data_clears_it_automatically() {
             let mut scene = Scene::default();
             scene.soil.received_at = now();
-            let mut inputs = scene.inputs();
-            inputs.active_lockout = Some(LockoutReason::StaleData);
-            assert_eq!(safety_gate(&inputs), None);
+            assert_eq!(safety_gate(&scene.inputs()), None);
         }
         /// **SAFETY-005's backstop.** A freshness limit past the ceiling is
         /// clamped to it, so a caller that forgets to apply the cadence bound

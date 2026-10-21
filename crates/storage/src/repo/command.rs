@@ -629,6 +629,23 @@ async fn set_lockout_in_tx(
     .execute(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    // The transition to `plant_lockouts`: every write to the single-reason
+    // column is mirrored into the per-reason table in this same transaction,
+    // so the table never misses an alarm the column saw (and keeps the ones an
+    // overwrite would lose). See `repo::lockout`.
+    if let Some(prior) = previous.as_ref() {
+        crate::repo::lockout::mirror_legacy_in_tx(
+            tx,
+            plant_id,
+            prior.as_deref(),
+            reason,
+            since,
+            hold_until,
+            cleared_by,
+            now,
+        )
+        .await?;
+    }
     if let Some(prior) = previous.as_ref().filter(|p| p.as_deref() != reason) {
         let (kind, severity) = if reason.is_some() {
             ("lockout_set", "warning")
