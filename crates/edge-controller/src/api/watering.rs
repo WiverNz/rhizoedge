@@ -673,6 +673,12 @@ async fn device_command(
             "the command was recorded but could not be delivered to the device",
             serde_json::json!({ "command_id": command_id }),
         ),
+        // A device command names no plant, so no plant lockout refuses it
+        // today; answered as a refusal rather than assumed away.
+        Ok(Issued::Blocked { reasons, .. }) => {
+            let reason = plant::best_lockout(&reasons);
+            lockout_conflict(reason, None, None)
+        }
         Err(_) => storage_error(),
     }
 }

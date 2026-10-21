@@ -292,9 +292,12 @@ Regression tests: edge-controller `safety_003_concurrent_latches_clear_independe
 `safety_003_a_restart_keeps_every_recorded_lockout`,
 `safety_003_a_clock_unsynced_refusal_cannot_displace_a_leak`,
 `a_latch_written_during_a_pass_is_not_lost`, and
-`the_summary_column_decides_nothing`. **Still open:** a command already being
-issued or published when a lockout is recorded (M9 report §14, path F); the
-issue-time check is the next stage, so SAFETY-003 is not yet declared closed.
+`the_summary_column_decides_nothing`. Since 2026-10-22 a command is also
+refused inside its issuing transaction and again before every publish attempt
+when a lockout has been recorded (`command::path_f::*`). **Still open:** the
+interval between that last check and the broker taking the message, after
+which nothing recalls a command (M9 report §15, *What path F still leaves
+open*); SAFETY-003 is not yet declared closed.
 
 ---
 

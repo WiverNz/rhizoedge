@@ -303,6 +303,41 @@ pub async fn clear_latch(
     Ok(ClearOutcome::Cleared { since })
 }
 
+/// The stored names of every lockout blocking `plant_id` at `now` — each
+/// latch, and each hold whose deadline is ahead — inside a caller's
+/// transaction, sorted. Not joined to `plants`: a soft-deleted plant is not
+/// one to water either, so its records still refuse.
+pub(crate) async fn blocking_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+    now: i64,
+) -> Result<Vec<String>, StorageError> {
+    sqlx::query_scalar(
+        "SELECT reason FROM plant_lockouts \
+         WHERE plant_id=? AND (kind='latch' OR hold_until>?) ORDER BY reason",
+    )
+    .bind(plant_id)
+    .bind(now)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)
+}
+
+/// Whether the plant has any latch, inside a transaction.
+pub(crate) async fn has_latch_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+) -> Result<bool, StorageError> {
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM plant_lockouts WHERE plant_id=? AND kind='latch' LIMIT 1",
+    )
+    .bind(plant_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(found.is_some())
+}
+
 /// Whether `reason` is an active hold on the plant, inside a transaction.
 pub(crate) async fn hold_is_active_in_tx(
     tx: &mut Transaction<'_, Sqlite>,

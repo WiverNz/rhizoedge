@@ -569,6 +569,9 @@ impl Harness {
             "DELETE FROM actuator_states",
             "DELETE FROM measurements",
             "DELETE FROM processed_messages",
+            // `plant_lockouts` references `plants` (migration 0002); a hold
+            // or latch left by one scenario must not wedge the next reset.
+            "DELETE FROM plant_lockouts",
             "DELETE FROM plants",
             "DELETE FROM plant_profiles WHERE profile_id != 'default'",
             "DELETE FROM devices",

@@ -284,54 +284,12 @@ async fn deliver_one(
                 Issued::PublishFailed { .. } => Ok(Delivery::Retryable {
                     intent_id: intent.intent_id.clone(),
                 }),
+                Issued::Blocked { reasons, .. } => {
+                    refusal(db, intent, plant::best_lockout(&reasons), now_ms).await
+                }
             }
         }
-        IrrigationDecision::Lock { reason } => {
-            let name = plant::lockout_name(reason);
-            // Two reasons are **states the edge is passing through**, not
-            // answers to the operator's request, so the intent waits for the
-            // next attempt rather than being consumed by one unlucky moment.
-            // Both terminate: the conditions themselves are bounded, and the
-            // intent expires on its own clock regardless (ADR-018 §3).
-            //
-            // - `clock_unsynced`: the device is awake but has not yet applied
-            //   `edge.time`. The awake window bounds it.
-            // - `uncertain`: the reconciliation hold. A plant is held until the
-            //   replay for the device's *current boot* commits a contiguous
-            //   prefix (SAFETY-016) — and a battery device reconnects on
-            //   **every wake**, so this is a routine momentary state rather
-            //   than a verdict. Treating it as terminal silently discarded an
-            //   operator's dose whenever the mint raced that wake's replay,
-            //   which is what `scenario_battery_awake_cycle` was failing on
-            //   about one run in two.
-            //
-            // Every other reason — a leak, a low tank, the daily cap — is a
-            // real answer, and stays terminal.
-            //
-            // This loosens nothing at the gate: the full gate re-runs on every
-            // delivery attempt against inputs read *now*, and a dose is
-            // published only when it accepts.
-            if matches!(
-                reason,
-                rhizo_domain::state::LockoutReason::ClockUnsynced
-                    | rhizo_domain::state::LockoutReason::Uncertain
-            ) {
-                return Ok(Delivery::Retryable {
-                    intent_id: intent.intent_id.clone(),
-                });
-            }
-            intent_repo::mark_refused(db, &intent.intent_id, &name, now_ms).await?;
-            tracing::warn!(
-                intent_id = %intent.intent_id,
-                plant_id = %intent.plant_id,
-                reason = %name,
-                "a held dose was refused at delivery; nothing published"
-            );
-            Ok(Delivery::Refused {
-                intent_id: intent.intent_id.clone(),
-                reason: name,
-            })
-        }
+        IrrigationDecision::Lock { reason } => refusal(db, intent, reason, now_ms).await,
         // Anything else — a cooldown, an in-flight command, an absorption wait —
         // is not a refusal of the operator's request, so the intent waits.
         IrrigationDecision::Idle
@@ -432,6 +390,59 @@ pub async fn command_for(
     }
 }
 
+/// A held dose the gate refused at delivery — or that a lockout recorded after
+/// the gate refused at issue or publish (path F): the same answer either way.
+async fn refusal(
+    db: &rhizo_storage::EdgeDb,
+    intent: &intent_repo::IntentRow,
+    reason: rhizo_domain::state::LockoutReason,
+    now_ms: i64,
+) -> Result<Delivery, EdgeError> {
+    let name = plant::lockout_name(reason);
+    // Two reasons are **states the edge is passing through**, not
+    // answers to the operator's request, so the intent waits for the
+    // next attempt rather than being consumed by one unlucky moment.
+    // Both terminate: the conditions themselves are bounded, and the
+    // intent expires on its own clock regardless (ADR-018 §3).
+    //
+    // - `clock_unsynced`: the device is awake but has not yet applied
+    //   `edge.time`. The awake window bounds it.
+    // - `uncertain`: the reconciliation hold. A plant is held until the
+    //   replay for the device's *current boot* commits a contiguous
+    //   prefix (SAFETY-016) — and a battery device reconnects on
+    //   **every wake**, so this is a routine momentary state rather
+    //   than a verdict. Treating it as terminal silently discarded an
+    //   operator's dose whenever the mint raced that wake's replay,
+    //   which is what `scenario_battery_awake_cycle` was failing on
+    //   about one run in two.
+    //
+    // Every other reason — a leak, a low tank, the daily cap — is a
+    // real answer, and stays terminal.
+    //
+    // This loosens nothing at the gate: the full gate re-runs on every
+    // delivery attempt against inputs read *now*, and a dose is
+    // published only when it accepts.
+    if matches!(
+        reason,
+        rhizo_domain::state::LockoutReason::ClockUnsynced
+            | rhizo_domain::state::LockoutReason::Uncertain
+    ) {
+        return Ok(Delivery::Retryable {
+            intent_id: intent.intent_id.clone(),
+        });
+    }
+    intent_repo::mark_refused(db, &intent.intent_id, &name, now_ms).await?;
+    tracing::warn!(
+        intent_id = %intent.intent_id,
+        plant_id = %intent.plant_id,
+        reason = %name,
+        "a held dose was refused at delivery; nothing published"
+    );
+    Ok(Delivery::Refused {
+        intent_id: intent.intent_id.clone(),
+        reason: name,
+    })
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

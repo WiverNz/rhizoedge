@@ -1719,6 +1719,9 @@ fn cloud_outage_recovery<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         // The plants were load generators, not recovery subjects. Remove them
         // while the edge is stopped so restarting the control loop cannot add
         // scheduler-dependent state-change events to the frozen outbox.
+        sqlx::query("DELETE FROM plant_lockouts")
+            .execute(&h.sqlite)
+            .await?;
         sqlx::query("DELETE FROM plants").execute(&h.sqlite).await?;
         let emitted: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
             .fetch_one(&h.sqlite)

@@ -184,6 +184,25 @@ pub async fn apply(
                     // back in `Recheck`, both committed by `issue_water`.
                     command_id = Some(id);
                 }
+                // A lockout recorded after this pass's gate: nothing was
+                // published, and the pass reports the refusal it became. The
+                // next pass reads the record and locks the plant.
+                Issued::Blocked {
+                    command_id: persisted,
+                    reasons,
+                } => {
+                    let reason = plant::best_lockout(&reasons);
+                    return Ok(Pass {
+                        decision: IrrigationDecision::Lock { reason },
+                        state: if persisted.is_some() {
+                            IrrigationState::Recheck
+                        } else {
+                            gathered.state
+                        },
+                        command_id: None,
+                        lockout: Some(reason),
+                    });
+                }
             }
         }
         IrrigationDecision::Lock { reason } => {

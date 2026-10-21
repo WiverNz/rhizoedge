@@ -244,12 +244,36 @@ pub async fn put_irrigation_state(
     tx.commit().await.map_err(StorageError::from_sqlx)
 }
 
-/// Commits a command, its irrigation transition, and its outbox row.
+/// What [`issue`] did.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum IssueOutcome {
+    /// The command, its transition, and its outbox rows are committed.
+    Issued,
+    /// The plant has an active recorded lockout; **nothing** was written.
+    Blocked {
+        /// The stored names of every lockout in force, sorted.
+        reasons: Vec<String>,
+    },
+}
+
+/// Commits a command, its irrigation transition, and its outbox row — unless
+/// the plant has an active recorded lockout.
 ///
 /// **One transaction, committed before any publish.** A crash between this
 /// commit and the publish leaves an `issued` row with no result, which is
 /// exactly the state [`open_commands`] reconciles on the next boot — never a
 /// pump that ran with no record.
+///
+/// **The lockout check is inside that transaction**, begun `IMMEDIATE` so it
+/// holds SQLite's write lock from its first statement: a latch or hold
+/// committed by any other writer either landed before the check, and refuses
+/// the command, or waits until this one has committed — after which the
+/// pre-publish check in [`authorize_publish`] sees it. A gate that passed on
+/// inputs read a moment earlier therefore cannot persist a command across a
+/// lockout recorded in between. An extra veto only: it never grants anything
+/// the gate refused. A command with no plant (tare, calibrate) has no plant
+/// lockout to check.
 ///
 /// # Errors
 ///
@@ -260,8 +284,20 @@ pub async fn issue(
     command: &NewCommand,
     next_state: &IrrigationStateRow,
     now: i64,
-) -> Result<(), StorageError> {
-    let mut tx = db.begin().await?;
+) -> Result<IssueOutcome, StorageError> {
+    let mut tx = db
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(StorageError::from_sqlx)?;
+    if let Some(plant_id) = command.plant_id.as_deref() {
+        let reasons =
+            crate::repo::lockout::blocking_in_tx(&mut tx, plant_id, command.issued_at).await?;
+        if !reasons.is_empty() {
+            tx.rollback().await.map_err(StorageError::from_sqlx)?;
+            return Ok(IssueOutcome::Blocked { reasons });
+        }
+    }
     sqlx::query(
         "INSERT INTO commands(command_id,device_id,plant_id,kind,requested_ml,mode,issued_at,expires_at,status) \
          VALUES(?,?,?,?,?,?,?,?,'issued')",
@@ -291,7 +327,91 @@ pub async fn issue(
         crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::WATERING_STARTED,&serde_json::json!({"watering_event_id":command.command_id,"command_id":command.command_id,"device_id":command.device_id,"plant_id":command.plant_id,"requested_ml":command.requested_ml,"mode":command.mode,"started_at":command.issued_at}),now).await?;
     }
 
-    tx.commit().await.map_err(StorageError::from_sqlx)
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(IssueOutcome::Issued)
+}
+
+/// What [`authorize_publish`] decided.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum PublishAuthorization {
+    /// Still `issued`, and no recorded lockout: publish now.
+    Authorized,
+    /// A lockout was recorded after the command was issued. The command is now
+    /// `failed` (`blocked_by_lockout`), in the same transaction; do not publish.
+    Blocked {
+        /// The stored names of every lockout in force, sorted.
+        reasons: Vec<String>,
+    },
+    /// The command is no longer `issued` (or does not exist); do not publish.
+    NotIssued,
+}
+
+/// The last check before a command is handed to MQTT, made before **every**
+/// publish attempt, retries included.
+///
+/// In one `IMMEDIATE` transaction: the command must still be `issued`, and its
+/// plant must have no active latch or hold. If a lockout appeared since
+/// [`issue`], the command is settled `failed` with reason `blocked_by_lockout`
+/// and the plant moved to `blocked_state` — atomically with the check, so no
+/// writer can slip a decision in between. Like a publish failure it creates no
+/// watering event; like one, its volume stays charged to the rolling window,
+/// which errs towards watering less.
+///
+/// What this cannot close: the instant between this commit and the broker
+/// accepting the message, and everything after that. A published command is
+/// not recallable; the device's own leak and tank checks and the command's TTL
+/// are what remain.
+///
+/// # Errors
+///
+/// A database failure, including `Busy` when another writer holds the lock.
+pub async fn authorize_publish(
+    db: &EdgeDb,
+    command_id: &str,
+    blocked_state: Option<(&str, &IrrigationStateRow)>,
+    now: i64,
+) -> Result<PublishAuthorization, StorageError> {
+    let mut tx = db
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(StorageError::from_sqlx)?;
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT status,plant_id FROM commands WHERE command_id=?")
+            .bind(command_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(StorageError::from_sqlx)?;
+    let Some((status, plant_id)) = row else {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok(PublishAuthorization::NotIssued);
+    };
+    if status != "issued" {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok(PublishAuthorization::NotIssued);
+    }
+    let reasons = match plant_id.as_deref() {
+        Some(plant_id) => crate::repo::lockout::blocking_in_tx(&mut tx, plant_id, now).await?,
+        None => Vec::new(),
+    };
+    if reasons.is_empty() {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+        return Ok(PublishAuthorization::Authorized);
+    }
+    settle_in_tx(
+        &mut tx,
+        command_id,
+        "failed",
+        Some("blocked_by_lockout"),
+        None,
+        blocked_state,
+        &SettleExtras::default(),
+        now,
+    )
+    .await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(PublishAuthorization::Blocked { reasons })
 }
 
 /// Reads one command.
@@ -350,23 +470,42 @@ pub async fn settle(
     now: i64,
 ) -> Result<bool, StorageError> {
     let mut tx = db.begin().await?;
+    let settled = settle_in_tx(
+        &mut tx, command_id, status, reason, watering, next_state, extras, now,
+    )
+    .await?;
+    if settled {
+        tx.commit().await.map_err(StorageError::from_sqlx)?;
+    } else {
+        tx.rollback().await.map_err(StorageError::from_sqlx)?;
+    }
+    Ok(settled)
+}
+
+/// The body of [`settle`], inside a caller's transaction; `false`, having
+/// written nothing, when the command is unknown or already terminal.
+#[allow(clippy::too_many_arguments)]
+async fn settle_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    command_id: &str,
+    status: &str,
+    reason: Option<&str>,
+    watering: Option<&NewWateringEvent>,
+    next_state: Option<(&str, &IrrigationStateRow)>,
+    extras: &SettleExtras<'_>,
+    now: i64,
+) -> Result<bool, StorageError> {
     let current: Option<String> =
         sqlx::query_scalar("SELECT status FROM commands WHERE command_id=?")
             .bind(command_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(StorageError::from_sqlx)?;
     match current {
         // A result for a command the edge never issued is logged and ignored by
         // the caller. The edge does not invent a command row to match it.
-        None => {
-            tx.rollback().await.map_err(StorageError::from_sqlx)?;
-            return Ok(false);
-        }
-        Some(existing) if is_terminal(&existing) => {
-            tx.rollback().await.map_err(StorageError::from_sqlx)?;
-            return Ok(false);
-        }
+        None => return Ok(false),
+        Some(existing) if is_terminal(&existing) => return Ok(false),
         Some(_) => {}
     }
     sqlx::query("UPDATE commands SET status=?,reason=?,settled_at=? WHERE command_id=?")
@@ -374,7 +513,7 @@ pub async fn settle(
         .bind(reason)
         .bind(now)
         .bind(command_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(StorageError::from_sqlx)?;
 
@@ -393,14 +532,14 @@ pub async fn settle(
         .bind(event.requested_ml)
         .bind(event.delivered_ml)
         .bind(&event.reason_json)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(StorageError::from_sqlx)?;
-        crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::WATERING_COMPLETED,&serde_json::json!({"watering_event_id":event.watering_event_id,"command_id":command_id,"device_id":event.device_id,"plant_id":event.plant_id,"mode":event.mode,"started_at":event.started_at,"completed_at":event.completed_at,"requested_ml":event.requested_ml,"delivered_ml":event.delivered_ml}),now).await?;
+        crate::repo::outbox::emit(tx,crate::repo::outbox::EventKind::WATERING_COMPLETED,&serde_json::json!({"watering_event_id":event.watering_event_id,"command_id":command_id,"device_id":event.device_id,"plant_id":event.plant_id,"mode":event.mode,"started_at":event.started_at,"completed_at":event.completed_at,"requested_ml":event.requested_ml,"delivered_ml":event.delivered_ml}),now).await?;
     }
 
     if let Some((plant_id, state)) = next_state {
-        put_state_in_tx(&mut tx, plant_id, state, now).await?;
+        put_state_in_tx(tx, plant_id, state, now).await?;
     }
 
     // Both extras belong to *this* transaction, not to a follow-up statement.
@@ -409,23 +548,22 @@ pub async fn settle(
     // an unrecorded transition would leave "what did the system think, and
     // when" unanswerable for the one transition most worth reconstructing.
     if let Some(hold) = extras.hold.as_ref() {
-        crate::repo::lockout::hold_in_tx(&mut tx, hold.plant_id, hold.reason, hold.until, now)
-            .await?;
+        crate::repo::lockout::hold_in_tx(tx, hold.plant_id, hold.reason, hold.until, now).await?;
+        // Shown at once, in this transaction, rather than at the next pass: a
+        // `clock_unsynced` hold lasts one command TTL, and an operator must be
+        // able to see the specific remedy while it applies (SCEN-025). A latch
+        // always outranks a hold, so the summary only moves when none exists.
+        if !crate::repo::lockout::has_latch_in_tx(tx, hold.plant_id).await? {
+            set_summary_in_tx(tx, hold.plant_id, Some(hold.reason), None, now).await?;
+        }
     }
     if let Some(transition) = extras.transition.as_ref() {
-        record_transition_in_tx(
-            &mut tx,
-            transition.plant_id,
-            transition.from,
-            transition.to,
-            now,
-        )
-        .await?;
+        record_transition_in_tx(tx, transition.plant_id, transition.from, transition.to, now)
+            .await?;
     }
 
-    crate::repo::outbox::emit(&mut tx,crate::repo::outbox::EventKind::COMMAND_SETTLED,&serde_json::json!({"command_id":command_id,"status":status,"reason":reason,"occurred_at":now}),now).await?;
+    crate::repo::outbox::emit(tx,crate::repo::outbox::EventKind::COMMAND_SETTLED,&serde_json::json!({"command_id":command_id,"status":status,"reason":reason,"occurred_at":now}),now).await?;
 
-    tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(true)
 }
 
@@ -566,12 +704,25 @@ pub async fn set_summary(
     now: i64,
 ) -> Result<bool, StorageError> {
     let mut tx = db.begin().await?;
+    let changed = set_summary_in_tx(&mut tx, plant_id, reason, cleared_by, now).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(changed)
+}
+
+/// [`set_summary`], inside a caller's transaction.
+async fn set_summary_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+    reason: Option<&str>,
+    cleared_by: Option<&str>,
+    now: i64,
+) -> Result<bool, StorageError> {
     // `None` here means no live plant row, which is not a transition.
     let previous: Option<Option<String>> = sqlx::query_scalar(
         "SELECT lockout_reason FROM plants WHERE plant_id=? AND deleted_at IS NULL",
     )
     .bind(plant_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
     let Some(prior) = previous.filter(|p| p.as_deref() != reason) else {
@@ -586,7 +737,7 @@ pub async fn set_summary(
     .bind(if reason.is_none() { cleared_by } else { None })
     .bind(if reason.is_none() { Some(now) } else { None })
     .bind(plant_id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await
     .map_err(StorageError::from_sqlx)?;
 
@@ -597,14 +748,14 @@ pub async fn set_summary(
     let new_is_derived = match reason {
         Some(name) => {
             !recorded_latch(name)
-                && !crate::repo::lockout::hold_is_active_in_tx(&mut tx, plant_id, name, now).await?
+                && !crate::repo::lockout::hold_is_active_in_tx(tx, plant_id, name, now).await?
         }
         None => false,
     };
     let prior_ended_unrecorded = match prior.as_deref() {
         Some(name) => {
             !recorded_latch(name)
-                && !crate::repo::lockout::hold_is_active_in_tx(&mut tx, plant_id, name, now).await?
+                && !crate::repo::lockout::hold_is_active_in_tx(tx, plant_id, name, now).await?
         }
         None => false,
     };
@@ -632,7 +783,7 @@ pub async fn set_summary(
         .bind(severity)
         .bind(detail)
         .bind(now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await
         .map_err(StorageError::from_sqlx)?;
         let event = if new_is_derived {
@@ -640,9 +791,8 @@ pub async fn set_summary(
         } else {
             crate::repo::outbox::EventKind::LOCKOUT_CLEARED
         };
-        crate::repo::outbox::emit(&mut tx, event, &serde_json::json!({"plant_id":plant_id,"reason":shown,"cleared_reason":prior,"since":shown.map(|_| now),"hold_until":null,"cleared_by":if shown.is_none() { cleared_by } else { None }}), now).await?;
+        crate::repo::outbox::emit(tx, event, &serde_json::json!({"plant_id":plant_id,"reason":shown,"cleared_reason":prior,"since":shown.map(|_| now),"hold_until":null,"cleared_by":if shown.is_none() { cleared_by } else { None }}), now).await?;
     }
-    tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(true)
 }
 
@@ -789,7 +939,10 @@ mod tests {
     #[tokio::test]
     async fn the_row_and_the_transition_share_one_transaction() {
         let db = db().await;
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let row = get(&db, "cmd-1").await.unwrap().unwrap();
         assert_eq!(row.status, "issued");
         assert_eq!(row.published_at, None, "committed before any publish");
@@ -810,7 +963,10 @@ mod tests {
         crate::repo::outbox::configure(&db, false, 500_000)
             .await
             .unwrap();
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
             .fetch_one(db.pool())
             .await
@@ -821,7 +977,10 @@ mod tests {
     #[tokio::test]
     async fn a_duplicate_command_id_is_refused_by_the_primary_key() {
         let db = db().await;
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let error = issue(&db, &command(), &dose_issued(), 2_000)
             .await
             .unwrap_err();
@@ -833,7 +992,10 @@ mod tests {
     #[tokio::test]
     async fn a_crash_between_commit_and_publish_leaves_an_issued_row() {
         let db = db().await;
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let open = open_commands(&db).await.unwrap();
         assert_eq!(open.len(), 1);
         assert_eq!(open[0].status, "issued");
@@ -843,7 +1005,10 @@ mod tests {
     #[tokio::test]
     async fn a_result_for_a_terminal_command_changes_nothing() {
         let db = db().await;
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let event = NewWateringEvent {
             watering_event_id: "we-1".into(),
             plant_id: "monstera-01".into(),
@@ -922,7 +1087,10 @@ mod tests {
     #[tokio::test]
     async fn the_rolling_window_sums_rows_and_credits_conservatively() {
         let db = db().await;
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let event = NewWateringEvent {
             watering_event_id: "we-1".into(),
             plant_id: "monstera-01".into(),
@@ -950,7 +1118,10 @@ mod tests {
 
         let mut second = command();
         second.command_id = "cmd-2".into();
-        issue(&db, &second, &dose_issued(), 6_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &second, &dose_issued(), 6_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         settle(
             &db,
             "cmd-2",
@@ -973,7 +1144,10 @@ mod tests {
         let mut manual = command();
         manual.command_id = "cmd-3".into();
         manual.mode = "manual".into();
-        issue(&db, &manual, &dose_issued(), 8_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &manual, &dose_issued(), 8_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         let manual_event = NewWateringEvent {
             watering_event_id: "we-3".into(),
             mode: "manual".into(),
@@ -1008,7 +1182,10 @@ mod tests {
     #[tokio::test]
     async fn publication_is_recorded_once() {
         let db = db().await;
-        issue(&db, &command(), &dose_issued(), 1_000).await.unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
         assert!(mark_published(&db, "cmd-1", 1_100).await.unwrap());
         assert!(
             !mark_published(&db, "cmd-1", 1_200).await.unwrap(),
@@ -1017,6 +1194,164 @@ mod tests {
         let row = get(&db, "cmd-1").await.unwrap().unwrap();
         assert_eq!(row.published_at, Some(1_100));
         assert_eq!(row.status, "in_flight");
+    }
+
+    // ------------------------------------------- lockouts at issue and publish
+
+    async fn command_rows(db: &EdgeDb) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM commands")
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+    }
+
+    /// Path F at issue: an active latch or hold refuses the command inside the
+    /// issuing transaction, and nothing at all is written — no command, no
+    /// state, no outbox row.
+    #[tokio::test]
+    async fn issue_refuses_while_a_lockout_is_recorded() {
+        let db = db().await;
+        crate::repo::lockout::latch(&db, "monstera-01", "max_doses_reached", 500)
+            .await
+            .unwrap();
+        crate::repo::lockout::latch(&db, "monstera-01", "flood_v9", 500)
+            .await
+            .unwrap();
+        let outbox_before: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Blocked {
+                reasons: vec!["flood_v9".into(), "max_doses_reached".into()]
+            },
+            "every latch is named, an unrecognised one included"
+        );
+        assert_eq!(command_rows(&db).await, 0);
+        assert_eq!(irrigation_state(&db, "monstera-01").await.unwrap(), None);
+        let outbox_after: i64 = sqlx::query_scalar("SELECT count(*) FROM pending_cloud_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(outbox_after, outbox_before);
+    }
+
+    /// An active hold refuses; the same hold once expired does not.
+    #[tokio::test]
+    async fn issue_refuses_on_an_active_hold_and_not_on_an_expired_one() {
+        let db = db().await;
+        crate::repo::lockout::hold(&db, "monstera-01", "uncertain", 1_001, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Blocked {
+                reasons: vec!["uncertain".into()]
+            }
+        );
+        let mut later = command();
+        later.issued_at = 1_001;
+        assert_eq!(
+            issue(&db, &later, &dose_issued(), 1_001).await.unwrap(),
+            IssueOutcome::Issued,
+            "the hold ends at its deadline"
+        );
+    }
+
+    /// A command with no plant has no plant lockout to consult.
+    #[tokio::test]
+    async fn a_device_command_is_not_a_plant_command() {
+        let db = db().await;
+        crate::repo::lockout::latch(&db, "monstera-01", "leak", 0)
+            .await
+            .unwrap();
+        let mut tare = command();
+        tare.plant_id = None;
+        tare.kind = "tare".into();
+        assert_eq!(
+            issue(&db, &tare, &IrrigationStateRow::default(), 1_000)
+                .await
+                .unwrap(),
+            IssueOutcome::Issued
+        );
+    }
+
+    /// Path F after issue: a lockout recorded between the issuing commit and
+    /// the publish refuses the publish and fails the command in the same
+    /// transaction — no watering event, the plant back to `recheck`.
+    #[tokio::test]
+    async fn a_lockout_recorded_after_issue_blocks_the_publish() {
+        let db = db().await;
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
+        crate::repo::lockout::latch(&db, "monstera-01", "leak", 1_100)
+            .await
+            .unwrap();
+        let recheck = IrrigationStateRow {
+            state: "recheck".into(),
+            ..dose_issued()
+        };
+        assert_eq!(
+            authorize_publish(&db, "cmd-1", Some(("monstera-01", &recheck)), 1_200)
+                .await
+                .unwrap(),
+            PublishAuthorization::Blocked {
+                reasons: vec!["leak".into()]
+            }
+        );
+        let row = get(&db, "cmd-1").await.unwrap().unwrap();
+        assert_eq!(row.status, "failed");
+        assert_eq!(row.reason.as_deref(), Some("blocked_by_lockout"));
+        assert_eq!(
+            irrigation_state(&db, "monstera-01")
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            "recheck"
+        );
+        let watering: i64 = sqlx::query_scalar("SELECT count(*) FROM watering_events")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(watering, 0);
+        // And a second attempt is not authorised either.
+        assert_eq!(
+            authorize_publish(&db, "cmd-1", Some(("monstera-01", &recheck)), 1_300)
+                .await
+                .unwrap(),
+            PublishAuthorization::NotIssued
+        );
+    }
+
+    /// With nothing recorded the publish is authorised and nothing changes;
+    /// once published, no further attempt is.
+    #[tokio::test]
+    async fn an_unlocked_issued_command_is_authorised_once_and_unchanged() {
+        let db = db().await;
+        assert_eq!(
+            issue(&db, &command(), &dose_issued(), 1_000).await.unwrap(),
+            IssueOutcome::Issued
+        );
+        assert_eq!(
+            authorize_publish(&db, "cmd-1", None, 1_100).await.unwrap(),
+            PublishAuthorization::Authorized
+        );
+        assert_eq!(get(&db, "cmd-1").await.unwrap().unwrap().status, "issued");
+        assert!(mark_published(&db, "cmd-1", 1_150).await.unwrap());
+        assert_eq!(
+            authorize_publish(&db, "cmd-1", None, 1_200).await.unwrap(),
+            PublishAuthorization::NotIssued
+        );
+        assert_eq!(
+            authorize_publish(&db, "no-such-command", None, 1_200)
+                .await
+                .unwrap(),
+            PublishAuthorization::NotIssued
+        );
     }
 
     #[tokio::test]

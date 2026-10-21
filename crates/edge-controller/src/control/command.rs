@@ -89,6 +89,36 @@ pub enum Issued {
         /// The id that was allocated, and never reused for a different command.
         command_id: String,
     },
+    /// A lockout was recorded after the gate passed, and **nothing was
+    /// published** (path F). At issue, no command exists; at publish, the
+    /// command is `failed` with reason `blocked_by_lockout` and the plant is
+    /// back in `Recheck`.
+    Blocked {
+        /// The command, when it was persisted before the lockout appeared.
+        command_id: Option<String>,
+        /// The stored names of every lockout in force.
+        reasons: Vec<String>,
+    },
+}
+
+/// What the last check before each publish attempt needs.
+struct PublishGuard<'a> {
+    /// The persisted command.
+    command_id: &'a str,
+    /// Where its plant goes if a lockout now blocks it.
+    blocked_state: Option<(&'a str, &'a command_repo::IrrigationStateRow)>,
+}
+
+/// Why a guarded publish did not happen.
+enum PublishStop {
+    /// Every transport attempt failed.
+    Transport(TransportError),
+    /// A recorded lockout refused it; the command is already settled.
+    Blocked(Vec<String>),
+    /// The command is no longer `issued`.
+    NotIssued,
+    /// The check itself could not run.
+    Storage(rhizo_storage::StorageError),
 }
 
 /// Owns the one path from a decision to the wire.
@@ -158,7 +188,10 @@ impl Commander {
         let mut state = request.next_state.clone();
         state.active_command_id = Some(command_id.clone());
 
-        command_repo::issue(
+        // The gate passed on inputs read a moment ago. A latch or hold
+        // recorded since then refuses the command inside the issuing
+        // transaction, and nothing is persisted (path F, at issue).
+        if let command_repo::IssueOutcome::Blocked { reasons } = command_repo::issue(
             &self.db,
             &command_repo::NewCommand {
                 command_id: command_id.clone(),
@@ -173,7 +206,22 @@ impl Commander {
             &state,
             issued_at,
         )
-        .await?;
+        .await?
+        {
+            tracing::warn!(
+                plant_id = %request.plant_id,
+                reasons = ?reasons,
+                "a lockout was recorded after the gate passed; no command was issued"
+            );
+            self.metrics
+                .watering_commands
+                .with_label_values(&[request.mode.as_str(), "blocked_by_lockout"])
+                .inc();
+            return Ok(Issued::Blocked {
+                command_id: None,
+                reasons,
+            });
+        }
 
         tracing::info!(
             plant_id = %request.plant_id,
@@ -193,8 +241,15 @@ impl Commander {
         };
         let payload = water_payload(&row)?;
         let topic = Topic::CommandWater(device_id(&row.device_id)?).as_string();
+        let mut recheck = request.next_state.clone();
+        recheck.state = "recheck".to_owned();
+        recheck.active_command_id = None;
+        let guard = PublishGuard {
+            command_id: &command_id,
+            blocked_state: Some((&request.plant_id, &recheck)),
+        };
 
-        match self.publish_with_retry(&topic, payload).await {
+        match self.publish_with_retry(&topic, payload, &guard).await {
             Ok(()) => {
                 // M8's process-boundary crash hook (SCEN-051). Compiled out
                 // entirely without the `e2e-faults` feature; inert even then
@@ -218,7 +273,29 @@ impl Commander {
                     expires_at,
                 })
             }
-            Err(error) => {
+            Err(PublishStop::Blocked(reasons)) => {
+                // Settled `failed` by the check itself, in its transaction.
+                tracing::warn!(
+                    plant_id = %request.plant_id,
+                    command_id = %command_id,
+                    reasons = ?reasons,
+                    "a lockout was recorded before publication; the command is failed and nothing was published"
+                );
+                self.metrics
+                    .watering_commands
+                    .with_label_values(&[request.mode.as_str(), "blocked_by_lockout"])
+                    .inc();
+                Ok(Issued::Blocked {
+                    command_id: Some(command_id),
+                    reasons,
+                })
+            }
+            Err(PublishStop::Storage(error)) => Err(EdgeError::Storage(error)),
+            Err(stop @ (PublishStop::Transport(_) | PublishStop::NotIssued)) => {
+                let error = match stop {
+                    PublishStop::Transport(error) => error.to_string(),
+                    _ => "the command was no longer issued".to_owned(),
+                };
                 tracing::error!(
                     plant_id = %request.plant_id,
                     command_id = %command_id,
@@ -233,9 +310,6 @@ impl Commander {
                     .watering_failures
                     .with_label_values(&["publish_failed"])
                     .inc();
-                let mut recheck = request.next_state.clone();
-                recheck.state = "recheck".to_owned();
-                recheck.active_command_id = None;
                 command_repo::settle(
                     &self.db,
                     &command_id,
@@ -268,7 +342,9 @@ impl Commander {
         let issued_at = now.timestamp_millis();
         let expires_at = issued_at + ttl.num_milliseconds().max(1);
         let command_id = uuid::Uuid::now_v7().to_string();
-        command_repo::issue(
+        // No plant, so no plant lockout can refuse it; matched anyway, so a
+        // future plant-scoped device command cannot silently skip the check.
+        if let command_repo::IssueOutcome::Blocked { reasons } = command_repo::issue(
             &self.db,
             &command_repo::NewCommand {
                 command_id: command_id.clone(),
@@ -283,7 +359,13 @@ impl Commander {
             &command_repo::IrrigationStateRow::default(),
             issued_at,
         )
-        .await?;
+        .await?
+        {
+            return Ok(Issued::Blocked {
+                command_id: None,
+                reasons,
+            });
+        }
         let Some(row) = command_repo::get(&self.db, &command_id).await? else {
             return Err(EdgeError::Storage(rhizo_storage::StorageError::Database(
                 "the command vanished between commit and publish".to_owned(),
@@ -297,7 +379,11 @@ impl Commander {
                 calibrate_payload(&row, run_seconds)?,
             ),
         };
-        match self.publish_with_retry(&topic, payload).await {
+        let guard = PublishGuard {
+            command_id: &command_id,
+            blocked_state: None,
+        };
+        match self.publish_with_retry(&topic, payload, &guard).await {
             Ok(()) => {
                 command_repo::mark_published(
                     &self.db,
@@ -310,7 +396,12 @@ impl Commander {
                     expires_at,
                 })
             }
-            Err(_) => {
+            Err(PublishStop::Blocked(reasons)) => Ok(Issued::Blocked {
+                command_id: Some(command_id),
+                reasons,
+            }),
+            Err(PublishStop::Storage(error)) => Err(EdgeError::Storage(error)),
+            Err(PublishStop::Transport(_) | PublishStop::NotIssued) => {
                 command_repo::settle(
                     &self.db,
                     &command_id,
@@ -332,14 +423,40 @@ impl Commander {
     /// The payload is built once, before the first attempt, and every retry
     /// sends those exact bytes. There is no code path here that could allocate a
     /// second `command_id`, which is the property M6-011 is about.
+    ///
+    /// **Before every attempt**, retries included,
+    /// [`command_repo::authorize_publish`] re-checks — atomically, under the
+    /// write lock — that the command is still `issued` and its plant has no
+    /// recorded lockout; a backoff sleep is exactly where one could appear.
+    /// What remains is the interval between that commit and the broker taking
+    /// the message, and nothing recalls a published command (path F is
+    /// narrowed, not closed).
     async fn publish_with_retry(
         &self,
         topic: &str,
         payload: Vec<u8>,
-    ) -> Result<(), TransportError> {
+        guard: &PublishGuard<'_>,
+    ) -> Result<(), PublishStop> {
         let mut backoff = rhizo_telemetry::Backoff::new(PUBLISH_BACKOFF_BASE, PUBLISH_BACKOFF_CAP);
         let mut last = TransportError("no attempt was made".to_owned());
         for attempt in 1..=MAX_PUBLISH_ATTEMPTS {
+            match command_repo::authorize_publish(
+                &self.db,
+                guard.command_id,
+                guard.blocked_state,
+                self.clock.now().timestamp_millis(),
+            )
+            .await
+            {
+                Ok(command_repo::PublishAuthorization::Authorized) => {}
+                Ok(command_repo::PublishAuthorization::Blocked { reasons }) => {
+                    return Err(PublishStop::Blocked(reasons));
+                }
+                Ok(command_repo::PublishAuthorization::NotIssued) => {
+                    return Err(PublishStop::NotIssued);
+                }
+                Err(error) => return Err(PublishStop::Storage(error)),
+            }
             // `retain = false`. ADR-002 calls retaining a command topic the
             // single most damaging mistake available in this protocol: the
             // broker would redeliver it on every reconnect, indefinitely.
@@ -364,7 +481,7 @@ impl Commander {
                 }
             }
         }
-        Err(last)
+        Err(PublishStop::Transport(last))
     }
 
     /// Applies a `command.result`, settling the command and its consequences.
@@ -960,6 +1077,306 @@ mod command {
         }
     }
 
+    // ------------------------------------------------------------------ path F
+
+    /// A lockout recorded after the gate passed (M9 report §15, stage 4).
+    /// Every refusal asserts that nothing reached the transport.
+    mod path_f {
+        use super::*;
+        use crate::control::transport::Published;
+        use std::sync::Mutex;
+
+        fn request() -> DoseRequest {
+            DoseRequest {
+                plant_id: "monstera-01".to_owned(),
+                device_id: "plant-node-01".to_owned(),
+                requested_ml: 30.0,
+                mode: EvaluationMode::ManualRequest { ml: 30.0 },
+                ttl: Duration::seconds(120),
+                next_state: command_repo::IrrigationStateRow {
+                    state: "dose_issued".to_owned(),
+                    ..command_repo::IrrigationStateRow::default()
+                },
+            }
+        }
+
+        async fn ready(api: &TestApi) {
+            api.waterable("monstera-01").await;
+            api.device_connected().await;
+        }
+
+        async fn latch(api: &TestApi, reason: &str) {
+            rhizo_storage::repo::lockout::latch(
+                &api.db,
+                "monstera-01",
+                reason,
+                api.clock.now().timestamp_millis(),
+            )
+            .await
+            .unwrap();
+        }
+
+        async fn command_rows(api: &TestApi) -> i64 {
+            sqlx::query_scalar("SELECT count(*) FROM commands")
+                .fetch_one(api.db.pool())
+                .await
+                .unwrap()
+        }
+
+        /// A transport that records a latch *inside* its first publish call —
+        /// a lockout landing while a publish is underway — and then fails that
+        /// attempt or lets it through.
+        #[derive(Clone)]
+        struct LatchingTransport {
+            db: EdgeDb,
+            now_ms: i64,
+            fail_first: bool,
+            calls: Arc<Mutex<Vec<Published>>>,
+        }
+
+        impl crate::control::transport::Transport for LatchingTransport {
+            fn publish(
+                &self,
+                topic: String,
+                payload: Vec<u8>,
+                retain: bool,
+            ) -> crate::control::transport::PublishFuture<'_> {
+                Box::pin(async move {
+                    let first = self.calls.lock().unwrap().is_empty();
+                    self.calls.lock().unwrap().push(Published {
+                        topic,
+                        payload,
+                        retain,
+                    });
+                    if first {
+                        rhizo_storage::repo::lockout::latch(
+                            &self.db,
+                            "monstera-01",
+                            "leak",
+                            self.now_ms,
+                        )
+                        .await
+                        .unwrap();
+                        if self.fail_first {
+                            return Err(TransportError("injected".to_owned()));
+                        }
+                    }
+                    Ok(())
+                })
+            }
+        }
+
+        fn commander_with(api: &TestApi, fail_first: bool) -> (Commander, LatchingTransport) {
+            let transport = LatchingTransport {
+                db: api.db.clone(),
+                now_ms: api.clock.now().timestamp_millis(),
+                fail_first,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            };
+            let commander = Commander::new(
+                api.db.clone(),
+                api.clock.clone(),
+                Arc::new(transport.clone()),
+                crate::metrics::Metrics::new().unwrap(),
+            );
+            (commander, transport)
+        }
+
+        /// The gate passed (the request is built from it), then a latch was
+        /// recorded, then the dose is issued: refused inside the issuing
+        /// transaction, with nothing persisted and nothing published.
+        #[tokio::test]
+        async fn a_latch_after_the_gate_refuses_the_issue() {
+            let api = TestApi::start().await;
+            ready(&api).await;
+            latch(&api, "leak").await;
+            let issued = api.commander.issue_water(&request()).await.unwrap();
+            assert_eq!(
+                issued,
+                Issued::Blocked {
+                    command_id: None,
+                    reasons: vec!["leak".to_owned()]
+                }
+            );
+            assert_eq!(command_rows(&api).await, 0);
+            assert_eq!(api.transport.attempts(), 0);
+            assert!(
+                command_repo::irrigation_state(&api.db, "monstera-01")
+                    .await
+                    .unwrap()
+                    .is_none_or(|state| state.state != "dose_issued"),
+                "no state was committed either"
+            );
+        }
+
+        /// Several latches, an unrecognised name among them, are all named, and
+        /// the reason shown is the best-ranked one.
+        #[tokio::test]
+        async fn several_latches_including_an_unknown_one_refuse_the_issue() {
+            let api = TestApi::start().await;
+            ready(&api).await;
+            latch(&api, "flood_v9").await;
+            latch(&api, "no_delivery_detected").await;
+            let Issued::Blocked { reasons, .. } =
+                api.commander.issue_water(&request()).await.unwrap()
+            else {
+                panic!("expected a refusal");
+            };
+            assert_eq!(reasons, ["flood_v9", "no_delivery_detected"]);
+            assert_eq!(
+                crate::plant::best_lockout(&reasons),
+                rhizo_domain::LockoutReason::NoDeliveryDetected
+            );
+            assert_eq!(api.transport.attempts(), 0);
+        }
+
+        /// An active hold refuses the issue; the same hold expired does not,
+        /// and the dose goes out normally.
+        #[tokio::test]
+        async fn an_active_hold_refuses_and_an_expired_one_does_not() {
+            let api = TestApi::start().await;
+            ready(&api).await;
+            let now = api.clock.now().timestamp_millis();
+            rhizo_storage::repo::lockout::hold(
+                &api.db,
+                "monstera-01",
+                "uncertain",
+                now + 60_000,
+                now,
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                api.commander.issue_water(&request()).await.unwrap(),
+                Issued::Blocked {
+                    command_id: None,
+                    ..
+                }
+            ));
+            assert_eq!(api.transport.attempts(), 0);
+
+            api.clock.advance(Duration::minutes(1));
+            assert!(matches!(
+                api.commander.issue_water(&request()).await.unwrap(),
+                Issued::Published { .. }
+            ));
+            assert_eq!(api.transport.commands().len(), 1);
+        }
+
+        /// A latch recorded while a publish attempt is failing: the retry's
+        /// check refuses the second attempt, the command is failed with
+        /// `blocked_by_lockout`, and nothing was ever delivered.
+        #[tokio::test]
+        async fn a_latch_during_a_publish_retry_refuses_the_retry() {
+            let api = TestApi::start().await;
+            ready(&api).await;
+            let (commander, transport) = commander_with(&api, true);
+            let issued = commander.issue_water(&request()).await.unwrap();
+            let Issued::Blocked {
+                command_id: Some(command_id),
+                reasons,
+            } = issued
+            else {
+                panic!("expected a refusal at publish, got {issued:?}");
+            };
+            assert_eq!(reasons, ["leak"]);
+            assert_eq!(
+                transport.calls.lock().unwrap().len(),
+                1,
+                "the failed attempt only; the retry never reached the transport"
+            );
+            let row = command_repo::get(&api.db, &command_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.status, "failed");
+            assert_eq!(row.reason.as_deref(), Some("blocked_by_lockout"));
+            assert_eq!(
+                command_repo::irrigation_state(&api.db, "monstera-01")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                "recheck"
+            );
+        }
+
+        /// **The remaining window, stated as a test.** A latch recorded after
+        /// the last check, while the message is being handed to MQTT, does not
+        /// stop that message: it is published and cannot be recalled. What the
+        /// edge guarantees is the next decision — the plant refuses at once.
+        #[tokio::test]
+        async fn a_latch_after_authorisation_is_the_window_that_remains() {
+            let api = TestApi::start().await;
+            ready(&api).await;
+            let (commander, transport) = commander_with(&api, false);
+            assert!(matches!(
+                commander.issue_water(&request()).await.unwrap(),
+                Issued::Published { .. }
+            ));
+            assert_eq!(transport.calls.lock().unwrap().len(), 1);
+            assert!(matches!(
+                api.commander.issue_water(&request()).await.unwrap(),
+                Issued::Blocked {
+                    command_id: None,
+                    ..
+                }
+            ));
+        }
+
+        /// A restart over an in-flight command and a latch recorded since:
+        /// reconciliation publishes nothing, and a new dose is refused.
+        #[tokio::test]
+        async fn a_restart_with_a_lockout_replays_nothing() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("edge.sqlite");
+            {
+                let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+                ready(&api).await;
+                assert!(matches!(
+                    api.commander.issue_water(&request()).await.unwrap(),
+                    Issued::Published { .. }
+                ));
+                latch(&api, "leak").await;
+                api.db.pool().close().await;
+            }
+            let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+            let recovery = api.commander.reconcile().await.unwrap();
+            assert_eq!(recovery.republished, 0);
+            assert_eq!(api.transport.attempts(), 0);
+            assert!(matches!(
+                api.commander.issue_water(&request()).await.unwrap(),
+                Issued::Blocked {
+                    command_id: None,
+                    ..
+                }
+            ));
+            assert_eq!(api.transport.attempts(), 0);
+        }
+
+        /// With nothing recorded the path is unchanged: issued, published once,
+        /// in flight.
+        #[tokio::test]
+        async fn without_lockouts_the_dose_is_issued_and_published() {
+            let api = TestApi::start().await;
+            ready(&api).await;
+            let Issued::Published { command_id, .. } =
+                api.commander.issue_water(&request()).await.unwrap()
+            else {
+                panic!("expected a publish");
+            };
+            assert_eq!(api.transport.commands().len(), 1);
+            assert_eq!(
+                command_repo::get(&api.db, &command_id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                "in_flight"
+            );
+        }
+    }
+
     // ------------------------------------------------------------- publication
 
     mod publish {
@@ -1284,6 +1701,15 @@ mod command {
                 records[0].kind,
                 rhizo_storage::repo::lockout::LockoutKind::Hold
             );
+            // Shown by the settle itself, not at the next pass: the hold lasts
+            // one TTL and SCEN-025 needs the specific remedy visible during it.
+            assert_eq!(
+                command_repo::lockout(&api.db, "monstera-01")
+                    .await
+                    .unwrap()
+                    .map(|row| row.0),
+                Some("clock_unsynced".to_owned())
+            );
             assert_eq!(
                 command_repo::irrigation_state(&api.db, "monstera-01")
                     .await
@@ -1326,6 +1752,14 @@ mod command {
             assert_eq!(
                 names(api.clock.now().timestamp_millis()).await,
                 ["clock_unsynced", "leak"]
+            );
+            assert_eq!(
+                command_repo::lockout(&api.db, "monstera-01")
+                    .await
+                    .unwrap()
+                    .map(|row| row.0),
+                Some("leak".to_owned()),
+                "the hold does not take the summary from a latch"
             );
 
             // Past the hold, every input healthy.

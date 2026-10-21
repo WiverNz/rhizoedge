@@ -596,7 +596,11 @@ the others, and `lockout/clear` removes one named latch inside a `BEGIN
 IMMEDIATE` transaction that re-checks the leak reading. `plants.lockout_reason`
 is a **display summary** that no decision reads — a test writes a lie into it
 and asserts nothing changes. Derived conditions (stale, tank low, a silent leak
-sensor) are never recorded. M9 report §15.
+sensor) are never recorded. `command_repo::issue` and `authorize_publish`
+(before every publish attempt) refuse a command for a plant with any record,
+inside `BEGIN IMMEDIATE`; a command refused at publish is `failed` with reason
+`blocked_by_lockout`. Scenario resets must delete `plant_lockouts` before
+`plants`. M9 report §15.
 
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug. The default is

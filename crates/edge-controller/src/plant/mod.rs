@@ -519,6 +519,18 @@ pub fn lockout_from_str(name: &str) -> Option<rhizo_domain::LockoutReason> {
     serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
 }
 
+/// The reason to show for several stored lockout names: the best-ranked, so
+/// it never depends on their order. `Unknown` for an empty list, which no
+/// caller should pass and which still refuses.
+#[must_use]
+pub fn best_lockout(names: &[String]) -> rhizo_domain::LockoutReason {
+    names
+        .iter()
+        .map(|name| lockout_from_str(name).unwrap_or(rhizo_domain::LockoutReason::Unknown))
+        .min_by_key(|reason| rhizo_domain::irrigation::display_rank(*reason))
+        .unwrap_or(rhizo_domain::LockoutReason::Unknown)
+}
+
 /// The wire name of a lockout.
 #[must_use]
 pub fn lockout_name(reason: rhizo_domain::LockoutReason) -> String {
