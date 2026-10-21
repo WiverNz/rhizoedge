@@ -20,11 +20,13 @@
 //! tests stop proving anything about the running system.
 
 use chrono::{DateTime, Duration, Utc};
-use rhizo_domain::irrigation::types::{EvaluationMode, IrrigationDecision, state_name};
+use rhizo_domain::irrigation::types::{
+    EvaluationMode, IrrigationDecision, LockoutClass, lockout_class, state_name,
+};
 use rhizo_domain::irrigation::{evaluate, next_state};
 use rhizo_domain::state::{IrrigationState, LockoutReason};
 use rhizo_storage::EdgeDb;
-use rhizo_storage::repo::command as command_repo;
+use rhizo_storage::repo::{command as command_repo, lockout as lockout_repo};
 
 use crate::error::EdgeError;
 use crate::plant::{self, Loaded};
@@ -82,7 +84,10 @@ fn lost_race(gathered: &Gathered, decision: IrrigationDecision) -> Pass {
         decision,
         state: gathered.state,
         command_id: None,
-        lockout: gathered.active_lockout,
+        lockout: gathered
+            .summary
+            .as_deref()
+            .and_then(plant::lockout_from_str),
     }
 }
 
@@ -183,26 +188,26 @@ pub async fn apply(
         }
         IrrigationDecision::Lock { reason } => {
             lockout = Some(*reason);
-            let existing = gathered.active_lockout;
-            if existing != Some(*reason) {
-                command_repo::set_lockout(
-                    db,
-                    plant_id,
-                    Some(&plant::lockout_name(*reason)),
-                    Some(now_ms),
-                    gathered.lockout_held_until.map(|v| v.timestamp_millis()),
-                    None,
-                    now_ms,
-                )
-                .await?;
+            let name = plant::lockout_name(*reason);
+            // A latch derived on this pass — a detected leak, no delivery, max
+            // doses — is recorded *beside* whatever is already recorded, never
+            // in place of it (F-060-41). An answer that came from a record is
+            // not recorded again, and nothing but a latch-class reason is ever
+            // latched: holds are written by their own writers, and derived
+            // conditions are re-derived on every pass.
+            if lockout_class(*reason) == LockoutClass::Latch && !gathered.latched.contains(reason) {
+                lockout_repo::latch(db, plant_id, &name, now_ms).await?;
+            }
+            if gathered.summary.as_deref() != Some(name.as_str()) {
+                command_repo::set_summary(db, plant_id, Some(&name), None, now_ms).await?;
                 commander
                     .metrics_ref()
                     .lockouts
-                    .with_label_values(&[&plant::lockout_name(*reason)])
+                    .with_label_values(&[&name])
                     .inc();
                 tracing::info!(
                     plant_id = %plant_id,
-                    reason = %plant::lockout_name(*reason),
+                    reason = %name,
                     clearable = rhizo_domain::irrigation::is_auto_clearable(*reason),
                     "watering locked out"
                 );
@@ -242,18 +247,18 @@ pub async fn apply(
         }
     }
 
-    // An auto-clearing lockout is lifted the moment its condition resolves. The
-    // gate has already decided that by not returning it.
+    // The summary follows the decision: nothing to show once nothing blocks.
+    // Clearing it lifts nothing — every latch and hold lives in
+    // `plant_lockouts`, and the gate has just found none active. There is no
+    // automatic clear any more, so there is nothing for a stale read to wipe.
     if !matches!(decision, IrrigationDecision::Lock { .. })
-        && let Some(previous) = gathered.active_lockout
-        && rhizo_domain::irrigation::is_auto_clearable(previous)
-        && gathered.lockout_held_until.is_none_or(|until| now >= until)
+        && let Some(previous) = gathered.summary.as_deref()
     {
-        command_repo::set_lockout(db, plant_id, None, None, None, Some("auto"), now_ms).await?;
+        command_repo::set_summary(db, plant_id, None, Some("auto"), now_ms).await?;
         tracing::info!(
             plant_id = %plant_id,
-            reason = %plant::lockout_name(previous),
-            "lockout cleared automatically"
+            reason = %previous,
+            "watering no longer locked out"
         );
     }
 

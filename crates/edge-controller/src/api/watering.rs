@@ -26,9 +26,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rhizo_domain::irrigation::types::{EvaluationMode, IrrigationDecision};
-use rhizo_domain::irrigation::{is_auto_clearable, safety_gate};
+use rhizo_domain::irrigation::{display_rank, is_auto_clearable, safety_gate};
 use rhizo_domain::state::LockoutReason;
-use rhizo_storage::repo::plant as plant_repo;
+use rhizo_storage::repo::{lockout as lockout_repo, plant as plant_repo};
 use serde::Deserialize;
 
 use super::ApiState;
@@ -406,26 +406,48 @@ pub async fn clear_lockout(
     let Ok(Some(loaded)) = plant::load(&state.db, &id).await else {
         return error(StatusCode::NOT_FOUND, "plant_not_found", "unknown plant");
     };
-    let Some(stored) = loaded.plant.lockout_reason.clone() else {
-        return error(
-            StatusCode::CONFLICT,
-            "not_locked_out",
-            "this plant is not locked out",
-        );
+    let now = state.clock.now();
+    let now_ms = now.timestamp_millis();
+
+    // One request names one record, and clears at most that one (F-060-41). The
+    // records — not the display summary — say what the plant is locked by.
+    let Ok(records) = lockout_repo::active(&state.db, &id, now_ms).await else {
+        return storage_error();
     };
-    if stored != body.reason {
+    let Some(named) = records.iter().find(|record| record.reason == body.reason) else {
+        if records.is_empty() {
+            return error(
+                StatusCode::CONFLICT,
+                "not_locked_out",
+                "this plant is not locked out",
+            );
+        }
+        let shown = records
+            .iter()
+            .min_by_key(|record| {
+                display_rank(
+                    plant::lockout_from_str(&record.reason).unwrap_or(LockoutReason::Unknown),
+                )
+            })
+            .map(|record| record.reason.clone());
         return error_with(
             StatusCode::CONFLICT,
             "wrong_reason",
             "the plant is locked out for a different reason",
-            serde_json::json!({ "reason": stored }),
+            serde_json::json!({ "reason": shown }),
+        );
+    };
+    if named.kind == lockout_repo::LockoutKind::Hold {
+        return error_with(
+            StatusCode::CONFLICT,
+            "hold_not_clearable",
+            "this lockout is a hold; it ends by itself at its deadline and cannot be cleared",
+            serde_json::json!({ "reason": named.reason, "hold_until": named.hold_until.and_then(timestamp) }),
         );
     }
-    let Some(reason) = plant::lockout_from_str(&stored) else {
-        return storage_error();
-    };
+    let since = Some(named.since);
+    let reason = plant::lockout_from_str(&body.reason).unwrap_or(LockoutReason::Unknown);
 
-    let now = state.clock.now();
     let Ok(analysis) =
         super::support::with_busy_retry(|| plant::analyse(&state.db, &loaded, now)).await
     else {
@@ -445,48 +467,89 @@ pub async fn clear_lockout(
         return storage_error();
     };
 
-    // Re-run the gate as if the lockout were already gone. If the same reason
-    // comes straight back, the condition is still active and clearing it would
-    // be a lie the next tick would immediately contradict.
+    // Re-run the gate as if nothing were recorded. If the same reason comes
+    // straight back, the condition is still active and clearing it would be a
+    // lie the next pass would immediately contradict.
     let mut trial = gathered.inputs(now, mode);
     trial.latched = &[];
     trial.holds = &[];
     if safety_gate(&trial) == Some(reason) {
-        return lockout_conflict(reason, loaded.plant.lockout_since, None);
+        return lockout_conflict(reason, since, None);
     }
+    let not_clear = || {
+        lockout_conflict(
+            reason,
+            since,
+            Some(serde_json::json!({ "leak_signal": "not_clear" })),
+        )
+    };
     // SAFETY-003's explicit reset needs the signal *positively absent*. A silent
-    // leak sensor cannot demonstrate a dry tray, so `Unknown` refuses too.
+    // leak sensor cannot demonstrate a dry tray, so `Unknown` refuses too. This
+    // is the early answer; the binding one is re-checked inside the clearing
+    // transaction below.
     if reason == LockoutReason::Leak
         && gathered.leak != rhizo_domain::irrigation::types::LeakState::Clear
     {
-        return lockout_conflict(
-            reason,
-            loaded.plant.lockout_since,
-            Some(serde_json::json!({ "leak_signal": "not_clear" })),
-        );
+        return not_clear();
     }
+    let Ok(evidence) = crate::control::inputs::leak_evidence(&state.db, &loaded, now_ms).await
+    else {
+        return storage_error();
+    };
+    let evidence = evidence
+        .as_ref()
+        .map(
+            |(device_id, sensor_id, point, fresh_after)| lockout_repo::LeakEvidence {
+                device_id,
+                sensor_id,
+                point,
+                fresh_after: *fresh_after,
+            },
+        );
+    let outcome = super::support::with_busy_retry(|| {
+        lockout_repo::clear_latch(&state.db, &id, &body.reason, "operator", evidence, now_ms)
+    })
+    .await;
+    match outcome {
+        Ok(lockout_repo::ClearOutcome::Cleared { .. }) => {}
+        Ok(lockout_repo::ClearOutcome::NotLatched) => {
+            // Cleared by someone else between the read above and now.
+            return error(
+                StatusCode::CONFLICT,
+                "not_locked_out",
+                "this plant is not locked out",
+            );
+        }
+        Ok(lockout_repo::ClearOutcome::LeakNotClear) => return not_clear(),
+        Err(_) => return storage_error(),
+    }
+    tracing::info!(plant_id = %id, reason = %body.reason, "lockout cleared by an operator");
 
-    if super::support::with_busy_retry(|| {
-        rhizo_storage::repo::command::set_lockout(
+    // Bring the display summary up to date now rather than at the next pass.
+    // Best effort: it decides nothing, and the next pass rewrites it anyway.
+    if let Ok((_, decision)) =
+        irrigation::preview(&state.db, &loaded, analysis.inputs.dry_duration, mode, now).await
+    {
+        let shown = match decision {
+            IrrigationDecision::Lock { reason } => Some(plant::lockout_name(reason)),
+            _ => None,
+        };
+        if let Err(error) = rhizo_storage::repo::command::set_summary(
             &state.db,
             &id,
-            None,
-            None,
-            None,
+            shown.as_deref(),
             Some("operator"),
-            now.timestamp_millis(),
+            now_ms,
         )
-    })
-    .await
-    .is_err()
-    {
-        return storage_error();
+        .await
+        {
+            tracing::warn!(plant_id = %id, %error, "could not refresh the lockout summary");
+        }
     }
-    tracing::info!(plant_id = %id, reason = %stored, "lockout cleared by an operator");
     Json(serde_json::json!({
         "plant_id": id,
-        "cleared": stored,
-        "cleared_at": timestamp(now.timestamp_millis()),
+        "cleared": body.reason,
+        "cleared_at": timestamp(now_ms),
     }))
     .into_response()
 }
@@ -622,7 +685,10 @@ async fn device_command(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod water {
     use crate::api::testsupport::TestApi;
+    use crate::control::irrigation;
     use axum::http::StatusCode;
+    use rhizo_domain::irrigation::types::{EvaluationMode, IrrigationDecision};
+    use rhizo_storage::EdgeDb;
 
     /// The healthy case, so every refusal below is a refusal of something that
     /// would otherwise have worked.
@@ -1175,6 +1241,337 @@ mod water {
             Some("leak"),
             "re-binding the pump is not an operator leak reset"
         );
+    }
+
+    // ------------------------------------------- independent recorded lockouts
+
+    /// The recorded lockout names of the plant, sorted.
+    async fn records(api: &TestApi) -> Vec<String> {
+        let mut names: Vec<String> = rhizo_storage::repo::lockout::active(
+            &api.db,
+            "monstera-01",
+            api.clock.now().timestamp_millis(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|record| record.reason)
+        .collect();
+        names.sort();
+        names
+    }
+
+    /// The display summary.
+    async fn summary(api: &TestApi) -> Option<String> {
+        rhizo_storage::repo::plant::get(&api.db, "monstera-01")
+            .await
+            .unwrap()
+            .unwrap()
+            .lockout_reason
+    }
+
+    /// Every input healthy and fresh, the tray dry.
+    async fn healthy(api: &TestApi) {
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", false)
+            .await;
+        api.sample(api.clock.now(), 40.0).await;
+        api.sample_from(
+            api.clock.now(),
+            "tank-0",
+            "reservoir",
+            "tank_level",
+            "percent",
+            70.0,
+        )
+        .await;
+    }
+
+    /// The real refusal, not only the stored reason: a manual dose is answered
+    /// 409 for `reason`, and nothing is persisted or published.
+    async fn refused(api: &TestApi, reason: &str) {
+        let (status, body) = api
+            .json(
+                "POST",
+                "/api/v1/plants/monstera-01/water",
+                serde_json::json!({ "ml": 30.0, "mode": "manual" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], reason, "{body}");
+        assert!(api.transport.commands().is_empty(), "nothing published");
+        let commands: i64 = sqlx::query_scalar("SELECT count(*) FROM commands")
+            .fetch_one(api.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(commands, 0, "nothing persisted");
+    }
+
+    /// And the converse, so no refusal above passes vacuously.
+    async fn permitted(api: &TestApi) {
+        let (status, body) = api
+            .json(
+                "POST",
+                "/api/v1/plants/monstera-01/water",
+                serde_json::json!({ "ml": 30.0, "mode": "manual" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        assert_eq!(api.transport.commands().len(), 1);
+    }
+
+    async fn clear(api: &TestApi, reason: &str) -> (StatusCode, serde_json::Value) {
+        api.json(
+            "POST",
+            "/api/v1/plants/monstera-01/lockout/clear",
+            serde_json::json!({ "reason": reason }),
+        )
+        .await
+    }
+
+    async fn clock_step(api: &TestApi) {
+        let step = crate::control::clock_step::Step {
+            direction: crate::control::clock_step::Direction::Forward,
+            magnitude: chrono::Duration::hours(1),
+        };
+        crate::control::clock_step_response(&api.commander, step, api.clock.now())
+            .await
+            .unwrap();
+    }
+
+    /// A leak on top of each other explicit-clear fault: both are recorded,
+    /// clearing the leak leaves the other refusing on its own, and only the
+    /// second, separate reset restores watering.
+    #[tokio::test]
+    async fn safety_003_concurrent_latches_clear_independently() {
+        for other in ["pump_fault", "no_delivery_detected", "max_doses_reached"] {
+            let api = TestApi::start().await;
+            api.waterable("monstera-01").await;
+            api.device_connected().await;
+            // A fault from earlier, by its own writer.
+            rhizo_storage::repo::lockout::latch(
+                &api.db,
+                "monstera-01",
+                other,
+                api.clock.now().timestamp_millis(),
+            )
+            .await
+            .unwrap();
+            api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+                .await;
+            api.irrigate("monstera-01").await;
+            let mut both = vec!["leak".to_owned(), other.to_owned()];
+            both.sort();
+            assert_eq!(records(&api).await, both, "{other}");
+            assert_eq!(summary(&api).await.as_deref(), Some("leak"));
+            refused(&api, "leak").await;
+
+            api.clock.advance(chrono::Duration::minutes(5));
+            healthy(&api).await;
+            api.irrigate("monstera-01").await;
+            assert_eq!(records(&api).await, both, "a dry tray resets nothing");
+
+            let (status, body) = clear(&api, "leak").await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            api.irrigate("monstera-01").await;
+            assert_eq!(records(&api).await, [other.to_owned()]);
+            assert_eq!(summary(&api).await.as_deref(), Some(other));
+            refused(&api, other).await;
+
+            let (status, body) = clear(&api, other).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            api.irrigate("monstera-01").await;
+            assert!(records(&api).await.is_empty());
+            assert_eq!(summary(&api).await, None);
+            permitted(&api).await;
+        }
+    }
+
+    /// A forward clock step over a latched leak: the hold is recorded beside
+    /// the leak, and its expiry takes nothing with it.
+    #[tokio::test]
+    async fn safety_003_a_clock_step_hold_expiring_leaves_the_leak() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+            .await;
+        api.irrigate("monstera-01").await;
+        clock_step(&api).await;
+        api.irrigate("monstera-01").await;
+        assert_eq!(records(&api).await, ["leak", "uncertain"]);
+        assert_eq!(summary(&api).await.as_deref(), Some("leak"));
+
+        // Long past the cooldown, every input healthy.
+        api.clock.advance(chrono::Duration::hours(72));
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+        assert_eq!(
+            records(&api).await,
+            ["leak"],
+            "the hold expired, the leak did not"
+        );
+        assert_eq!(summary(&api).await.as_deref(), Some("leak"));
+        refused(&api, "leak").await;
+
+        let (status, body) = clear(&api, "leak").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        permitted(&api).await;
+    }
+
+    /// The operator resets the leak inside the clock-step cooldown: the reset
+    /// lifts the leak and nothing else, the hold keeps refusing until its own
+    /// deadline, and no request can clear a hold.
+    #[tokio::test]
+    async fn safety_003_clearing_the_leak_inside_a_clock_hold_leaves_the_hold() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+            .await;
+        api.irrigate("monstera-01").await;
+        clock_step(&api).await;
+
+        api.clock.advance(chrono::Duration::minutes(5));
+        healthy(&api).await;
+        let (status, body) = clear(&api, "leak").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        api.irrigate("monstera-01").await;
+        assert_eq!(records(&api).await, ["uncertain"]);
+        assert_eq!(summary(&api).await.as_deref(), Some("uncertain"));
+        refused(&api, "uncertain").await;
+
+        let (status, body) = clear(&api, "uncertain").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "hold_not_clearable");
+        assert_eq!(records(&api).await, ["uncertain"]);
+
+        api.clock.advance(chrono::Duration::hours(72));
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+        assert!(records(&api).await.is_empty());
+        assert_eq!(summary(&api).await, None);
+        permitted(&api).await;
+    }
+
+    /// A restart is a new edge over the same database: every latch and hold is
+    /// still there, and still refuses.
+    #[tokio::test]
+    async fn safety_003_a_restart_keeps_every_recorded_lockout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge.sqlite");
+        {
+            let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+            api.waterable("monstera-01").await;
+            api.device_connected().await;
+            rhizo_storage::repo::lockout::latch(&api.db, "monstera-01", "no_delivery_detected", 1)
+                .await
+                .unwrap();
+            api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+                .await;
+            api.irrigate("monstera-01").await;
+            clock_step(&api).await;
+            assert_eq!(
+                records(&api).await,
+                ["leak", "no_delivery_detected", "uncertain"]
+            );
+            api.db.pool().close().await;
+        }
+        let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+        assert_eq!(
+            records(&api).await,
+            ["leak", "no_delivery_detected", "uncertain"]
+        );
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+        assert_eq!(summary(&api).await.as_deref(), Some("leak"));
+        refused(&api, "leak").await;
+    }
+
+    /// The race the old automatic clear lost: a pass gathers, another writer
+    /// latches a fault, and the pass then applies a decision made without it.
+    /// The latch survives and the next evaluation refuses on it.
+    #[tokio::test]
+    async fn a_latch_written_during_a_pass_is_not_lost() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        healthy(&api).await;
+        // A derived block shown beforehand: the summary the old code cleared.
+        rhizo_storage::repo::command::set_summary(
+            &api.db,
+            "monstera-01",
+            Some("stale_data"),
+            None,
+            api.clock.now().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+        let loaded = crate::plant::load(&api.db, "monstera-01")
+            .await
+            .unwrap()
+            .unwrap();
+        let now = api.clock.now();
+        let analysis = crate::plant::analyse(&api.db, &loaded, now).await.unwrap();
+        let mode = EvaluationMode::Automatic;
+        let (gathered, decision) =
+            irrigation::preview(&api.db, &loaded, analysis.inputs.dry_duration, mode, now)
+                .await
+                .unwrap();
+        assert!(
+            !matches!(
+                decision,
+                IrrigationDecision::Lock { .. } | IrrigationDecision::IssueDose { .. }
+            ),
+            "{decision:?}"
+        );
+
+        rhizo_storage::repo::lockout::latch(
+            &api.db,
+            "monstera-01",
+            "no_delivery_detected",
+            now.timestamp_millis(),
+        )
+        .await
+        .unwrap();
+        irrigation::apply(&api.commander, &loaded, &gathered, decision, mode, now)
+            .await
+            .unwrap();
+
+        assert_eq!(records(&api).await, ["no_delivery_detected"]);
+        api.irrigate("monstera-01").await;
+        assert_eq!(summary(&api).await.as_deref(), Some("no_delivery_detected"));
+        refused(&api, "no_delivery_detected").await;
+    }
+
+    /// The display summary is not an input: a summary naming a lockout with no
+    /// record behind it refuses nothing, and a record with no summary refuses.
+    #[tokio::test]
+    async fn the_summary_column_decides_nothing() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        healthy(&api).await;
+        rhizo_storage::repo::command::set_summary(
+            &api.db,
+            "monstera-01",
+            Some("leak"),
+            None,
+            api.clock.now().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+        api.irrigate("monstera-01").await;
+        assert_eq!(summary(&api).await, None, "the pass corrects the display");
+
+        rhizo_storage::repo::lockout::latch(
+            &api.db,
+            "monstera-01",
+            "max_doses_reached",
+            api.clock.now().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+        refused(&api, "max_doses_reached").await;
     }
 
     /// Clearing a lockout the plant does not have, or naming the wrong one, is

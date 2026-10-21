@@ -77,11 +77,11 @@ them, and `ledger_tables_are_not_in_retention_source` fails if anyone tries.
 
 | Fact | Where |
 |---|---|
-| Current block and reason | `plants.lockout_reason`, `lockout_since`, `lockout_until` |
-| Every independent block (latches, holds) | `plant_lockouts` — written alongside the column since migration `0002`; **not yet read by any decision** (cutover in progress, M9 report §15) |
+| Current block and reason, for display | `plants.lockout_reason`, `lockout_since` — a summary of the best-ranked reason the last pass decided; `lockout_until` is no longer written |
+| Every recorded block (latches, holds) | `plant_lockouts` — the authority the gate reads (migration `0002`, M9 report §15) |
 | What the `0002` migration carried over | `plant_events` kind `lockout_migrated` (`warning` for an unrecognised reason) |
 | Who cleared it and when | `plants.lockout_cleared_by`, `lockout_cleared_at` |
-| **Every block and unblock, with reason** | `plant_events` kinds `lockout_set` / `lockout_cleared` |
+| **Every block and unblock, with reason** | `plant_events` kinds `lockout_set` / `lockout_cleared` — written by the record for a latch or hold (set, operator clear), and by the summary for a derived block and for a hold that ended by expiring, so each block is counted once |
 | Device-side refusal reason | `command_results.result_json.reason`, `commands.reason` |
 | Threshold warnings and criticals | `plant_events`, severity `warning` / `critical` |
 | Irrigation state transitions | `plant_events` kind `irrigation_state_changed` |

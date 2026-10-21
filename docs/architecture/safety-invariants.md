@@ -280,13 +280,21 @@ exists. Regression tests:
 (domain, the tick loop folded), and the edge-controller
 `safety_003_a_leak_lockout_survives_a_silent_sensor_and_its_return` (real ticks,
 then the operator reset) and `safety_003_removing_the_pump_does_not_rewrite_a_leak_lockout`.
-**Open:** a forward clock step (F-060-51) still writes a held `uncertain` over a
-latched `leak`, which then auto-clears after the hold, and a detected leak
-replaces another explicit-clear reason. Both are recorded in
-[docs/reports/M9.md](../reports/M9.md) §14; neither is fixed. The remedy — one
-`plant_lockouts` row per reason — is being cut over in stages (§15). Stage 1
-(2026-10-21) added the table and its backfill; **no decision reads it yet**, so
-SAFETY-003 is not closed by it.
+**Cutover (2026-10-21, M9 report §15).** Every lockout is now an independent
+`plant_lockouts` record and the gate reads only those: a forward clock step and
+a `clock_unsynced` refusal each record a hold *beside* a latched leak, a
+detected leak is latched beside any other latch, the automatic clear is gone,
+and `lockout/clear` removes one named latch inside the transaction that
+re-checks the leak reading. `plants.lockout_reason` is a display summary only.
+Regression tests: edge-controller `safety_003_concurrent_latches_clear_independently`,
+`safety_003_a_clock_step_hold_expiring_leaves_the_leak`,
+`safety_003_clearing_the_leak_inside_a_clock_hold_leaves_the_hold`,
+`safety_003_a_restart_keeps_every_recorded_lockout`,
+`safety_003_a_clock_unsynced_refusal_cannot_displace_a_leak`,
+`a_latch_written_during_a_pass_is_not_lost`, and
+`the_summary_column_decides_nothing`. **Still open:** a command already being
+issued or published when a lockout is recorded (M9 report §14, path F); the
+issue-time check is the next stage, so SAFETY-003 is not yet declared closed.
 
 ---
 

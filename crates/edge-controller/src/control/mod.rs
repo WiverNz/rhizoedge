@@ -80,15 +80,15 @@ pub async fn clock_step_response(
             continue;
         };
         let hold = now_ms + (loaded.profile.cooldown_hours * 3_600_000.0).max(0.0) as i64;
-        rhizo_storage::repo::command::set_lockout(
+        // A hold of its own, beside any latch the plant already has: it can
+        // neither replace a leak nor, when it expires, take one with it. An
+        // operator clearing a latch inside the cooldown leaves this hold in
+        // force (F-060-51).
+        rhizo_storage::repo::lockout::hold(
             db,
             &row.plant_id,
-            Some(&crate::plant::lockout_name(
-                rhizo_domain::state::LockoutReason::Uncertain,
-            )),
-            Some(now_ms),
-            Some(hold),
-            None,
+            &crate::plant::lockout_name(rhizo_domain::state::LockoutReason::Uncertain),
+            hold,
             now_ms,
         )
         .await?;

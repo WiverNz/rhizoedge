@@ -408,17 +408,9 @@ pub async fn settle(
     // reason landed would leave a plant held for a reason nothing records, and
     // an unrecorded transition would leave "what did the system think, and
     // when" unanswerable for the one transition most worth reconstructing.
-    if let Some(lockout) = extras.lockout.as_ref() {
-        set_lockout_in_tx(
-            &mut tx,
-            lockout.plant_id,
-            lockout.reason,
-            lockout.since,
-            lockout.hold_until,
-            None,
-            now,
-        )
-        .await?;
+    if let Some(hold) = extras.hold.as_ref() {
+        crate::repo::lockout::hold_in_tx(&mut tx, hold.plant_id, hold.reason, hold.until, now)
+            .await?;
     }
     if let Some(transition) = extras.transition.as_ref() {
         record_transition_in_tx(
@@ -437,17 +429,16 @@ pub async fn settle(
     Ok(true)
 }
 
-/// A lockout to apply in the settling transaction.
+/// A hold to record in the settling transaction (`clock_unsynced`). A record
+/// of its own in `plant_lockouts`, so it can never replace a latch.
 #[derive(Clone, Copy, Debug)]
-pub struct SettleLockout<'a> {
+pub struct SettleHold<'a> {
     /// The plant to hold.
     pub plant_id: &'a str,
-    /// The stable lockout name, or `None` to clear.
-    pub reason: Option<&'a str>,
-    /// When the lockout began.
-    pub since: Option<i64>,
-    /// A deadline the lockout is held to regardless of its condition.
-    pub hold_until: Option<i64>,
+    /// The hold reason; one of `repo::lockout::HOLD_REASONS`.
+    pub reason: &'a str,
+    /// The deadline it is held to regardless of its condition.
+    pub until: i64,
 }
 
 /// An irrigation transition to record in the settling transaction.
@@ -466,8 +457,8 @@ pub struct SettleTransition<'a> {
 /// Empty for every settlement that has none, which is most of them.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SettleExtras<'a> {
-    /// A lockout the result implies, such as a device's `clock_unsynced`.
-    pub lockout: Option<SettleLockout<'a>>,
+    /// A hold the result implies, such as a device's `clock_unsynced`.
+    pub hold: Option<SettleHold<'a>>,
     /// The irrigation transition the new state represents.
     pub transition: Option<SettleTransition<'a>>,
 }
@@ -545,122 +536,92 @@ pub async fn delivered_in_window(
     Ok(delivered.unwrap_or(0.0) + credited.unwrap_or(0.0))
 }
 
-/// Sets or clears a plant's lockout, with its audit fields.
+/// Writes a plant's **display summary** — the one reason a UI shows — with its
+/// audit fields. Nothing here decides anything: the gate reads
+/// [`crate::repo::lockout::active`], never this column.
 ///
-/// # Two records, and only one of them is always written
+/// # Events, without duplicating the records
 ///
-/// `plants.lockout_reason` is **current state**: the next transition overwrites
-/// it, so the row can answer "is this plant blocked, and why" and can never
-/// answer "how often, for what, and for how long". The cloud event carries the
-/// transition — but [`crate::repo::outbox::emit`] writes nothing at all while
-/// cloud sync is disabled, which is the default and the local-first case. A
-/// deployment that never enables the cloud would therefore keep no record of a
-/// leak lockout once it cleared.
+/// A recorded lockout's own transitions are already in `plant_events` and the
+/// outbox, written by [`crate::repo::lockout`] when the latch or hold changed.
+/// The summary therefore records only what no record covers — a **derived**
+/// block (stale data, tank low, a silent leak sensor, ...) appearing or ending,
+/// and a hold that ended by expiring — so `lockout_set` / `lockout_cleared`
+/// still count every block once, and a deployment with the cloud disabled
+/// still keeps that history locally. One row per summary change, as before:
+/// `lockout_set` (naming any reason it replaced) when the new reason is derived,
+/// otherwise `lockout_cleared` when the old one was derived or an expired hold.
 ///
-/// So a `plant_events` row is written **in the same transaction**, the way
-/// [`crate::repo::plant::set_state`] already does for a plant-state change. It
-/// is the durable local half, it survives with the cloud switched off, and it is
-/// what any later fleet, maintenance, or operational view derives block counts,
-/// block reasons, and time-to-clear from. Retention never touches
-/// `plant_events`.
+/// Read before write inside the transaction, and written only when the summary
+/// changed, so a steady state produces no rows.
 ///
-/// # Written only when the lockout actually changed
+/// # Errors
 ///
-/// The prior reason is read inside the transaction, before the update — the same
-/// shape the delete emissions use, and for the same reason: after the write the
-/// prior state is gone. Two callers re-assert a lockout unconditionally (a
-/// forward clock step locks every plant; a `clock_unsynced` rejection locks its
-/// plant on every occurrence), so an ungated insert would turn one incident into
-/// a stream of identical rows and make "number of blocks" meaningless.
-///
-/// A clear also names **what** was cleared, which the arguments cannot supply:
-/// `reason` is `None` on this path by construction.
-#[allow(clippy::too_many_arguments)]
-pub async fn set_lockout(
+/// A database failure.
+pub async fn set_summary(
     db: &EdgeDb,
     plant_id: &str,
     reason: Option<&str>,
-    since: Option<i64>,
-    hold_until: Option<i64>,
     cleared_by: Option<&str>,
     now: i64,
-) -> Result<(), StorageError> {
+) -> Result<bool, StorageError> {
     let mut tx = db.begin().await?;
-    set_lockout_in_tx(
-        &mut tx, plant_id, reason, since, hold_until, cleared_by, now,
-    )
-    .await?;
-    tx.commit().await.map_err(StorageError::from_sqlx)?;
-    Ok(())
-}
-
-/// The body of [`set_lockout`], inside a caller's transaction.
-///
-/// Exists so a settlement can hold a plant in the *same* transaction that
-/// records why (see [`SettleExtras`]).
-async fn set_lockout_in_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    plant_id: &str,
-    reason: Option<&str>,
-    since: Option<i64>,
-    hold_until: Option<i64>,
-    cleared_by: Option<&str>,
-    now: i64,
-) -> Result<(), StorageError> {
-    // Read before write: the update destroys the answer. `None` here means no
-    // live plant row, which is not a transition and gets no event.
+    // `None` here means no live plant row, which is not a transition.
     let previous: Option<Option<String>> = sqlx::query_scalar(
         "SELECT lockout_reason FROM plants WHERE plant_id=? AND deleted_at IS NULL",
     )
     .bind(plant_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
+    let Some(prior) = previous.filter(|p| p.as_deref() != reason) else {
+        return Ok(false);
+    };
     sqlx::query(
-        "UPDATE plants SET lockout_reason=?,lockout_since=?,lockout_until=?,lockout_cleared_by=?,lockout_cleared_at=? \
+        "UPDATE plants SET lockout_reason=?,lockout_since=?,lockout_until=NULL,lockout_cleared_by=?,lockout_cleared_at=? \
          WHERE plant_id=? AND deleted_at IS NULL",
     )
     .bind(reason)
-    .bind(since)
-    .bind(hold_until)
-    .bind(cleared_by)
+    .bind(reason.map(|_| now))
+    .bind(if reason.is_none() { cleared_by } else { None })
     .bind(if reason.is_none() { Some(now) } else { None })
     .bind(plant_id)
-    .execute(&mut **tx)
+    .execute(&mut *tx)
     .await
     .map_err(StorageError::from_sqlx)?;
-    // The transition to `plant_lockouts`: every write to the single-reason
-    // column is mirrored into the per-reason table in this same transaction,
-    // so the table never misses an alarm the column saw (and keeps the ones an
-    // overwrite would lose). See `repo::lockout`.
-    if let Some(prior) = previous.as_ref() {
-        crate::repo::lockout::mirror_legacy_in_tx(
-            tx,
-            plant_id,
-            prior.as_deref(),
-            reason,
-            since,
-            hold_until,
-            cleared_by,
-            now,
-        )
-        .await?;
-    }
-    if let Some(prior) = previous.as_ref().filter(|p| p.as_deref() != reason) {
-        let (kind, severity) = if reason.is_some() {
-            ("lockout_set", "warning")
+
+    let recorded_latch = |name: &str| {
+        crate::repo::lockout::classify_legacy(name, None)
+            == Some(crate::repo::lockout::LockoutKind::Latch)
+    };
+    let new_is_derived = match reason {
+        Some(name) => {
+            !recorded_latch(name)
+                && !crate::repo::lockout::hold_is_active_in_tx(&mut tx, plant_id, name, now).await?
+        }
+        None => false,
+    };
+    let prior_ended_unrecorded = match prior.as_deref() {
+        Some(name) => {
+            !recorded_latch(name)
+                && !crate::repo::lockout::hold_is_active_in_tx(&mut tx, plant_id, name, now).await?
+        }
+        None => false,
+    };
+    if new_is_derived || prior_ended_unrecorded {
+        let (kind, severity, shown) = if new_is_derived {
+            ("lockout_set", "warning", reason)
         } else {
-            ("lockout_cleared", "info")
+            ("lockout_cleared", "info", None)
         };
         let detail = serde_json::json!({
-            "reason": reason,
+            "reason": shown,
             "cleared_reason": prior,
-            "since": since,
-            "hold_until": hold_until,
-            "cleared_by": cleared_by,
+            "since": shown.map(|_| now),
+            "cleared_by": if shown.is_none() { cleared_by } else { None },
         })
         .to_string();
-        let event_id = format!("lockout:{plant_id}:{now}:{}", reason.unwrap_or("cleared"));
+        let event_id = format!("lockout:{plant_id}:{now}:{}", shown.unwrap_or("cleared"));
         sqlx::query(
             "INSERT INTO plant_events(event_id,plant_id,kind,severity,detail_json,occurred_at) \
              VALUES(?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING",
@@ -671,20 +632,23 @@ async fn set_lockout_in_tx(
         .bind(severity)
         .bind(detail)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(StorageError::from_sqlx)?;
+        let event = if new_is_derived {
+            crate::repo::outbox::EventKind::LOCKOUT_SET
+        } else {
+            crate::repo::outbox::EventKind::LOCKOUT_CLEARED
+        };
+        crate::repo::outbox::emit(&mut tx, event, &serde_json::json!({"plant_id":plant_id,"reason":shown,"cleared_reason":prior,"since":shown.map(|_| now),"hold_until":null,"cleared_by":if shown.is_none() { cleared_by } else { None }}), now).await?;
     }
-    let kind = if reason.is_some() {
-        crate::repo::outbox::EventKind::LOCKOUT_SET
-    } else {
-        crate::repo::outbox::EventKind::LOCKOUT_CLEARED
-    };
-    crate::repo::outbox::emit(tx, kind, &serde_json::json!({"plant_id":plant_id,"reason":reason,"since":since,"hold_until":hold_until,"cleared_by":cleared_by}), now).await?;
-    Ok(())
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(true)
 }
 
-/// A plant's lockout as stored, including the held-until deadline.
+/// A plant's display summary as stored: reason, since, and the legacy
+/// held-until column (always `NULL` since the per-reason cutover). For
+/// display and change detection only; never a watering input.
 pub async fn lockout(
     db: &EdgeDb,
     plant_id: &str,
@@ -1056,18 +1020,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_lockout_round_trips_with_its_audit_fields() {
+    async fn the_summary_round_trips_with_its_audit_fields() {
         let db = db().await;
-        set_lockout(&db, "monstera-01", Some("leak"), Some(10), None, None, 10)
-            .await
-            .unwrap();
+        assert!(
+            set_summary(&db, "monstera-01", Some("leak"), None, 10)
+                .await
+                .unwrap()
+        );
         assert_eq!(
             lockout(&db, "monstera-01").await.unwrap(),
             Some(("leak".to_owned(), Some(10), None))
         );
-        set_lockout(&db, "monstera-01", None, None, None, Some("operator"), 20)
-            .await
-            .unwrap();
+        assert!(
+            !set_summary(&db, "monstera-01", Some("leak"), None, 15)
+                .await
+                .unwrap()
+        );
+        assert!(
+            set_summary(&db, "monstera-01", None, Some("operator"), 20)
+                .await
+                .unwrap()
+        );
         assert_eq!(lockout(&db, "monstera-01").await.unwrap(), None);
         let cleared: Option<String> = sqlx::query_scalar(
             "SELECT lockout_cleared_by FROM plants WHERE plant_id='monstera-01'",
@@ -1076,9 +1049,15 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cleared.as_deref(), Some("operator"));
+        // A summary is a display: it records and removes no lockout.
+        let records: i64 = sqlx::query_scalar("SELECT count(*) FROM plant_lockouts")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(records, 0);
     }
 
-    /// Plant-scoped events written by `set_lockout`, oldest first.
+    /// Plant-scoped lockout events, oldest first.
     async fn lockout_events(db: &EdgeDb) -> Vec<(String, String, String)> {
         sqlx::query(
             "SELECT kind,severity,detail_json FROM plant_events \
@@ -1101,10 +1080,10 @@ mod tests {
     }
 
     /// The gap this record closes: with cloud sync off — the default — `emit`
-    /// writes nothing, so before this the only trace of a lockout was a column
-    /// the next transition overwrote.
+    /// writes nothing, so without it a derived block left no trace once the
+    /// summary moved on.
     #[tokio::test]
-    async fn a_lockout_transition_is_durable_locally_with_the_cloud_disabled() {
+    async fn a_derived_block_is_durable_locally_with_the_cloud_disabled() {
         // Deliberately not the shared `db()` helper: that one enables cloud
         // sync, and the whole point here is the default local-first
         // configuration, where `emit` writes nothing at all.
@@ -1117,10 +1096,10 @@ mod tests {
         .await
         .unwrap();
 
-        set_lockout(&db, "monstera-01", Some("leak"), Some(10), None, None, 10)
+        set_summary(&db, "monstera-01", Some("tank_low"), None, 10)
             .await
             .unwrap();
-        set_lockout(&db, "monstera-01", None, None, None, Some("operator"), 20)
+        set_summary(&db, "monstera-01", None, Some("auto"), 20)
             .await
             .unwrap();
 
@@ -1136,71 +1115,75 @@ mod tests {
         assert_eq!(events[0].1, "warning");
         assert_eq!(events[1].0, "lockout_cleared");
         assert_eq!(events[1].1, "info");
+        let cleared: serde_json::Value = serde_json::from_str(&events[1].2).unwrap();
+        assert_eq!(cleared["cleared_reason"], "tank_low");
+        assert_eq!(cleared["cleared_by"], "auto");
+        assert!(cleared["reason"].is_null());
     }
 
-    /// A clear must name what it cleared. The arguments cannot say: `reason` is
-    /// `None` on that path by construction, so the prior value is read inside
-    /// the transaction before the update destroys it.
+    /// A recorded lockout's transitions are written by its own record, so the
+    /// summary showing or dropping it adds nothing: one block, one row.
     #[tokio::test]
-    async fn a_clear_records_the_reason_it_cleared() {
+    async fn a_recorded_lockout_is_not_counted_twice() {
         let db = db().await;
-        set_lockout(&db, "monstera-01", Some("leak"), Some(10), None, None, 10)
+        crate::repo::lockout::latch(&db, "monstera-01", "leak", 10)
             .await
             .unwrap();
-        set_lockout(&db, "monstera-01", None, None, None, Some("auto"), 20)
+        crate::repo::lockout::hold(&db, "monstera-01", "clock_unsynced", 500, 10)
+            .await
+            .unwrap();
+        set_summary(&db, "monstera-01", Some("leak"), None, 10)
+            .await
+            .unwrap();
+        set_summary(&db, "monstera-01", Some("clock_unsynced"), None, 20)
+            .await
+            .unwrap();
+        assert_eq!(lockout_events(&db).await.len(), 2, "the two records only");
+
+        // The hold expires and the summary moves off it: that end is recorded
+        // by nobody else, so the summary records it.
+        set_summary(&db, "monstera-01", None, Some("auto"), 600)
             .await
             .unwrap();
         let events = lockout_events(&db).await;
-        let cleared: serde_json::Value = serde_json::from_str(&events[1].2).unwrap();
-        assert_eq!(cleared["cleared_reason"], "leak");
-        assert_eq!(cleared["cleared_by"], "auto");
-        assert!(cleared["reason"].is_null());
-        let set: serde_json::Value = serde_json::from_str(&events[0].2).unwrap();
-        assert_eq!(set["reason"], "leak");
-        assert_eq!(set["since"], 10);
+        assert_eq!(events.len(), 3);
+        let ended: serde_json::Value = serde_json::from_str(&events[2].2).unwrap();
+        assert_eq!(events[2].0, "lockout_cleared");
+        assert_eq!(ended["cleared_reason"], "clock_unsynced");
     }
 
-    /// Two callers re-assert a lockout unconditionally — a forward clock step
-    /// locks every plant, and a `clock_unsynced` rejection locks its plant on
-    /// every occurrence. An ungated insert would turn one incident into a stream
-    /// of identical rows and make a block count meaningless.
+    /// A derived block re-asserted on every pass records one event, and its
+    /// replacement by a recorded latch records the derived block's end.
     #[tokio::test]
-    async fn re_asserting_the_same_lockout_records_one_event() {
+    async fn re_asserting_the_same_summary_records_one_event() {
         let db = db().await;
         for at in [10, 20, 30] {
-            set_lockout(
-                &db,
-                "monstera-01",
-                Some("uncertain"),
-                Some(at),
-                None,
-                None,
-                at,
-            )
-            .await
-            .unwrap();
+            set_summary(&db, "monstera-01", Some("uncertain"), None, at)
+                .await
+                .unwrap();
         }
         assert_eq!(lockout_events(&db).await.len(), 1);
 
-        // A different reason is a different block and is recorded.
-        set_lockout(&db, "monstera-01", Some("leak"), Some(40), None, None, 40)
+        set_summary(&db, "monstera-01", Some("leak"), None, 40)
             .await
             .unwrap();
         let events = lockout_events(&db).await;
         assert_eq!(events.len(), 2);
         let second: serde_json::Value = serde_json::from_str(&events[1].2).unwrap();
-        assert_eq!(second["reason"], "leak");
+        assert_eq!(events[1].0, "lockout_cleared");
         assert_eq!(second["cleared_reason"], "uncertain");
     }
 
-    /// Clearing a plant that is not locked out changes nothing, so it is not a
+    /// Clearing a plant that shows nothing changes nothing, so it is not a
     /// transition and must not manufacture an event.
     #[tokio::test]
     async fn clearing_an_unlocked_plant_records_nothing() {
         let db = db().await;
-        set_lockout(&db, "monstera-01", None, None, None, Some("operator"), 10)
-            .await
-            .unwrap();
+        assert!(
+            !set_summary(&db, "monstera-01", None, Some("operator"), 10)
+                .await
+                .unwrap()
+        );
         assert!(lockout_events(&db).await.is_empty());
     }
 
@@ -1209,9 +1192,11 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_plant_records_nothing() {
         let db = db().await;
-        set_lockout(&db, "no-such-plant", Some("leak"), Some(10), None, None, 10)
-            .await
-            .unwrap();
+        assert!(
+            !set_summary(&db, "no-such-plant", Some("tank_low"), None, 10)
+                .await
+                .unwrap()
+        );
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM plant_events WHERE kind IN('lockout_set','lockout_cleared')",
         )
@@ -1222,33 +1207,16 @@ mod tests {
     }
 
     /// The history is what a later operational view derives from: how many
-    /// blocks, of which kind, and how long each lasted before someone or
-    /// something cleared it.
+    /// blocks, of which kind, and how long each lasted.
     #[tokio::test]
     async fn a_block_and_its_time_to_clear_are_derivable_from_the_history() {
         let db = db().await;
-        set_lockout(
-            &db,
-            "monstera-01",
-            Some("leak"),
-            Some(1_000),
-            None,
-            None,
-            1_000,
-        )
-        .await
-        .unwrap();
-        set_lockout(
-            &db,
-            "monstera-01",
-            None,
-            None,
-            None,
-            Some("operator"),
-            61_000,
-        )
-        .await
-        .unwrap();
+        set_summary(&db, "monstera-01", Some("stale_data"), None, 1_000)
+            .await
+            .unwrap();
+        set_summary(&db, "monstera-01", None, Some("auto"), 61_000)
+            .await
+            .unwrap();
 
         let rows = sqlx::query(
             "SELECT kind,occurred_at FROM plant_events \

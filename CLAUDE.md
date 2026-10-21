@@ -589,6 +589,15 @@ every other reset reason, and any checksum failure, credits zero — which is
 SAFETY-015's existing behaviour. Get this backwards and a corrupted RTC word
 becomes free watering budget.
 
+**A lockout is a record in `plant_lockouts`, not a column.** Latches
+(explicit-clear) and holds (clock step, `clock_unsynced`) are independent rows;
+the gate reads only `repo::lockout::active`, a pass latches a new fault *beside*
+the others, and `lockout/clear` removes one named latch inside a `BEGIN
+IMMEDIATE` transaction that re-checks the leak reading. `plants.lockout_reason`
+is a **display summary** that no decision reads — a test writes a lie into it
+and asserts nothing changes. Derived conditions (stale, tank low, a silent leak
+sensor) are never recorded. M9 report §15.
+
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug. The default is
 enforced in `repo::plant::create`, not only in the API, so no caller can forget

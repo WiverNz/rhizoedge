@@ -447,14 +447,15 @@ impl Commander {
         let ttl_ms = row.expires_at.saturating_sub(row.issued_at).max(0);
         let hold_until = now_ms.saturating_add(ttl_ms);
         let extras = command_repo::SettleExtras {
-            lockout: clock_unsynced
+            // A hold record of its own: it cannot replace a latch the plant
+            // already has, and expiring cannot take one with it.
+            hold: clock_unsynced
                 .then_some(row.plant_id.as_deref())
                 .flatten()
-                .map(|plant_id| command_repo::SettleLockout {
+                .map(|plant_id| command_repo::SettleHold {
                     plant_id,
-                    reason: Some("clock_unsynced"),
-                    since: Some(now_ms),
-                    hold_until: Some(hold_until),
+                    reason: "clock_unsynced",
+                    until: hold_until,
                 }),
             transition: next
                 .as_ref()
@@ -1270,12 +1271,18 @@ mod command {
 
             api.commander.apply_result(&result).await.unwrap();
 
+            let records = rhizo_storage::repo::lockout::active(
+                &api.db,
+                "monstera-01",
+                api.clock.now().timestamp_millis(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].reason, "clock_unsynced");
             assert_eq!(
-                command_repo::lockout(&api.db, "monstera-01")
-                    .await
-                    .unwrap()
-                    .map(|row| row.0),
-                Some("clock_unsynced".to_owned())
+                records[0].kind,
+                rhizo_storage::repo::lockout::LockoutKind::Hold
             );
             assert_eq!(
                 command_repo::irrigation_state(&api.db, "monstera-01")
@@ -1285,6 +1292,70 @@ mod command {
                     .state,
                 "locked"
             );
+        }
+
+        /// SAFETY-003 against the settle path: a device's `clock_unsynced`
+        /// refusal arriving while a leak is latched records a hold *beside* the
+        /// leak, and when the hold lapses the leak is still there and still
+        /// refuses — it used to overwrite the single column and then clear.
+        #[tokio::test]
+        async fn safety_003_a_clock_unsynced_refusal_cannot_displace_a_leak() {
+            let api = TestApi::start().await;
+            let command_id = issue(&api).await;
+            api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+                .await;
+            api.irrigate("monstera-01").await;
+
+            let mut result = water_result(&command_id, CommandStatus::Rejected, None);
+            result.reason = Some(RejectReason::ClockUnsynced);
+            api.commander.apply_result(&result).await.unwrap();
+            let names = |at: i64| {
+                let db = api.db.clone();
+                async move {
+                    let mut names: Vec<String> =
+                        rhizo_storage::repo::lockout::active(&db, "monstera-01", at)
+                            .await
+                            .unwrap()
+                            .into_iter()
+                            .map(|record| record.reason)
+                            .collect();
+                    names.sort();
+                    names
+                }
+            };
+            assert_eq!(
+                names(api.clock.now().timestamp_millis()).await,
+                ["clock_unsynced", "leak"]
+            );
+
+            // Past the hold, every input healthy.
+            api.clock.advance(chrono::Duration::hours(2));
+            api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", false)
+                .await;
+            api.sample(api.clock.now(), 40.0).await;
+            api.sample_from(
+                api.clock.now(),
+                "tank-0",
+                "reservoir",
+                "tank_level",
+                "percent",
+                70.0,
+            )
+            .await;
+            api.irrigate("monstera-01").await;
+            assert_eq!(names(api.clock.now().timestamp_millis()).await, ["leak"]);
+
+            let before = api.transport.commands().len();
+            let (status, body) = api
+                .json(
+                    "POST",
+                    "/api/v1/plants/monstera-01/water",
+                    serde_json::json!({ "ml": 30.0, "mode": "manual" }),
+                )
+                .await;
+            assert_eq!(status, axum::http::StatusCode::CONFLICT, "{body}");
+            assert_eq!(body["error"]["details"]["reason"], "leak");
+            assert_eq!(api.transport.commands().len(), before, "nothing published");
         }
 
         /// `interrupted` creates no event but credits the **full** requested

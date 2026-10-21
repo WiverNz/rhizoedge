@@ -16,14 +16,12 @@
 //! Derived conditions (stale data, tank low, ...) are re-evaluated on every
 //! pass and are never recorded.
 //!
-//! # Not authoritative yet
+//! # The authority for every recorded lockout
 //!
-//! Stage 1 of the cutover. **Nothing makes a safety decision from this table
-//! yet**: the gate, the control loop, and the API still read
-//! `plants.lockout_reason`. Until they switch, [`mirror_legacy_in_tx`] runs
-//! inside every [`super::command::set_lockout`] transaction, so from the moment
-//! migration `0002` backfills the table it can only ever hold *more* than the
-//! column — never lose an alarm raised during the transition.
+//! The gate's latched and held inputs are read from here ([`active`]) and
+//! nowhere else. `plants.lockout_reason` is only a **display summary** of the
+//! best-ranked current reason, written by
+//! [`super::command::set_summary`]; no watering decision reads it.
 //!
 //! # Fail-closed classification
 //!
@@ -160,16 +158,30 @@ pub async fn hold(
     until: i64,
     now: i64,
 ) -> Result<bool, StorageError> {
+    let mut tx = db.begin().await?;
+    let activated = hold_in_tx(&mut tx, plant_id, reason, until, now).await?;
+    tx.commit().await.map_err(StorageError::from_sqlx)?;
+    Ok(activated)
+}
+
+/// [`hold`], inside a caller's transaction — so a settlement can hold a plant
+/// in the same transaction that records why.
+pub(crate) async fn hold_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+    reason: &str,
+    until: i64,
+    now: i64,
+) -> Result<bool, StorageError> {
     if !HOLD_REASONS.contains(&reason) {
         return Err(StorageError::Constraint(format!(
             "`{reason}` is not a hold reason"
         )));
     }
-    let mut tx = db.begin().await?;
-    let activated = extend_hold_row(&mut tx, plant_id, reason, until, now, now).await?;
+    let activated = extend_hold_row(tx, plant_id, reason, until, now, now).await?;
     if activated {
         record_set(
-            &mut tx,
+            tx,
             plant_id,
             reason,
             LockoutKind::Hold,
@@ -179,49 +191,135 @@ pub async fn hold(
         )
         .await?;
     }
-    tx.commit().await.map_err(StorageError::from_sqlx)?;
     Ok(activated)
 }
 
-/// Clears exactly one latch, named by its stored reason. Returns the instant it
-/// was latched, or `None` if the plant has no such latch.
+/// The leak reading a `leak` latch may only be cleared against: the bound
+/// stream, and the receipt time a reading must be newer than to be fresh.
+#[derive(Clone, Copy, Debug)]
+pub struct LeakEvidence<'a> {
+    /// The bound leak sensor's device.
+    pub device_id: &'a str,
+    /// Its sensor id.
+    pub sensor_id: &'a str,
+    /// Its point.
+    pub point: &'a str,
+    /// A reading received at or before this edge instant is stale.
+    pub fresh_after: i64,
+}
+
+/// What [`clear_latch`] did.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClearOutcome {
+    /// The latch is gone; it had been latched at this instant.
+    Cleared {
+        /// When it was first latched.
+        since: i64,
+    },
+    /// The plant has no latch by that name — never latched, already cleared,
+    /// or a hold, which is not an operator's to clear.
+    NotLatched,
+    /// A `leak` latch whose evidence is not a fresh, positively dry reading
+    /// at the moment of clearing (SAFETY-003). Nothing changed.
+    LeakNotClear,
+}
+
+/// Clears exactly one latch, named by its stored reason. Never touches a hold
+/// or any other latch.
 ///
-/// Never touches a hold or any other latch.
+/// **The check and the delete are one transaction**, begun `IMMEDIATE` so it
+/// holds SQLite's write lock from its first statement: no measurement can be
+/// ingested, and no other writer can latch or clear, between reading the
+/// evidence and removing the latch. Clearing `leak` requires `evidence`, and
+/// the latest reading on that stream must be `ok`, positively dry, and fresh;
+/// with no evidence, or any other answer, it is refused (SAFETY-003,
+/// SAFETY-012). Other latches have no live condition to check: the faults they
+/// record are not something a reading can disprove.
 ///
 /// # Errors
 ///
-/// A database failure.
+/// A database failure, including `Busy` when another writer holds the lock.
 pub async fn clear_latch(
     db: &EdgeDb,
     plant_id: &str,
     reason: &str,
     cleared_by: &str,
+    evidence: Option<LeakEvidence<'_>>,
     now: i64,
-) -> Result<Option<i64>, StorageError> {
-    let mut tx = db.begin().await?;
-    let since = delete_latch_row(&mut tx, plant_id, reason).await?;
-    if let Some(since) = since {
-        let detail = serde_json::json!({
-            "reason": null,
-            "cleared_reason": reason,
-            "kind": LockoutKind::Latch.as_str(),
-            "since": since,
-            "cleared_by": cleared_by,
-        });
-        record_event(
-            &mut tx,
-            plant_id,
-            &format!("plant_lockout:{plant_id}:{reason}:cleared:{now}"),
-            "lockout_cleared",
-            "info",
-            &detail,
-            now,
+) -> Result<ClearOutcome, StorageError> {
+    let mut tx = db
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(StorageError::from_sqlx)?;
+    if reason == "leak" {
+        let Some(evidence) = evidence else {
+            return Ok(ClearOutcome::LeakNotClear);
+        };
+        // The same row the gate reads: latest by receipt, then by id.
+        let latest: Option<(Option<i64>, String, i64)> = sqlx::query_as(
+            "SELECT value_bool,quality,received_at FROM measurements \
+             WHERE device_id=? AND sensor_id=? AND point=? AND kind='leak_state' \
+             ORDER BY received_at DESC, id DESC LIMIT 1",
         )
-        .await?;
-        crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::LOCKOUT_CLEARED, &serde_json::json!({"plant_id":plant_id,"reason":null,"cleared_reason":reason,"since":since,"cleared_by":cleared_by}), now).await?;
+        .bind(evidence.device_id)
+        .bind(evidence.sensor_id)
+        .bind(evidence.point)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(StorageError::from_sqlx)?;
+        let dry = matches!(
+            latest,
+            Some((Some(0), quality, received_at))
+                if quality == "ok" && received_at > evidence.fresh_after
+        );
+        if !dry {
+            return Ok(ClearOutcome::LeakNotClear);
+        }
     }
+    let since = delete_latch_row(&mut tx, plant_id, reason).await?;
+    let Some(since) = since else {
+        return Ok(ClearOutcome::NotLatched);
+    };
+    let detail = serde_json::json!({
+        "reason": null,
+        "cleared_reason": reason,
+        "kind": LockoutKind::Latch.as_str(),
+        "since": since,
+        "cleared_by": cleared_by,
+    });
+    record_event(
+        &mut tx,
+        plant_id,
+        &format!("plant_lockout:{plant_id}:{reason}:cleared:{now}"),
+        "lockout_cleared",
+        "info",
+        &detail,
+        now,
+    )
+    .await?;
+    crate::repo::outbox::emit(&mut tx, crate::repo::outbox::EventKind::LOCKOUT_CLEARED, &serde_json::json!({"plant_id":plant_id,"reason":null,"cleared_reason":reason,"since":since,"cleared_by":cleared_by}), now).await?;
     tx.commit().await.map_err(StorageError::from_sqlx)?;
-    Ok(since)
+    Ok(ClearOutcome::Cleared { since })
+}
+
+/// Whether `reason` is an active hold on the plant, inside a transaction.
+pub(crate) async fn hold_is_active_in_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    plant_id: &str,
+    reason: &str,
+    now: i64,
+) -> Result<bool, StorageError> {
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM plant_lockouts WHERE plant_id=? AND reason=? AND kind='hold' AND hold_until>?",
+    )
+    .bind(plant_id)
+    .bind(reason)
+    .bind(now)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(found.is_some())
 }
 
 /// Every lockout blocking a live plant at `now`: all latches, and holds whose
@@ -261,61 +359,6 @@ pub async fn active(
             hold_until: row.get("hold_until"),
         })
         .collect())
-}
-
-/// Mirrors one legacy [`super::command::set_lockout`] write into the table,
-/// inside its transaction, and records **no** event: the legacy writer already
-/// emits its own, and a second would double every block.
-///
-/// - a latch or unknown reason is latched; a held reason is held;
-/// - a derived reason is not recorded;
-/// - an **operator** clear removes the latch the column held, and only it.
-///   An automatic clear removes nothing: a latch never clears itself, and a
-///   hold expires by time.
-///
-/// This is what makes the transition safe: the column can lose a latch to an
-/// overwrite, but the table never does.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn mirror_legacy_in_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    plant_id: &str,
-    previous: Option<&str>,
-    reason: Option<&str>,
-    since: Option<i64>,
-    hold_until: Option<i64>,
-    cleared_by: Option<&str>,
-    now: i64,
-) -> Result<(), StorageError> {
-    match reason {
-        Some(reason) => {
-            let name = if reason.trim().is_empty() {
-                "unknown"
-            } else {
-                reason
-            };
-            let since = since.unwrap_or(now);
-            match classify_legacy(name, hold_until) {
-                Some(LockoutKind::Latch) => {
-                    insert_latch_row(tx, plant_id, name, since).await?;
-                }
-                Some(LockoutKind::Hold) => {
-                    if let Some(until) = hold_until {
-                        extend_hold_row(tx, plant_id, name, until, since, now).await?;
-                    }
-                }
-                None => {}
-            }
-        }
-        None => {
-            if cleared_by == Some("operator")
-                && let Some(previous) = previous
-                && classify_legacy(previous, None) == Some(LockoutKind::Latch)
-            {
-                delete_latch_row(tx, plant_id, previous).await?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Inserts a latch on a live plant; `true` if it was not already there.
@@ -458,7 +501,6 @@ async fn record_event(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::repo::command::set_lockout;
 
     const PLANT: &str = "monstera-01";
 
@@ -527,6 +569,77 @@ mod tests {
         .collect()
     }
 
+    /// One leak reading on the bound stream, received at `at`.
+    async fn reading(db: &EdgeDb, wet: bool, at: i64) {
+        sqlx::query(
+            "INSERT INTO devices(device_id,created_at) VALUES('node',0) ON CONFLICT DO NOTHING",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO measurements(device_id,sensor_id,point,kind,value_bool,unit,quality,received_at,batch_id,origin) \
+             VALUES('node','leak-0','tray','leak_state',?,'boolean','ok',?,?,'live')",
+        )
+        .bind(i64::from(wet))
+        .bind(at)
+        .bind(format!("batch-{at}"))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    fn evidence(fresh_after: i64) -> LeakEvidence<'static> {
+        LeakEvidence {
+            device_id: "node",
+            sensor_id: "leak-0",
+            point: "tray",
+            fresh_after,
+        }
+    }
+
+    /// SAFETY-003's explicit reset, checked inside the clearing transaction:
+    /// no evidence, a wet reading, a stale reading, or no reading at all each
+    /// refuse and change nothing; only a fresh dry reading clears.
+    #[tokio::test]
+    async fn a_leak_latch_clears_only_against_a_fresh_dry_reading() {
+        let db = db().await;
+        latch(&db, PLANT, "leak", 10).await.unwrap();
+        let refuse = |evidence: Option<LeakEvidence<'static>>| {
+            let db = db.clone();
+            async move {
+                clear_latch(&db, PLANT, "leak", "operator", evidence, 1_000)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(refuse(None).await, ClearOutcome::LeakNotClear);
+        assert_eq!(
+            refuse(Some(evidence(0))).await,
+            ClearOutcome::LeakNotClear,
+            "no reading"
+        );
+        reading(&db, true, 900).await;
+        assert_eq!(
+            refuse(Some(evidence(0))).await,
+            ClearOutcome::LeakNotClear,
+            "wet"
+        );
+        reading(&db, false, 950).await;
+        assert_eq!(
+            refuse(Some(evidence(950))).await,
+            ClearOutcome::LeakNotClear,
+            "dry but stale: received at the freshness boundary"
+        );
+        assert_eq!(active_reasons(&db, 1_000).await, ["leak"]);
+        assert_eq!(events(&db).await.len(), 1, "a refusal records nothing");
+        assert_eq!(
+            refuse(Some(evidence(900))).await,
+            ClearOutcome::Cleared { since: 10 }
+        );
+        assert!(active(&db, PLANT, 1_000).await.unwrap().is_empty());
+    }
+
     /// A latch keeps the instant it was *first* latched; re-asserting it is
     /// not a new block and records nothing.
     #[tokio::test]
@@ -567,11 +680,12 @@ mod tests {
         }
         assert!(hold(&db, PLANT, "uncertain", 10_000, 200).await.unwrap());
 
+        reading(&db, false, 290).await;
         assert_eq!(
-            clear_latch(&db, PLANT, "leak", "operator", 300)
+            clear_latch(&db, PLANT, "leak", "operator", Some(evidence(0)), 300)
                 .await
                 .unwrap(),
-            Some(100)
+            ClearOutcome::Cleared { since: 100 }
         );
         assert_eq!(
             active_reasons(&db, 300).await,
@@ -584,18 +698,18 @@ mod tests {
         );
         // A hold is not an operator's to clear.
         assert_eq!(
-            clear_latch(&db, PLANT, "uncertain", "operator", 300)
+            clear_latch(&db, PLANT, "uncertain", "operator", None, 300)
                 .await
                 .unwrap(),
-            None
+            ClearOutcome::NotLatched
         );
         // Clearing a latch that is not there changes and records nothing.
         let before = events(&db).await.len();
         assert_eq!(
-            clear_latch(&db, PLANT, "leak", "operator", 400)
+            clear_latch(&db, PLANT, "leak", "operator", Some(evidence(0)), 400)
                 .await
                 .unwrap(),
-            None
+            ClearOutcome::NotLatched
         );
         assert_eq!(events(&db).await.len(), before);
 
@@ -679,10 +793,10 @@ mod tests {
         assert_eq!(records[0].reason, "flood_v9");
         assert_eq!(records[0].kind, LockoutKind::Latch);
         assert_eq!(
-            clear_latch(&db, PLANT, "flood_v9", "operator", 20)
+            clear_latch(&db, PLANT, "flood_v9", "operator", None, 20)
                 .await
                 .unwrap(),
-            Some(10)
+            ClearOutcome::Cleared { since: 10 }
         );
         assert!(active(&db, PLANT, 20).await.unwrap().is_empty());
     }
@@ -742,177 +856,6 @@ mod tests {
                     since: 30,
                     hold_until: Some(50_000),
                 },
-            ]
-        );
-    }
-
-    // ------------------------------------------------- the transition period
-
-    /// The three overwrites the single column suffers, replayed through the
-    /// legacy writer: the column loses the leak each time; the table never does.
-    #[tokio::test]
-    async fn the_legacy_writer_cannot_lose_a_latch_from_the_table() {
-        let db = db().await;
-        set_lockout(&db, PLANT, Some("leak"), Some(100), None, None, 100)
-            .await
-            .unwrap();
-        // A stale leak reading, as the gate used to report it.
-        set_lockout(&db, PLANT, Some("uncertain"), Some(200), None, None, 200)
-            .await
-            .unwrap();
-        // The automatic clear that followed.
-        set_lockout(&db, PLANT, None, None, None, Some("auto"), 300)
-            .await
-            .unwrap();
-        // A forward clock step, and a device's clock_unsynced refusal.
-        set_lockout(
-            &db,
-            PLANT,
-            Some("uncertain"),
-            Some(400),
-            Some(9_000),
-            None,
-            400,
-        )
-        .await
-        .unwrap();
-        set_lockout(
-            &db,
-            PLANT,
-            Some("clock_unsynced"),
-            Some(500),
-            Some(700),
-            None,
-            500,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            active_reasons(&db, 600).await,
-            ["clock_unsynced", "leak", "uncertain"]
-        );
-        assert_eq!(
-            active(&db, PLANT, 600).await.unwrap()[0].since,
-            100,
-            "the latch keeps the instant it was first raised"
-        );
-        // Every hold gone, the leak still there.
-        assert_eq!(active_reasons(&db, 9_000).await, ["leak"]);
-    }
-
-    /// A detected leak over a latched fault: both stay; the operator's leak
-    /// reset removes only the leak.
-    #[tokio::test]
-    async fn a_legacy_operator_clear_removes_only_the_latch_the_column_named() {
-        let db = db().await;
-        set_lockout(
-            &db,
-            PLANT,
-            Some("no_delivery_detected"),
-            Some(10),
-            None,
-            None,
-            10,
-        )
-        .await
-        .unwrap();
-        set_lockout(&db, PLANT, Some("leak"), Some(20), None, None, 20)
-            .await
-            .unwrap();
-        set_lockout(&db, PLANT, None, None, None, Some("operator"), 30)
-            .await
-            .unwrap();
-        assert_eq!(active_reasons(&db, 40).await, ["no_delivery_detected"]);
-        // A derived reason is never recorded.
-        set_lockout(&db, PLANT, Some("tank_low"), Some(50), None, None, 50)
-            .await
-            .unwrap();
-        assert_eq!(active_reasons(&db, 60).await, ["no_delivery_detected"]);
-    }
-
-    /// The mirror writes rows, not events: the legacy writer already records
-    /// each transition, and a second record would double every block count.
-    #[tokio::test]
-    async fn the_mirror_records_no_event_of_its_own() {
-        let db = db().await;
-        set_lockout(&db, PLANT, Some("leak"), Some(10), None, None, 10)
-            .await
-            .unwrap();
-        set_lockout(&db, PLANT, None, None, None, Some("operator"), 20)
-            .await
-            .unwrap();
-        assert_eq!(events(&db).await.len(), 2);
-        assert_eq!(outbox(&db).await.len(), 2);
-    }
-
-    /// The superset property, checked after every step of a mixed script:
-    /// whatever the column says blocks the plant, the table blocks it too.
-    #[tokio::test]
-    async fn the_table_always_covers_the_column() {
-        let db = db().await;
-        let script: [(Option<&str>, Option<i64>, Option<&str>); 10] = [
-            (Some("leak"), None, None),
-            (Some("uncertain"), Some(50_000), None),
-            (Some("max_doses_reached"), None, None),
-            (Some("stale_data"), None, None),
-            (None, None, Some("auto")),
-            (Some("clock_unsynced"), Some(2_000), None),
-            (Some("no_delivery_detected"), None, None),
-            (None, None, Some("operator")),
-            (Some("weird_future_reason"), Some(3_000), None),
-            (Some(""), None, None),
-        ];
-        for (step, (reason, until, cleared_by)) in script.into_iter().enumerate() {
-            let now = 1_000 + i64::try_from(step).unwrap() * 100;
-            set_lockout(&db, PLANT, reason, Some(now), until, cleared_by, now)
-                .await
-                .unwrap();
-            let column: Option<(Option<String>, Option<i64>)> =
-                sqlx::query_as("SELECT lockout_reason,lockout_until FROM plants WHERE plant_id=?")
-                    .bind(PLANT)
-                    .fetch_optional(db.pool())
-                    .await
-                    .unwrap();
-            let (column_reason, column_until) = column.unwrap();
-            let active = active_reasons(&db, now).await;
-            if let Some(name) = column_reason {
-                let name = if name.trim().is_empty() {
-                    "unknown".to_owned()
-                } else {
-                    name
-                };
-                match classify_legacy(&name, column_until) {
-                    Some(LockoutKind::Latch) => {
-                        assert!(active.contains(&name), "step {step}: {name} missing");
-                    }
-                    Some(LockoutKind::Hold) if column_until.is_some_and(|u| u > now) => {
-                        assert!(active.contains(&name), "step {step}: {name} missing");
-                    }
-                    _ => {}
-                }
-            }
-        }
-        // The operator cleared `no_delivery_detected` (what the column held);
-        // the leak and max-doses latches it had overwritten are still there,
-        // the clock-step hold runs to its own deadline, and an unknown name is
-        // a latch even with a deadline attached.
-        assert_eq!(
-            active_reasons(&db, 10_000).await,
-            [
-                "leak",
-                "max_doses_reached",
-                "uncertain",
-                "unknown",
-                "weird_future_reason"
-            ]
-        );
-        assert_eq!(
-            active_reasons(&db, 50_000).await,
-            [
-                "leak",
-                "max_doses_reached",
-                "unknown",
-                "weird_future_reason"
             ]
         );
     }

@@ -23,15 +23,15 @@
 
 use chrono::{DateTime, Duration, Utc};
 use rhizo_domain::irrigation::types::{
-    EvaluationMode, Hold, IrrigationInputs, LeakState, LockoutClass, RequiredInput,
-    RequiredInputState, TankState, WeightSample, lockout_class, state_from_str,
+    EvaluationMode, Hold, IrrigationInputs, LeakState, RequiredInput, RequiredInputState,
+    TankState, WeightSample, state_from_str,
 };
 use rhizo_domain::plant::{ActuatorBinding, AutomationPolicy, BindingRole, SensorBinding};
 use rhizo_domain::profile::SoilSample;
 use rhizo_domain::state::IrrigationState;
 use rhizo_mqtt_contract::payload::MeasurementKind;
 use rhizo_storage::EdgeDb;
-use rhizo_storage::repo::{command as command_repo, query};
+use rhizo_storage::repo::{command as command_repo, lockout as lockout_repo, query};
 
 use crate::device::connectivity;
 use crate::plant::{self, Loaded, control_freshness_ms};
@@ -88,14 +88,12 @@ pub struct Gathered {
     pub dry_duration: Duration,
     /// Whether any bound device is still replaying buffered history.
     pub reconciling: bool,
-    /// The lockout persisted against this plant.
-    pub active_lockout: Option<rhizo_domain::state::LockoutReason>,
-    /// How long that lockout is held regardless of its condition.
-    pub lockout_held_until: Option<DateTime<Utc>>,
-    /// The gate's latched input, read from the single legacy column by
-    /// [`legacy_records`] until the edge cuts over to `plant_lockouts`.
+    /// The display summary (`plants.lockout_reason`) as stored, so a pass
+    /// rewrites it only when it changed. **Never a watering input.**
+    pub summary: Option<String>,
+    /// Every latch recorded against this plant, from `plant_lockouts`.
     pub latched: Vec<rhizo_domain::state::LockoutReason>,
-    /// The gate's hold input, from the same column.
+    /// Every hold recorded against this plant that is still active.
     pub holds: Vec<Hold>,
     /// The command currently in flight, if any.
     pub active_command_id: Option<String>,
@@ -153,31 +151,58 @@ impl Gathered {
     }
 }
 
-/// The single legacy `plants.lockout_reason` as the gate's per-reason inputs.
+/// The recorded lockouts of a live plant, as the gate's inputs.
 ///
-/// **Stage 2 of the cutover, and deliberately behaviour-preserving**: the
-/// decision path still reads one column, and this states exactly what the
-/// gate's old step 3 did with it. A latch-class reason (or an unreadable one,
-/// which parses as `Unknown`) refuses whether or not a deadline is attached; a
-/// hold- or derived-class reason refuses only while its deadline is ahead; a
-/// hold- or derived-class reason with no deadline is not an input at all — the
-/// gate re-derives it from live inputs. Replaced by a read of
-/// `rhizo_storage::repo::lockout::active` when the edge switches over.
-#[must_use]
-pub fn legacy_records(
-    reason: Option<rhizo_domain::state::LockoutReason>,
-    held_until: Option<DateTime<Utc>>,
-) -> (Vec<rhizo_domain::state::LockoutReason>, Vec<Hold>) {
-    let Some(reason) = reason else {
-        return (Vec::new(), Vec::new());
-    };
-    match (lockout_class(reason), held_until) {
-        (LockoutClass::Latch, _) => (vec![reason], Vec::new()),
-        (LockoutClass::Hold | LockoutClass::Derived, Some(until)) => {
-            (Vec::new(), vec![Hold { reason, until }])
+/// The **only** source of the gate's latched and held inputs. A stored name
+/// nobody recognises is `Unknown`, which is a latch (SAFETY-012); so is any
+/// row the table calls a latch, whatever its name says. A deadline too large to
+/// represent is treated as never ending rather than as already over.
+pub async fn records(
+    db: &EdgeDb,
+    plant_id: &str,
+    now_ms: i64,
+) -> Result<(Vec<rhizo_domain::state::LockoutReason>, Vec<Hold>), rhizo_storage::StorageError> {
+    let mut latched = Vec::new();
+    let mut holds = Vec::new();
+    for record in lockout_repo::active(db, plant_id, now_ms).await? {
+        let reason = plant::lockout_from_str(&record.reason)
+            .unwrap_or(rhizo_domain::state::LockoutReason::Unknown);
+        match (record.kind, record.hold_until) {
+            (lockout_repo::LockoutKind::Hold, Some(until)) => holds.push(Hold {
+                reason,
+                until: DateTime::from_timestamp_millis(until).unwrap_or(DateTime::<Utc>::MAX_UTC),
+            }),
+            (lockout_repo::LockoutKind::Latch, _) | (lockout_repo::LockoutKind::Hold, None) => {
+                latched.push(reason);
+            }
         }
-        (LockoutClass::Hold | LockoutClass::Derived, None) => (Vec::new(), Vec::new()),
     }
+    Ok((latched, holds))
+}
+
+/// The stream and freshness boundary a `leak` latch may be cleared against:
+/// the bound leak sensor, and the same freshness limit the gate applies to it.
+/// `None` for a plant with no leak binding, which therefore cannot demonstrate
+/// a dry tray (SAFETY-012). Owned, so the caller can borrow it as
+/// `rhizo_storage::repo::lockout::LeakEvidence`.
+pub async fn leak_evidence(
+    db: &EdgeDb,
+    loaded: &Loaded,
+    now_ms: i64,
+) -> Result<Option<(String, String, String, i64)>, rhizo_storage::StorageError> {
+    let Some(bound) = loaded.binding_for(&MeasurementKind::LeakState) else {
+        return Ok(None);
+    };
+    let binding = &bound.binding;
+    let max_age = freshness_ms(db, loaded, binding).await?;
+    Ok(Some((
+        binding.device_id.to_string(),
+        binding.sensor_id.as_str().to_owned(),
+        binding.point.as_str().to_owned(),
+        // `read_leak` calls a reading stale at `age >= max_age`, so a fresh one
+        // was received strictly after this instant.
+        now_ms.saturating_sub(max_age),
+    )))
 }
 
 /// Reads everything one plant's watering decision may consider.
@@ -263,15 +288,10 @@ pub async fn gather(
     )
     .await?;
 
-    let lockout = command_repo::lockout(db, plant_id).await?;
-    let active_lockout = lockout
-        .as_ref()
-        .and_then(|(reason, ..)| plant::lockout_from_str(reason));
-    let lockout_held_until = lockout
-        .as_ref()
-        .and_then(|(_, _, until)| *until)
-        .and_then(DateTime::from_timestamp_millis);
-    let (latched, holds) = legacy_records(active_lockout, lockout_held_until);
+    let summary = command_repo::lockout(db, plant_id)
+        .await?
+        .map(|(reason, ..)| reason);
+    let (latched, holds) = records(db, plant_id, now_ms).await?;
     let automation =
         AutomationPolicy::from_profile(&loaded.profile, loaded.plant.auto_watering_enabled, None);
 
@@ -327,8 +347,7 @@ pub async fn gather(
         device_sleeping,
         dry_duration,
         reconciling,
-        active_lockout,
-        lockout_held_until,
+        summary,
         latched,
         holds,
         active_command_id: stored.and_then(|row| row.active_command_id),
@@ -566,58 +585,4 @@ pub async fn device_reachability(
         connectivity::State::OfflineUnexpectedly => (false, false, false),
         connectivity::State::Reconciling => (false, false, true),
     })
-}
-
-#[cfg(test)]
-mod legacy_records_tests {
-    use chrono::{Duration, TimeZone, Utc};
-    use rhizo_domain::LockoutReason;
-    use rhizo_domain::irrigation::is_auto_clearable;
-
-    use super::legacy_records;
-
-    /// The converter is exactly the gate's old step 3: for every reason and
-    /// every deadline, the one record it yields is active precisely when the
-    /// old rule `held || !is_auto_clearable(reason)` returned that reason.
-    #[test]
-    fn the_converter_reproduces_the_old_single_lockout_rule() {
-        let now = Utc
-            .with_ymd_and_hms(2026, 10, 21, 12, 0, 0)
-            .single()
-            .unwrap_or_default();
-        for reason in [
-            LockoutReason::Leak,
-            LockoutReason::TankLow,
-            LockoutReason::StaleData,
-            LockoutReason::SensorFault,
-            LockoutReason::DailyLimit,
-            LockoutReason::MaxDosesReached,
-            LockoutReason::NoDeliveryDetected,
-            LockoutReason::Uncertain,
-            LockoutReason::ClockUnsynced,
-            LockoutReason::PumpFault,
-            LockoutReason::NoActuator,
-            LockoutReason::Unknown,
-        ] {
-            for held_until in [
-                None,
-                Some(now - Duration::minutes(1)),
-                Some(now),
-                Some(now + Duration::minutes(1)),
-            ] {
-                let held = held_until.is_some_and(|until| now < until);
-                let old = (held || !is_auto_clearable(reason)).then_some(reason);
-                let (latched, holds) = legacy_records(Some(reason), held_until);
-                let new = latched.first().copied().or_else(|| {
-                    holds
-                        .iter()
-                        .find(|hold| now < hold.until)
-                        .map(|hold| hold.reason)
-                });
-                assert_eq!(new, old, "{reason:?} held until {held_until:?}");
-                assert!(latched.len() + holds.len() <= 1);
-            }
-        }
-        assert_eq!(legacy_records(None, Some(now)), (Vec::new(), Vec::new()));
-    }
 }

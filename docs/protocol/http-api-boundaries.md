@@ -309,6 +309,19 @@ POST /api/v1/plants/{plant_id}/lockout/clear     { "reason": "leak" }
 clear a still-active leak returns 409. This is the explicit reset SAFETY-003
 requires.
 
+A plant may carry several recorded lockouts at once — independent latches
+(`leak`, `pump_fault`, `no_delivery_detected`, `max_doses_reached`, or an
+unrecognised stored name) and time-bounded holds (`uncertain` after a forward
+clock step, `clock_unsynced`). One request clears **exactly one latch**, named by
+its stored reason; every other latch and hold is untouched and keeps refusing.
+For `leak`, the latest reading on the bound leak stream must be `ok`, dry, and
+fresh, checked inside the same write transaction that removes the latch. A hold
+is never an operator's to clear: naming one returns **409 `hold_not_clearable`**
+with its `hold_until`, and it ends at its deadline. Naming a reason the plant is
+not locked by returns 409 `wrong_reason` while anything else is recorded, or
+`not_locked_out` when nothing is. The response body is unchanged; listing every
+recorded lockout is a later, additive change.
+
 ### 2.7 Profiles
 
 ```text

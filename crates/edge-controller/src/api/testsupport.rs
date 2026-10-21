@@ -42,6 +42,12 @@ pub struct TestApi {
 impl TestApi {
     pub async fn start() -> Self {
         let db = EdgeDb::in_memory().await.unwrap();
+        Self::start_on(db).await
+    }
+
+    /// A fresh edge — new clock, commander, and API state — over an existing
+    /// database, which is what a restart is. Migrates first, as startup does.
+    pub async fn start_on(db: EdgeDb) -> Self {
         db.migrate().await.unwrap();
         let clock = Arc::new(rhizo_testkit::TestClock::new(base()));
         let metrics = crate::metrics::Metrics::new().unwrap();

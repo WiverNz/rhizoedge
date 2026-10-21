@@ -309,6 +309,11 @@ pub async fn analyse(
     let now_ms = now.timestamp_millis();
     let plant_id = loaded.plant.plant_id.as_str();
     let control = loaded.control();
+    let (latched, holds) = crate::control::inputs::records(db, plant_id, now_ms).await?;
+    let recorded_lockout = latched
+        .into_iter()
+        .chain(holds.into_iter().map(|hold| hold.reason))
+        .min_by_key(|reason| rhizo_domain::irrigation::display_rank(*reason));
 
     let mut latest_moisture = None;
     let mut latest_invalid = false;
@@ -491,11 +496,9 @@ pub async fn analyse(
         dose_ml: loaded.profile.dose_ml,
         has_actuator: loaded.actuator.is_some(),
         required_sensors_healthy: required_healthy,
-        lockout: loaded
-            .plant
-            .lockout_reason
-            .as_deref()
-            .and_then(lockout_from_str),
+        // The best-ranked recorded lockout, from the records — not from the
+        // display summary, which only ever shows what a pass last decided.
+        lockout: recorded_lockout,
         trend: trend_value,
         samples_in_window,
         has_weight_sensor: loaded.binding_for(&MeasurementKind::PotWeight).is_some(),
