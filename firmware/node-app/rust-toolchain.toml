@@ -3,10 +3,10 @@
 # ADR-007's embedded-toolchain exception applies to `firmware/esp32-node`, which
 # must build `riscv32imc-esp-espidf` and therefore needs nightly `-Z build-std`
 # (M9-001). It does not apply here: this crate has no ESP-IDF dependency, so it
-# is pinned to the project MSRV and the safety logic is compiled by the same
+# is pinned to the host toolchain and the safety logic is compiled by the same
 # compiler as the rest of the workspace.
 
 [toolchain]
-channel = "1.99.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

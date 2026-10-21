@@ -190,7 +190,7 @@ riscv32imc-esp-espidf          # ESP32-C3, std / ESP-IDF
 
 ### Rust version: the embedded toolchain exception
 
-The host workspace pins **Rust 1.99.0**
+The host workspace pins **Rust 1.99.1** (MSRV 1.99.0)
 ([ADR-001](001-rust-workspace-and-crate-boundaries.md), ROADMAP.md §6). The
 firmware workspace is **not** required to match it, and the host workspace is
 **never** downgraded to accommodate an embedded constraint. That is the reason
@@ -198,7 +198,7 @@ the firmware lives in its own Cargo workspace with its own
 `rust-toolchain.toml`.
 
 ```text
-Host workspace  (crates/*, ui/rhizo-ui)   Rust 1.99.0
+Host workspace  (crates/*, ui/rhizo-ui)   Rust 1.99.1
 Firmware        (firmware/esp32-node)     nightly-2026-07-01
 ```
 
@@ -219,6 +219,8 @@ The ESP32 image keeps its nightly and uses `--ignore-rust-version` for builds
 and Clippy: shared crates declare the host MSRV, so Cargo would otherwise
 reject them before compilation. Host checks enforce 1.99.0 normally; image
 compilation remains the check for compatibility with the retained nightly.
+On 2026-10-21 both host pins moved to the 1.99.1 patch release; the MSRV
+stays 1.99.0 (ADR-001).
 The dated findings below retain the versions actually tested at M9-001.
 
 ### Resolved 2026-09-02 (M9-001): outcome 2, a pinned nightly with `build-std`
@@ -437,9 +439,9 @@ runs only when `firmware/**` or `crates/mqtt-contract/**` changes.
 
 ```text
 firmware/
-├── node-app/                 # WORKSPACE A -- host toolchain 1.99.0
+├── node-app/                 # WORKSPACE A -- host toolchain 1.99.1
 │   ├── Cargo.toml            #   no ESP-IDF dependency, by construction
-│   ├── rust-toolchain.toml   #   1.99.0, the project MSRV
+│   ├── rust-toolchain.toml   #   1.99.1, the host pin
 │   ├── src/                  #   ports, fakes, boot, persist, identity,
 │   │                         #   command, ledger, dedup, recovery, config,
 │   │                         #   policy, offline, budget, buffer, power,
@@ -473,7 +475,7 @@ same isolation is acceptable, and the isolation is the requirement."*
 Two consequences, both wanted:
 
 - the safety logic is compiled and tested by the **host** toolchain pin
-  (1.99.0), not by the nightly `riscv32imc-esp-espidf` requires;
+  (1.99.1), not by the nightly `riscv32imc-esp-espidf` requires;
 - `cargo test` in `firmware/node-app` needs no target flag, no `build-std`, and
   no ESP-IDF installation, so a contributor with none of that can still run the
   safety suite.

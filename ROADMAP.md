@@ -4,7 +4,7 @@ The execution plan for Rhizo Edge, from an empty repository to a system that can
 be trusted with a real plant.
 
 **Planning status:** complete. **Implementation status:** M0–M8 complete; **M9 in progress** — its board-free work is substantially complete and physical telemetry and selected RTC/accounting cases are verified on ESP32-C3; remaining hardware safety criteria are pending.
-**Host Rust:** MSRV **1.99.0**; `rust-toolchain.toml` currently pins 1.99.0; the
+**Host Rust:** MSRV **1.99.0**; `rust-toolchain.toml` currently pins 1.99.1; the
 pin may move forward deliberately
 ([ADR-001](docs/adr/001-rust-workspace-and-crate-boundaries.md) §Rust version policy).
 
@@ -951,7 +951,7 @@ never marked `DONE` on the basis of closed issues alone.
 
 ```text
 MSRV                 1.99.0    the minimum host Rust the project supports
-current tested pin   1.99.0    what rust-toolchain.toml selects today
+current tested pin   1.99.1    what rust-toolchain.toml selects today
 future pin           may move to any newer stable, deliberately
 ```
 
@@ -968,7 +968,7 @@ future pin           may move to any newer stable, deliberately
 
 | Component | Toolchain |
 |---|---|
-| Host workspace (`crates/*`) | MSRV **1.99.0**; currently pinned to 1.99.0 in `rust-toolchain.toml` |
+| Host workspace (`crates/*`) | MSRV **1.99.0**; currently pinned to 1.99.1 in `rust-toolchain.toml` |
 | UI workspace (`ui/rhizo-ui`) | same version plus the `wasm32-unknown-unknown` target |
 | Firmware (`firmware/esp32-node`) | `nightly-2026-07-01`, a separately pinned ESP-compatible toolchain, documented as an embedded exception in [ADR-007](docs/adr/007-esp32-rust-framework-and-toolchain.md) and verified by M9-001 |
 
@@ -1035,7 +1035,7 @@ M9-001 resolved the toolchain question empirically: stock Rust 1.98.0 **cannot**
 build `riscv32imc-esp-espidf` (a tier-3 target with no distributed `std`), so
 the firmware *image* workspace pins a dated nightly with `-Z build-std`. The
 host workspace and the firmware *application* workspace are now both pinned to
-1.99.0, so the safety logic is still compiled by the project MSRV
+1.99.1, so the safety logic is still compiled by the host toolchain
 (ADR-001, ADR-007).
 
 M8's report is [docs/reports/M8.md](docs/reports/M8.md).

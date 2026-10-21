@@ -63,7 +63,7 @@ cd firmware/esp32-node && cargo build --release --ignore-rust-version   # needs 
 ```
 
 `firmware/node-app` is where every firmware safety test lives. It has no ESP-IDF
-dependency and runs on the host pin (1.99.0), so it needs no setup at all. See
+dependency and runs on the host pin (1.99.1), so it needs no setup at all. See
 [firmware/README.md](firmware/README.md).
 
 **`Metrics::new()` is a process-wide singleton.** It caches in a `OnceLock`, so
@@ -92,7 +92,7 @@ M9 built two workspaces, and the split is the thing to understand before
 touching either:
 
 ```text
-firmware/node-app/    host toolchain 1.99.0, NO esp-idf dependency
+firmware/node-app/    host toolchain 1.99.1, NO esp-idf dependency
                       every safety decision: the gate's caller, the ledger,
                       the budget, the policy store, the buffer, the wake
                       machine. 139 tests, no board, no setup.
@@ -257,7 +257,7 @@ what that means in code.
 - **Rust only.** No Go, no Node.js, no TypeScript. The Tauri UI uses the
   Cargo/Trunk workflow specifically to avoid `npm`. A `package.json` appearing
   anywhere is a defect.
-- **MSRV is Rust 1.99.0**; `rust-toolchain.toml` currently pins 1.99.0. The pin
+- **MSRV is Rust 1.99.0**; `rust-toolchain.toml` currently pins 1.99.1. The pin
   may move to a newer stable as a deliberate change, but **no change may silently
   raise the MSRV**, and nothing goes below 1.99.0. The firmware workspace may pin
   a different ESP-compatible toolchain (ADR-007); the host workspace is never

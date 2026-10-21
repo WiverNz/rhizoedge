@@ -5,7 +5,7 @@
 # host-testable with no board. A separate crate that does not depend on
 # `esp-idf-sys` at all makes that structurally impossible to violate rather
 # than grep-enforced, and lets these tests run on the *host* toolchain pin
-# (1.99.0) instead of the nightly the ESP-IDF target needs (M9-001).
+# (1.99.1) instead of the nightly the ESP-IDF target needs (M9-001).
 #
 # `firmware/` is excluded from the root workspace (ADR-001), so this is not a
 # member of it; the two shared crates are path dependencies with default

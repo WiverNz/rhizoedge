@@ -14,7 +14,7 @@
 //!
 //! Two things fall out of that choice and both are improvements:
 //!
-//! * these tests run on the **host toolchain pin** (1.99.0), so the safety
+//! * these tests run on the **host toolchain pin** (1.99.1), so the safety
 //!   logic is compiled by the same compiler as the rest of the project rather
 //!   than by the nightly `riscv32imc-esp-espidf` needs (M9-001);
 //! * `cargo test` here needs no target flag, no `build-std`, and no ESP-IDF

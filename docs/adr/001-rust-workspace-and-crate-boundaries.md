@@ -82,16 +82,20 @@ from 1.98.0 to 1.99.0, including `firmware/node-app` and Docker builders.
 The ESP32 image retains `nightly-2026-07-01` (ADR-007). Historical milestone
 reports retain the versions used for their original verification.
 
+On 2026-10-21 the exact pin (host and `firmware/node-app`, plus the Docker
+builders) moved from 1.99.0 to the 1.99.1 patch release for its compiler
+fixes. The MSRV stays 1.99.0: a patch release adds no language features.
+
 Two distinct things, previously conflated:
 
 ```text
 MSRV                  1.99.0   the minimum host Rust the project supports
-current tested pin    1.99.0   what rust-toolchain.toml selects today
+current tested pin    1.99.1   what rust-toolchain.toml selects today
 future pin            may move to any newer stable, deliberately
 ```
 
 - **MSRV is 1.99.0.** The host workspace and the UI must keep compiling on it.
-- **`rust-toolchain.toml` currently pins exactly `1.99.0`**, and that file is the
+- **`rust-toolchain.toml` currently pins exactly `1.99.1`**, and that file is the
   truth about what CI and developers run today. An exact pin — never `stable` —
   is required so that `-D warnings` is reproducible: a new clippy lint in a later
   release must not turn a green main branch red with no code change.

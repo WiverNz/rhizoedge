@@ -169,7 +169,7 @@ None. M0 is the root of the dependency graph.
    layers supplied the bad value — for environment variables as well as files.
    The full comparison is recorded in the module documentation of
    `crates/edge-controller/src/config/mod.rs`.
-2. **Exact pinned Rust version.** Originally resolved as **1.98.0**; raised to **1.99.0** on 2026-10-13, recorded in
+2. **Exact pinned Rust version.** Originally resolved as **1.98.0**; raised to **1.99.0** on 2026-10-13 and to the **1.99.1** patch release on 2026-10-21 (MSRV stays 1.99.0), recorded in
    `rust-toolchain.toml`. The firmware workspace may differ; see
    [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md).
 
