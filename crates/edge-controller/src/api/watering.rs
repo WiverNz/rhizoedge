@@ -1042,6 +1042,141 @@ mod water {
         assert_eq!(cleared_by.as_deref(), Some("operator"));
     }
 
+    /// SAFETY-003 across real ticks: a leak lockout outlives a silent sensor
+    /// *and* the sensor's return, and only the operator's reset lifts it.
+    ///
+    /// The defect this pins: a stale leak reading made the gate answer
+    /// `Uncertain` ahead of the sticky `Leak`, the tick persisted `uncertain`
+    /// over `leak`, and `uncertain` auto-cleared the moment telemetry resumed —
+    /// no operator involved. Found by `scenario_leak` on CI.
+    #[tokio::test]
+    async fn safety_003_a_leak_lockout_survives_a_silent_sensor_and_its_return() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+            .await;
+        api.irrigate("monstera-01").await;
+        let lockout = || async {
+            rhizo_storage::repo::plant::get(&api.db, "monstera-01")
+                .await
+                .unwrap()
+                .unwrap()
+                .lockout_reason
+        };
+        assert_eq!(lockout().await.as_deref(), Some("leak"));
+
+        // The leak sensor falls silent long enough for its reading to go stale.
+        api.clock.advance(chrono::Duration::hours(4));
+        api.irrigate("monstera-01").await;
+        assert_eq!(
+            lockout().await.as_deref(),
+            Some("leak"),
+            "a silent leak sensor must not rewrite the leak lockout"
+        );
+
+        // Every input comes back healthy, the tray included.
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", false)
+            .await;
+        api.sample(api.clock.now(), 20.0).await;
+        api.sample_from(
+            api.clock.now(),
+            "tank-0",
+            "reservoir",
+            "tank_level",
+            "percent",
+            70.0,
+        )
+        .await;
+        api.irrigate("monstera-01").await;
+        assert_eq!(
+            lockout().await.as_deref(),
+            Some("leak"),
+            "healthy readings are not an operator reset"
+        );
+
+        let (status, body) = api
+            .json(
+                "POST",
+                "/api/v1/plants/monstera-01/lockout/clear",
+                serde_json::json!({ "reason": "leak" }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        api.irrigate("monstera-01").await;
+        assert_eq!(lockout().await, None);
+    }
+
+    /// SAFETY-003 against the gate's step 0: removing the pump does not turn a
+    /// latched `leak` into the auto-clearing `no_actuator`, so re-binding it
+    /// does not lift the leak either.
+    ///
+    /// Holds today because the control pass skips a plant with no actuator
+    /// (SAFETY-018) and `POST /water` answers 422 before the gate, so step 0's
+    /// answer is never persisted. This pins that, since the gate's own order
+    /// would not protect the latch.
+    #[tokio::test]
+    async fn safety_003_removing_the_pump_does_not_rewrite_a_leak_lockout() {
+        // The control pass writes `plants_locked_out`, which is process-wide.
+        let _guard = crate::api::health::gauge_lock().lock().await;
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+            .await;
+        let pass = || async {
+            crate::control::tick::irrigation_pass(
+                &api.commander,
+                &api.state.metrics,
+                api.clock.now(),
+            )
+            .await
+            .unwrap();
+            rhizo_storage::repo::plant::get(&api.db, "monstera-01")
+                .await
+                .unwrap()
+                .unwrap()
+                .lockout_reason
+        };
+        assert_eq!(pass().await.as_deref(), Some("leak"));
+
+        // The tray dries; every input is healthy.
+        api.clock.advance(chrono::Duration::minutes(5));
+        api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", false)
+            .await;
+        api.sample(api.clock.now(), 20.0).await;
+        api.sample_from(
+            api.clock.now(),
+            "tank-0",
+            "reservoir",
+            "tank_level",
+            "percent",
+            70.0,
+        )
+        .await;
+
+        let (status, body) = api
+            .json(
+                "DELETE",
+                "/api/v1/plants/monstera-01/bindings/actuator",
+                serde_json::json!({}),
+            )
+            .await;
+        assert!(status.is_success(), "{status}: {body}");
+        assert_eq!(
+            pass().await.as_deref(),
+            Some("leak"),
+            "a plant with no pump must not have its leak rewritten"
+        );
+
+        api.bind_actuator("monstera-01").await;
+        assert_eq!(
+            pass().await.as_deref(),
+            Some("leak"),
+            "re-binding the pump is not an operator leak reset"
+        );
+    }
+
     /// Clearing a lockout the plant does not have, or naming the wrong one, is
     /// refused rather than silently accepted.
     #[tokio::test]

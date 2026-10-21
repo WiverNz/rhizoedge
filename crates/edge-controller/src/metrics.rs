@@ -484,6 +484,8 @@ mod control {
     /// answers "is anything stuck?".
     #[tokio::test]
     async fn the_lockout_gauge_reflects_actual_lockouts() {
+        // `plants_locked_out` is process-wide, and other tests run the pass.
+        let _guard = crate::api::health::gauge_lock().lock().await;
         let api = TestApi::start().await;
         api.waterable("monstera-01").await;
         api.device_connected().await;

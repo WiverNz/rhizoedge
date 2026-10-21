@@ -267,6 +267,24 @@ restarting; leak sensor asserting between the safety check and actuation
 `safety_003_leak_blocks_manual_api_with_nothing_published` adds the assertion a
 status code cannot make — that no message appears on any command topic.
 
+**Correction (2026-10-21): a stale leak reading erased the latch.** The gate
+answered `LeakState::Unknown` with `Uncertain` *before* consulting the sticky
+lockout, the edge persisted that answer over `leak`, and `uncertain` auto-cleared
+the moment telemetry resumed — a leak lockout lifted with no operator. Found by
+`scenario_leak` on CI (End-to-end run 39663877363). `safety_gate` now refuses
+`Detected` first, then honours a sticky or held lockout, and only then answers
+`Unknown` with `Uncertain`; every step still refuses, so no new permission
+exists. Regression tests:
+`gate::leak::safety_003_an_unknown_signal_does_not_displace_a_sticky_lockout`,
+`gate::leak::safety_003_a_leak_lockout_survives_a_silent_sensor_and_its_return`
+(domain, the tick loop folded), and the edge-controller
+`safety_003_a_leak_lockout_survives_a_silent_sensor_and_its_return` (real ticks,
+then the operator reset) and `safety_003_removing_the_pump_does_not_rewrite_a_leak_lockout`.
+**Open:** a forward clock step (F-060-51) still writes a held `uncertain` over a
+latched `leak`, which then auto-clears after the hold, and a detected leak
+replaces another explicit-clear reason. Both are recorded in
+[docs/reports/M9.md](../reports/M9.md) §14 for a decision; neither is fixed.
+
 ---
 
 ## SAFETY-004 — Empty reservoir lockout

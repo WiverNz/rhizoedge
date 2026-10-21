@@ -112,8 +112,12 @@ impl LeakLockout {
 
 /// The ordered veto. `None` means every check passed.
 ///
-/// Order matters only for *which* reason an operator is shown; every step
-/// refuses. The documented sequence (M6-002) is leak, leak-unknown, tank-unknown,
+/// Every step refuses, so order never decides *whether* the gate refuses —
+/// only *which* reason it answers. That reason is not cosmetic: the edge
+/// persists it, and [`is_auto_clearable`] of the persisted reason decides
+/// whether the lockout may lift by itself. A transient reason answered ahead
+/// of a sticky one therefore erases the sticky one, which is why a silent leak
+/// sensor (step 2) is consulted only *after* step 3. The documented sequence (M6-002) is leak, leak-unknown, tank-unknown,
 /// tank-low, tank-stale, sample-absent, sample-invalid, sample-stale, daily-cap.
 /// Four structural checks bracket it: the actuator (SAFETY-018), a sticky
 /// explicit lockout (F-060-41), reconciliation (SAFETY-016), and the required
@@ -127,17 +131,15 @@ pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
         return Some(LockoutReason::NoActuator);
     }
 
-    // Step 1-2 (SAFETY-003). The leak check blocks manual watering too: the
+    // Step 1 (SAFETY-003). The leak check blocks manual watering too: the
     // operator who would click "water anyway" is exactly the person who has not
     // yet looked at the floor. Exhaustive; `Unknown` is classified, not assumed.
-    match inputs.leak {
+    let leak_unknown = match inputs.leak {
         LeakState::Detected => return Some(LockoutReason::Leak),
-        // Absence of a leak reading is not absence of a leak (SAFETY-012). It is
-        // `Uncertain` rather than `Leak` because it auto-clears the moment the
-        // sensor speaks, whereas a real leak needs a person (F-060-40/41).
-        LeakState::Unknown => return Some(LockoutReason::Uncertain),
-        LeakState::Clear => {}
-    }
+        // Step 2, deferred until after step 3 below.
+        LeakState::Unknown => true,
+        LeakState::Clear => false,
+    };
 
     // Step 3 (F-060-41). An explicit-clear lockout outlives the condition that
     // raised it. An auto-clearing one is deliberately *not* consulted: it is
@@ -152,6 +154,16 @@ pub fn safety_gate(inputs: &IrrigationInputs<'_>) -> Option<LockoutReason> {
         if held || !is_auto_clearable(reason) {
             return Some(reason);
         }
+    }
+
+    // Step 2 (SAFETY-012). Absence of a leak reading is not absence of a leak.
+    // It is `Uncertain` rather than `Leak` because it auto-clears the moment the
+    // sensor speaks, whereas a real leak needs a person (F-060-40/41) — and that
+    // is exactly why it must not run before step 3. Answered first, it was
+    // persisted over a latched `Leak`, then auto-cleared when telemetry resumed:
+    // a leak lockout lifted with no operator (SAFETY-003).
+    if leak_unknown {
+        return Some(LockoutReason::Uncertain);
     }
 
     // Step 4 (SAFETY-016). A device that autonomously watered ninety seconds
@@ -703,6 +715,126 @@ mod safety_gate {
                 LeakLockout::Clear.observe(LeakState::Unknown),
                 LeakLockout::Clear
             );
+        }
+
+        /// The explicit-clear reasons `is_auto_clearable` refuses to lift.
+        const STICKY: [LockoutReason; 5] = [
+            LockoutReason::Leak,
+            LockoutReason::PumpFault,
+            LockoutReason::NoDeliveryDetected,
+            LockoutReason::MaxDosesReached,
+            LockoutReason::Unknown,
+        ];
+
+        /// SAFETY-003 with F-060-41: a silent leak sensor does not displace a
+        /// latched lockout, in any mode. The gate's answer is what the edge
+        /// persists, so answering `Uncertain` here would erase the latch.
+        #[test]
+        fn safety_003_an_unknown_signal_does_not_displace_a_sticky_lockout() {
+            let scene = Scene::default();
+            for reason in STICKY {
+                assert!(!is_auto_clearable(reason), "{reason:?}");
+                for mode in [
+                    EvaluationMode::Automatic,
+                    EvaluationMode::ManualRequest { ml: 30.0 },
+                    EvaluationMode::RecommendedRequest { ml: 30.0 },
+                ] {
+                    let mut inputs = scene.inputs();
+                    inputs.active_lockout = Some(reason);
+                    inputs.leak = LeakState::Unknown;
+                    inputs.mode = mode;
+                    assert_eq!(safety_gate(&inputs), Some(reason), "{reason:?} {mode:?}");
+                }
+            }
+        }
+
+        /// The tick loop, folded: each answer becomes the next tick's
+        /// `active_lockout`, exactly as the edge persists it. Through a silent
+        /// sensor and its healthy return, `Leak` is never replaced and never
+        /// becomes something that would clear itself.
+        #[test]
+        fn safety_003_a_leak_lockout_survives_a_silent_sensor_and_its_return() {
+            let scene = Scene::default();
+            let mut persisted = Some(LockoutReason::Leak);
+            for signal in [
+                LeakState::Unknown,
+                LeakState::Unknown,
+                LeakState::Clear,
+                LeakState::Unknown,
+                LeakState::Clear,
+                LeakState::Clear,
+            ] {
+                let mut inputs = scene.inputs();
+                inputs.active_lockout = persisted;
+                inputs.leak = signal;
+                persisted = safety_gate(&inputs);
+                assert_eq!(persisted, Some(LockoutReason::Leak), "after {signal:?}");
+            }
+        }
+
+        /// A detected leak still outranks everything, a latched lockout
+        /// included.
+        #[test]
+        fn detected_outranks_a_sticky_lockout() {
+            let scene = Scene::default();
+            for reason in STICKY {
+                let mut inputs = scene.inputs();
+                inputs.active_lockout = Some(reason);
+                inputs.leak = LeakState::Detected;
+                assert_eq!(
+                    safety_gate(&inputs),
+                    Some(LockoutReason::Leak),
+                    "{reason:?}"
+                );
+            }
+        }
+
+        /// With no latched lockout — none at all, or only an auto-clearing one —
+        /// an unknown signal still refuses, as `Uncertain` (SAFETY-012).
+        #[test]
+        fn unknown_without_a_sticky_lockout_is_uncertain() {
+            let scene = Scene::default();
+            for active in [
+                None,
+                Some(LockoutReason::StaleData),
+                Some(LockoutReason::SensorFault),
+                Some(LockoutReason::TankLow),
+                Some(LockoutReason::DailyLimit),
+                Some(LockoutReason::ClockUnsynced),
+                Some(LockoutReason::Uncertain),
+            ] {
+                let mut inputs = scene.inputs();
+                inputs.active_lockout = active;
+                inputs.leak = LeakState::Unknown;
+                assert_eq!(
+                    safety_gate(&inputs),
+                    Some(LockoutReason::Uncertain),
+                    "{active:?}"
+                );
+            }
+        }
+
+        /// After the operator's reset (`active_lockout` gone) the gate grants
+        /// nothing on that account: every other check still has to pass.
+        #[test]
+        fn after_a_reset_every_other_check_still_applies() {
+            let scene = Scene::default();
+            let mut inputs = scene.inputs();
+            inputs.leak = LeakState::Unknown;
+            assert_eq!(safety_gate(&inputs), Some(LockoutReason::Uncertain));
+
+            let mut inputs = scene.inputs();
+            inputs.tank = Some(TankState::Level {
+                percent: 1.0,
+                age: Duration::zero(),
+            });
+            assert_eq!(safety_gate(&inputs), Some(LockoutReason::TankLow));
+
+            let mut inputs = scene.inputs();
+            inputs.reconciling = true;
+            assert_eq!(safety_gate(&inputs), Some(LockoutReason::Uncertain));
+
+            assert_eq!(safety_gate(&scene.inputs()), None);
         }
     }
 

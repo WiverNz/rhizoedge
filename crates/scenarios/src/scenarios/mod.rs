@@ -1199,19 +1199,97 @@ fn leak<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
             wet_status == reqwest::StatusCode::CONFLICT,
             "leak lockout cleared while the tray was wet"
         );
+        // The tray dries. Every reading at or below `wet` predates the drying,
+        // so only a newer row can be evidence of it.
+        let wet: i64 = sqlx::query_scalar(
+            "SELECT coalesce(max(id),0) FROM measurements WHERE kind='leak_state'",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
         h.simulator_post("/sim/state", json!({"leak":"clear"}))
             .await?;
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        api_ok(
-            h,
-            Method::POST,
-            "/api/v1/plants/scenario-plant/lockout/clear",
-            json!({"reason":"leak"}),
-        )
-        .await?;
+        clear_leak_on_fresh_dry_reading(h, wet).await?;
         wait_lockout(h, None, 100).await?;
         Ok(())
     })
+}
+
+/// The operator's leak reset, issued against a fresh, positively dry reading
+/// received after `wet`, and never after a fixed sleep.
+///
+/// Two properties are checked on the way, on every poll:
+///
+/// - **The lockout stays `leak` until the operator acts** (SAFETY-003,
+///   F-060-41). Dry readings arrive and are evaluated first; the reset is only
+///   attempted on a dry reading *newer* than the first one seen, so the edge
+///   has had its chance to lift the latch by itself and must not have.
+/// - **The API's check is not weakened.** At `time_scale = 3600` the 900 s leak
+///   freshness is a quarter of a real second, so a reading fresh when observed
+///   can be stale when the request lands, and the edge rightly refuses with
+///   `leak_signal: not_clear`. The answer to that one refusal is a *newer* dry
+///   reading; any other refusal fails the scenario.
+///
+/// This replaced a 600 ms sleep, which raced that quarter-second window and,
+/// with the gate's old step order, also let a stale reading rewrite `leak` as
+/// `uncertain` (the CI failure in run 39663877363).
+async fn clear_leak_on_fresh_dry_reading(h: &Harness, wet: i64) -> Result<()> {
+    let budget = Duration::from_secs(60);
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut seen = wet;
+    let mut first_dry: Option<i64> = None;
+    let mut refusals = 0usize;
+    loop {
+        let reason: Option<String> =
+            sqlx::query_scalar("SELECT lockout_reason FROM plants WHERE plant_id='scenario-plant'")
+                .fetch_one(&h.sqlite)
+                .await?;
+        ensure!(
+            reason.as_deref() == Some("leak"),
+            "the leak lockout changed without an operator reset: observed {reason:?}"
+        );
+        let newest: Option<(i64, Option<i64>)> = sqlx::query_as(
+            "SELECT id,value_bool FROM measurements \
+             WHERE kind='leak_state' AND quality='ok' AND id>? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(seen)
+        .fetch_optional(&h.sqlite)
+        .await?;
+        if let Some((id, value)) = newest {
+            seen = id;
+            if value == Some(0) {
+                if first_dry.is_none() {
+                    first_dry = Some(id);
+                } else {
+                    let (status, body) = h
+                        .json(
+                            Method::POST,
+                            &format!("{}/api/v1/plants/scenario-plant/lockout/clear", h.edge_url),
+                            json!({"reason":"leak"}),
+                        )
+                        .await?;
+                    if status.is_success() {
+                        return Ok(());
+                    }
+                    let details = &body["error"]["details"];
+                    ensure!(
+                        status == reqwest::StatusCode::CONFLICT
+                            && details["reason"] == "leak"
+                            && details["leak_signal"] == "not_clear",
+                        "the leak reset was refused for a reason other than a stale reading: \
+                         {status}: {body}"
+                    );
+                    refusals += 1;
+                }
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "no fresh dry leak reading was accepted for a reset within {budget:?}: \
+                 first dry row {first_dry:?}, newest row {seen}, {refusals} stale-reading refusals"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 async fn direct_water_payload(h: &Harness, device: &str) -> Result<(String, Vec<u8>)> {
