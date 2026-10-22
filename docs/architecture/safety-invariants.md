@@ -45,7 +45,7 @@ actually done to it.
 |---|---|---|---|---|
 | SAFETY-001 | A duplicate watering command never causes duplicate physical watering | Device + Edge | M6 (edge), M9 (device) | ENFORCED (edge, simulator); firmware logic host-tested, hardware pending |
 | SAFETY-002 | An expired watering command never executes | Device | M6 (sim), M9 (fw) | ENFORCED (simulator); firmware logic host-tested, hardware pending |
-| SAFETY-003 | Leak detected disables all watering | Edge + Device | M6 | ENFORCED |
+| SAFETY-003 | Leak detected disables all watering | Edge + Device | M6 | ENFORCED (edge, independent lockout records since 2026-10-22, ADR-021); publish-race window F narrowed, not closed; real sensor M11 |
 | SAFETY-004 | Tank below minimum disables watering | Edge + Device | M6 | ENFORCED |
 | SAFETY-005 | Stale or invalid moisture disables automatic watering | Edge | M6 | ENFORCED |
 | SAFETY-006 | Daily automatic water never exceeds the configured maximum | Edge | M6 | ENFORCED |
@@ -248,8 +248,10 @@ who has not yet looked at the floor.
 **Enforcing components.** Edge (gate, first check in `evaluate`) and device
 (local refusal, in case the edge is stale).
 
-**Persisted state required.** `plants.lockout_reason`, `plants.lockout_since`,
-`plants.lockout_cleared_by` in SQLite; leak state on device in RAM.
+**Persisted state required.** One `plant_lockouts` row per latched or held
+reason (since 2026-10-22, [ADR-021](../adr/021-independent-plant-lockouts.md));
+`plants.lockout_reason` / `lockout_since` are a display summary only. Leak state
+on device in RAM.
 
 **Failure scenarios covered.** Leak during a dose; leak while the edge is
 restarting; leak sensor asserting between the safety check and actuation
@@ -298,6 +300,23 @@ when a lockout has been recorded (`command::path_f::*`). **Still open:** the
 interval between that last check and the broker taking the message, after
 which nothing recalls a command (M9 report §15, *What path F still leaves
 open*); SAFETY-003 is not yet declared closed.
+
+**Stage 6 assessment (2026-10-22, [ADR-021](../adr/021-independent-plant-lockouts.md),
+M9 report §15 *Stage 6*).** Of the six loss paths, A (clock step), B (a leak over
+another latch), C (a silent sensor over a leak), D (a `clock_unsynced` settle)
+and E (the automatic clear) are **closed by construction** — no writer can
+replace or remove another's record, and there is no automatic clear. F (a
+lockout recorded while a command is on its way out) is **narrowed**: refused at
+issue and before every publish attempt, inside `BEGIN IMMEDIATE`, but not after
+the message reaches the broker. Added in stage 6:
+`safety_003_after_a_restart_each_lockout_ends_only_its_own_way` (a latch, a
+clock-step hold, and a `clock_unsynced` hold across a restart, each ending only
+its own way) and the end-to-end SCEN-046 `scenario_concurrent_latches`
+(`no_delivery_detected` → leak → leak reset → `no_delivery_detected` still
+refuses manual and automatic watering → its own reset → the next automatic dose).
+**Status: enforced on the edge with one documented residual window (F); not
+declared closed.** The device-side half (the device's own leak refusal) is
+unchanged and still awaits a real sensor in M11.
 
 ---
 

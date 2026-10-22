@@ -178,12 +178,52 @@ POST /plants/monstera-01/water {"ml":30,"mode":"manual"}
 | F-060-42 | `POST /plants/{id}/lockout/clear` returns 409 if the condition is still active |
 | F-060-43 | Lockout reason, since-timestamp, and clearability exposed in the API |
 
+**As implemented (2026-10-22, [ADR-021](../adr/021-independent-plant-lockouts.md)).**
+The four requirements above hold, on a model the original text did not spell
+out:
+
+- **F-060-40.** These reasons are *derived*: re-evaluated from the inputs on
+  every pass and **never stored**, so "clears when the condition resolves" means
+  the next evaluation no longer derives it. Two `Uncertain`/`ClockUnsynced`
+  sources are not derived but **holds** — the forward clock step (F-060-51) and a
+  device's `clock_unsynced` refusal — stored with a deadline and ending only when
+  it passes, never by a request.
+- **F-060-41.** Each explicit-clear reason is a **latch**: one
+  `plant_lockouts` row per `(plant, reason)`, written beside any other record and
+  never replaced. Several can be active at once; each is cleared separately. An
+  unrecognised stored reason (`unknown`, or a name carried over by migration
+  `0002`) is also a latch, cleared by its exact name. There is no automatic
+  clear.
+- **F-060-42.** `lockout/clear` names one latch and removes only it, inside a
+  `BEGIN IMMEDIATE` transaction that, for `leak`, re-reads the bound leak stream
+  and requires a fresh, positively dry reading (409 `safety_lockout` with
+  `leak_signal` otherwise). A reason that is not a recorded latch is 409
+  `not_locked_out` with the current `lockouts`; a hold is 409
+  `hold_not_clearable`. Success answers `cleared` and `remaining[]`.
+- **F-060-43.** `GET /plants/{id}`, `GET /plants`, and `GET /overview` list
+  every latch and active hold as `lockouts[]` (`reason`, `kind`, `since`,
+  `hold_until`, `operator_clearable`, `recognised`) in a fixed display order;
+  `lockout` remains the one-reason summary. The existing `lockout.clearable`
+  field means *clears by itself* there and *needs an operator* in `POST /water`'s
+  409 body — a known inconsistency, left for a decision (M9 report §15).
+- Additionally, `command_repo::issue` refuses a command for a plant with any
+  record, and `authorize_publish` re-checks before **every** publish attempt
+  (`failed` / `blocked_by_lockout`). A lockout recorded after that last check
+  does not recall a message already handed to MQTT (ADR-021 §Risks).
+
 ### Clock handling
 
 | ID | Requirement |
 |---|---|
 | F-060-50 | Rolling 24-hour window computed by summing `watering_events`, never a counter |
 | F-060-51 | Forward clock step > 10 min → all plants `Lock(Uncertain)` for one cooldown |
+
+**F-060-51 as implemented.** The step records a `hold("uncertain", now +
+cooldown_hours)` for every plant *beside* its existing records: a latched leak is
+neither replaced nor lifted by the hold, the hold's expiry takes nothing else
+with it, and an operator clearing the leak inside the cooldown leaves the hold
+refusing until its deadline (`safety_003_a_clock_step_hold_expiring_leaves_the_leak`,
+`safety_003_clearing_the_leak_inside_a_clock_hold_leaves_the_hold`).
 | F-060-52 | Backward step logged; the window naturally becomes more conservative |
 
 ### Offline evaluator activation
@@ -267,6 +307,11 @@ plants            + lockout_cleared_by, lockout_cleared_at, lockout_until
 irrigation_state  + pre_dose_vwc, pre_dose_grams
 ```
 
+Since migration `0002` ([ADR-021](../adr/021-independent-plant-lockouts.md)) the
+lockout state itself is `plant_lockouts (plant_id, reason, kind, since,
+hold_until)`, one row per independent latch or hold; the `plants.lockout_*`
+columns are a display summary that no decision reads.
+
 `command_intents.command_id` being **nullable** is the reviewer's check that an
 intent is not a command: no `command_id` exists until the wake mints one, so
 there is still exactly one persist-before-publish moment per command and a
@@ -302,9 +347,10 @@ Derived from rows rather than a counter, so a restart cannot reset it.
 
 | From | Condition | To | Side effect |
 |---|---|---|---|
-| any | gate returns a reason | `Locked(r)` | persist lockout, event, metric |
-| `Locked(r)` | r auto-clearable and resolved | `Normal` | clear lockout, event |
-| `Locked(r)` | r explicit and operator clears | `Normal` | clear lockout, event |
+| any | gate returns a reason | `Locked(r)` | latch `r` if it is latch-class and not yet recorded; update the summary; event, metric |
+| `Locked(r)` | r derived and no longer derived, no record remains | `Normal` | summary cleared, event |
+| `Locked(r)` | a hold's deadline passes, no record remains | `Normal` | summary cleared, event |
+| `Locked(r)` | operator clears latch `r`, no record remains | `Normal` | `lockout_cleared` event, outbox |
 | `Normal` | moisture < `target_min` | `Drying` | — |
 | `Drying` | moisture ≥ `target_min` | `Normal` | reset dry duration |
 | `Drying` | dry ≥ `dry_confirm_minutes` | `DryConfirmed` | — |

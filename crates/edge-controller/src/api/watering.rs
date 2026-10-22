@@ -1491,6 +1491,75 @@ mod water {
         refused(&api, "leak").await;
     }
 
+    /// After a restart each record still ends only its own way: the leak by
+    /// its reset, the clock-step and `clock_unsynced` holds by time and never
+    /// by a request, the other fault by its own reset — and watering is
+    /// refused until the last of them is gone.
+    #[tokio::test]
+    async fn safety_003_after_a_restart_each_lockout_ends_only_its_own_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge.sqlite");
+        {
+            let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+            api.waterable("monstera-01").await;
+            api.device_connected().await;
+            let now = api.clock.now().timestamp_millis();
+            rhizo_storage::repo::lockout::latch(&api.db, "monstera-01", "pump_fault", now)
+                .await
+                .unwrap();
+            api.sample_bool(api.clock.now(), "leak-0", "tray", "leak_state", true)
+                .await;
+            api.irrigate("monstera-01").await;
+            clock_step(&api).await;
+            rhizo_storage::repo::lockout::hold(
+                &api.db,
+                "monstera-01",
+                "clock_unsynced",
+                now + 120_000,
+                now,
+            )
+            .await
+            .unwrap();
+            api.db.pool().close().await;
+        }
+        let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+        assert_eq!(
+            records(&api).await,
+            ["clock_unsynced", "leak", "pump_fault", "uncertain"]
+        );
+
+        api.clock.advance(chrono::Duration::minutes(1));
+        healthy(&api).await;
+        for hold in ["uncertain", "clock_unsynced"] {
+            let (status, body) = clear(&api, hold).await;
+            assert_eq!(status, StatusCode::CONFLICT, "{body}");
+            assert_eq!(body["error"]["code"], "hold_not_clearable", "{body}");
+        }
+        let (status, body) = clear(&api, "leak").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            reasons_of(&body["remaining"]),
+            ["pump_fault", "clock_unsynced", "uncertain"]
+        );
+        api.irrigate("monstera-01").await;
+        assert_eq!(summary(&api).await.as_deref(), Some("pump_fault"));
+        refused(&api, "pump_fault").await;
+
+        // Both holds expire; the fault does not.
+        api.clock.advance(chrono::Duration::hours(72));
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+        assert_eq!(records(&api).await, ["pump_fault"]);
+        refused(&api, "pump_fault").await;
+
+        let (status, body) = clear(&api, "pump_fault").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["remaining"], serde_json::json!([]));
+        api.irrigate("monstera-01").await;
+        assert_eq!(summary(&api).await, None);
+        permitted(&api).await;
+    }
+
     /// The race the old automatic clear lost: a pass gathers, another writer
     /// latches a fault, and the pass then applies a decision made without it.
     /// The latch survives and the next evaluation refuses on it.

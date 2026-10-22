@@ -1403,6 +1403,233 @@ fn no_delivery<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     })
 }
 
+/// The plant's recorded lockouts, by stored name, sorted.
+async fn recorded_lockouts(h: &Harness) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT reason FROM plant_lockouts WHERE plant_id='scenario-plant' ORDER BY reason",
+    )
+    .fetch_all(&h.sqlite)
+    .await?)
+}
+
+/// Waits until the recorded lockouts are exactly `expected` (sorted).
+async fn wait_recorded_lockouts(h: &Harness, expected: &[&str], attempts: usize) -> Result<()> {
+    for _ in 0..attempts {
+        if recorded_lockouts(h).await? == expected {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let actual = recorded_lockouts(h).await?;
+    bail!("expected recorded lockouts {expected:?}, observed {actual:?}")
+}
+
+/// How many latch events the edge recorded for `reason`: `set` counts
+/// `lockout_set`, otherwise `lockout_cleared`.
+async fn latch_events(h: &Harness, reason: &str, set: bool) -> Result<i64> {
+    let (kind, field) = if set {
+        ("lockout_set", "$.reason")
+    } else {
+        ("lockout_cleared", "$.cleared_reason")
+    };
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM plant_events WHERE plant_id='scenario-plant' AND kind=? \
+         AND json_extract(detail_json,'$.kind')='latch' AND json_extract(detail_json,?)=?",
+    )
+    .bind(kind)
+    .bind(field)
+    .bind(reason)
+    .fetch_one(&h.sqlite)
+    .await?)
+}
+
+/// SCEN-046: two explicit-clear faults on one plant are two lockouts, and an
+/// operator reset lifts exactly the one it names (SAFETY-003, F-060-41).
+///
+/// `no_delivery_detected` is latched by the real irrigation cycle, then a leak
+/// is detected on top of it. Before independent records the leak replaced the
+/// first fault in the single column and the leak reset then lifted both; here
+/// the leak reset must leave `no_delivery_detected` refusing automatic and
+/// manual watering alike, until its own, separate reset.
+fn concurrent_latches<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
+    Box::pin(async move {
+        // The first fault, exactly as `scenario_no_delivery` produces it.
+        setup_plant(h, true).await?;
+        h.simulator_post(
+            "/sim/state",
+            json!({"moisture_vwc":42.0,"tank_percent":100.0,"leak":"clear"}),
+        )
+        .await?;
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        fault(h, "pump-no-delivery", true).await?;
+        api_ok(
+            h,
+            Method::POST,
+            "/api/v1/plants/scenario-plant/auto-watering/enable",
+            json!({}),
+        )
+        .await?;
+        h.simulator_post("/sim/state", json!({"moisture_vwc":20.0}))
+            .await?;
+        wait_lockout(h, Some("no_delivery_detected"), 1200).await?;
+        wait_recorded_lockouts(h, &["no_delivery_detected"], 1).await?;
+        // From here on a dose would be delivered: only the lockouts stop one.
+        fault(h, "pump-no-delivery", false).await?;
+        let doses_before: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM commands WHERE plant_id='scenario-plant' AND kind='water'",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
+
+        // The second fault, beside the first.
+        h.clear_mqtt().await;
+        h.simulator_post("/sim/state", json!({"leak":"detected"}))
+            .await?;
+        wait_recorded_lockouts(h, &["leak", "no_delivery_detected"], 400).await?;
+        wait_lockout(h, Some("leak"), 300).await?;
+        let (status, body) = h
+            .json(
+                Method::POST,
+                &format!("{}/api/v1/plants/scenario-plant/water", h.edge_url),
+                json!({"ml":40.0,"mode":"manual"}),
+            )
+            .await?;
+        ensure!(
+            status == reqwest::StatusCode::CONFLICT && body["error"]["details"]["reason"] == "leak",
+            "manual dose during leak + no_delivery was {status}: {body}"
+        );
+
+        // The operator resets the leak, against a fresh dry reading.
+        let wet: i64 = sqlx::query_scalar(
+            "SELECT coalesce(max(id),0) FROM measurements WHERE kind='leak_state'",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
+        h.simulator_post("/sim/state", json!({"leak":"clear"}))
+            .await?;
+        clear_leak_on_fresh_dry_reading(h, wet).await?;
+
+        // Exactly the leak went; the first fault still refuses on its own.
+        wait_recorded_lockouts(h, &["no_delivery_detected"], 1).await?;
+        wait_lockout(h, Some("no_delivery_detected"), 300).await?;
+        let plant = h
+            .get_json(&format!("{}/api/v1/plants/scenario-plant", h.edge_url))
+            .await?;
+        let shown: Vec<&str> = plant["lockouts"]
+            .as_array()
+            .context("GET /plants/{id} has no lockouts[]")?
+            .iter()
+            .filter_map(|entry| entry["reason"].as_str())
+            .collect();
+        ensure!(
+            shown == ["no_delivery_detected"],
+            "the plant view after the leak reset shows {shown:?}: {plant}"
+        );
+        let (status, body) = h
+            .json(
+                Method::POST,
+                &format!("{}/api/v1/plants/scenario-plant/water", h.edge_url),
+                json!({"ml":40.0,"mode":"manual"}),
+            )
+            .await?;
+        ensure!(
+            status == reqwest::StatusCode::CONFLICT
+                && body["error"]["details"]["reason"] == "no_delivery_detected",
+            "a manual dose after only the leak reset was {status}: {body}"
+        );
+        // Automatic watering stays refused while the plant is dry and the
+        // pump would deliver: observed across fresh soil readings, each of
+        // which the control loop evaluates.
+        for _ in 0..2 {
+            ensure!(
+                wait_measurement_newer_than(h, "soil_moisture", now_ms(h).await?).await?,
+                "no fresh soil reading while no_delivery_detected was latched"
+            );
+        }
+        wait_recorded_lockouts(h, &["no_delivery_detected"], 1).await?;
+        let doses_after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM commands WHERE plant_id='scenario-plant' AND kind='water'",
+        )
+        .fetch_one(&h.sqlite)
+        .await?;
+        ensure!(
+            doses_after == doses_before,
+            "a dose was issued while no_delivery_detected was latched: \
+             {doses_before} before, {doses_after} after"
+        );
+        ensure!(
+            !h.mqtt()
+                .await
+                .iter()
+                .any(|message| is_edge_command(&message.topic)),
+            "a command was published while a latch was recorded"
+        );
+        // One set and one clear for the leak; the other fault is set and not
+        // cleared — the leak reset recorded nothing against it.
+        for (reason, set, expected) in [
+            ("leak", true, 1),
+            ("leak", false, 1),
+            ("no_delivery_detected", true, 1),
+            ("no_delivery_detected", false, 0),
+        ] {
+            let observed = latch_events(h, reason, set).await?;
+            ensure!(
+                observed == expected,
+                "{reason} {} events: expected {expected}, observed {observed}",
+                if set {
+                    "lockout_set"
+                } else {
+                    "lockout_cleared"
+                }
+            );
+        }
+
+        // The second, separate reset — and only now is watering permitted.
+        let cleared = api_ok(
+            h,
+            Method::POST,
+            "/api/v1/plants/scenario-plant/lockout/clear",
+            json!({"reason":"no_delivery_detected"}),
+        )
+        .await?;
+        ensure!(
+            cleared["cleared"] == "no_delivery_detected" && cleared["remaining"] == json!([]),
+            "the second reset answered {cleared}"
+        );
+        wait_recorded_lockouts(h, &[], 1).await?;
+        ensure!(
+            latch_events(h, "no_delivery_detected", false).await? == 1,
+            "the second reset recorded no lockout_cleared event"
+        );
+        wait_lockout(h, None, 300).await?;
+        // The plant is still dry and automation still on: the converse of
+        // every refusal above is the next automatic dose, through the real
+        // control loop, and it is published.
+        let budget = Duration::from_secs(60);
+        let deadline = tokio::time::Instant::now() + budget;
+        loop {
+            let doses: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM commands WHERE plant_id='scenario-plant' AND kind='water'",
+            )
+            .fetch_one(&h.sqlite)
+            .await?;
+            if doses > doses_before
+                && h.mqtt()
+                    .await
+                    .iter()
+                    .any(|message| message.topic.ends_with("/commands/water"))
+            {
+                return Ok(());
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "no automatic dose within {budget:?} of the last reset ({doses} commands)"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+}
+
 async fn wait_edge_ready(h: &Harness) -> Result<()> {
     for _ in 0..200 {
         if h.get_json(&format!("{}/health/ready", h.edge_url))
@@ -3972,6 +4199,12 @@ scenarios!(
         tank_empty
     ),
     ("scenario_no_delivery", ["SCEN-044"], [], no_delivery),
+    (
+        "scenario_concurrent_latches",
+        ["SCEN-046"],
+        ["SAFETY-003"],
+        concurrent_latches
+    ),
     (
         "scenario_restart_mid_command",
         ["SCEN-051"],

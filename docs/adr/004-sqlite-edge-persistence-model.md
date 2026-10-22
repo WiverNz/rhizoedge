@@ -15,6 +15,12 @@ policies, device capabilities, and reported history gaps
 the single writer, timestamp representation, and the deduplicate-and-persist
 transaction is unchanged.
 
+**Amended 2026-10-22 by [ADR-021](021-independent-plant-lockouts.md).** Plant
+lockouts live in `plant_lockouts`, one row per `(plant_id, reason)`, added by
+the forward migration `0002_plant_lockouts.sql` below. `plants.lockout_reason`
+and `plants.lockout_since` remain in the schema as a **display summary** that no
+decision reads; the table is authoritative.
+
 ## Context
 
 The edge must survive crashes without re-watering (SAFETY-010), must deduplicate
@@ -94,8 +100,8 @@ CREATE TABLE plants (
     pot_volume_ml         REAL,
     soil_type             TEXT,
     auto_watering_enabled INTEGER NOT NULL DEFAULT 0,   -- opt-in, SAFETY-012
-    lockout_reason        TEXT,
-    lockout_since         INTEGER,
+    lockout_reason        TEXT,      -- display summary only (ADR-021)
+    lockout_since         INTEGER,   -- display summary only (ADR-021)
     created_at            INTEGER NOT NULL
 );
 
@@ -424,7 +430,10 @@ adds the per-reason `plant_lockouts` table and backfills it from
 `plants.lockout_reason`, fail-closed, so a database carrying a latched alarm
 keeps it; folding it into the baseline would have required recreating the
 database and losing that state. Pinned by
-`migrate::tests::a_v1_database_backs_up_and_carries_every_alarm_into_plant_lockouts`.
+`migrate::tests::a_v1_database_backs_up_and_carries_every_alarm_into_plant_lockouts`
+and, for idempotence, `migrate::tests::rerunning_the_0002_backfill_changes_nothing`.
+The table, its writers, and the backfill rules are
+[ADR-021](021-independent-plant-lockouts.md) §2 and §7.
 
 The automatic backup in `storage::migrate::run` precedes that upgrade. It also
 runs on a fresh create:

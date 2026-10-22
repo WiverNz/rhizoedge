@@ -12,6 +12,17 @@ evaluator when it cannot reach the Edge. Everything this ADR says about the
 The split is tabulated in
 [offline-autonomy.md](../architecture/offline-autonomy.md) §2.
 
+**Amended 2026-10-22 by [ADR-021](021-independent-plant-lockouts.md).** The gate
+sketched below is the original design. As implemented, lockouts are
+independent records: the gate takes `latched` and `holds` lists from
+`plant_lockouts` and refuses on **any** latch or unexpired hold, and its order is
+step 0 actuator, step 1 `Detected → Leak`, step 3 recorded lockouts (best
+`display_rank` shown), step 2 `Unknown → Uncertain`, then the derived checks.
+`Locked(r)` no longer clears itself: a latch ends only by an operator clearing
+that one reason, a hold only by its deadline, and a derived reason only by not
+being derived on the next evaluation. Ownership is unchanged — the edge still
+decides, and the gate is still the first statement of `evaluate`.
+
 ## Context
 
 The project plan is explicit that automatic watering must never be:
@@ -121,9 +132,13 @@ between safety tests that exist and safety tests that were intended.
 ```
 
 `Locked` is reachable from every state on every tick, because a leak does not
-wait for a convenient moment.
+wait for a convenient moment. Several reasons can hold at once; how they are
+stored and cleared is [ADR-021](021-independent-plant-lockouts.md).
 
 ### The safety gate runs first, always
+
+*Original sketch; the implemented order and the recorded-lockout step are in
+[ADR-021](021-independent-plant-lockouts.md) §3 and `irrigation/gate.rs`.*
 
 ```rust
 fn safety_gate(i: &IrrigationInputs) -> Option<LockoutReason> {

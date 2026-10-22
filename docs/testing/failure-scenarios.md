@@ -236,6 +236,18 @@ SCEN-nnn  name
   `FIRMWARE_MAX_RUN_SECONDS`; `pump_fault` is reported; further commands are
   refused with `pump_unavailable`
 
+### SCEN-046 concurrent latches clear independently
+- **Level** e2e · **Milestone** M9 · **Proves** SAFETY-003
+- **Actions** `--fault pump-no-delivery` until `Lock(NoDeliveryDetected)`; clear
+  the fault; `--fault leak`; the leak clears; the operator resets `leak`; later,
+  the operator resets `no_delivery_detected`
+- **Assertions** both faults are recorded as separate latches and the leak is
+  shown; resetting `leak` removes only `leak` — `no_delivery_detected` is still
+  recorded, shown in `lockouts[]`, refuses a manual dose with 409, and no
+  automatic dose is issued while the plant is dry and the pump would deliver;
+  one `lockout_set` per fault and one `lockout_cleared` per reset; only after
+  the second, separate reset is the next automatic dose issued and published
+
 ---
 
 ## F. Edge failures
@@ -708,7 +720,7 @@ mode with no hardware.
 |---|---|
 | SAFETY-001 | SCEN-010, SCEN-011, SCEN-113, SCEN-117 |
 | SAFETY-002 | SCEN-025, SCEN-030, SCEN-031, SCEN-073, SCEN-074, SCEN-075, SCEN-076, SCEN-077, SCEN-078, SCEN-079, SCEN-116 |
-| SAFETY-003 | SCEN-040, SCEN-041, SCEN-114 |
+| SAFETY-003 | SCEN-040, SCEN-041, SCEN-046, SCEN-114 |
 | SAFETY-004 | SCEN-042, SCEN-043, SCEN-081 |
 | SAFETY-005 | SCEN-022, SCEN-023, SCEN-024, SCEN-070 |
 | SAFETY-006 | SCEN-034, SCEN-071, SCEN-072 |

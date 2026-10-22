@@ -102,6 +102,7 @@ normalised out of the project plan.
 | [ADR-018](adr/018-battery-and-deep-sleep-device-mode.md) | Battery devices sleep; announced bounded wake windows; commands held as Edge-side intents |
 | [ADR-019](adr/019-per-plant-adaptive-water-model.md) | A per-plant learned water model that may narrow a dose and never widen one |
 | [ADR-020](adr/020-verified-watering-and-delivery-evidence.md) | Measured delivery evidence, an explicit outcome taxonomy, and a reservoir scale rather than a flow meter |
+| [ADR-021](adr/021-independent-plant-lockouts.md) | Plant lockouts are independent records: latches cleared one by one by an operator, holds by time, derived conditions never stored |
 
 ## Product requirements
 

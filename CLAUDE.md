@@ -159,7 +159,7 @@ In this order. Do not skip to the issue file.
    acceptance criteria
 
 When a decision seems arbitrary, the reason is in an ADR
-(`docs/adr/`). Twenty of them, each with Context / Decision / Alternatives /
+(`docs/adr/`). Twenty-one of them, each with Context / Decision / Alternatives /
 Consequences / Risks. Read the relevant one rather than re-deciding.
 
 **ADR-015 through ADR-018 are the ones most likely to surprise you** if you
@@ -204,7 +204,7 @@ docs/
 ├── architecture/      12 docs: overview, components, data flow, deployment,
 │                      safety invariants, failure model, time, config, deps,
 │                      connectivity modes, offline autonomy, operational history
-├── adr/               ADR-001…020 — why each decision was made
+├── adr/               ADR-001…021 — why each decision was made
 ├── prd/               PRD 000…160 — one per milestone, 17 fixed sections
 ├── protocol/          mqtt-v1.md (normative), http boundaries, versioning
 ├── testing/           strategy, 80 scenarios, simulator, HIL, local dev
@@ -602,7 +602,12 @@ inside `BEGIN IMMEDIATE`; a command refused at publish is `failed` with reason
 `blocked_by_lockout`. Scenario resets must delete `plant_lockouts` before
 `plants`. The API lists records as `lockouts[]` (display order) on the plant,
 the plant list, and the overview; `lockout/clear` answers with `remaining[]`,
-and `wrong_reason` is retired in favour of `not_locked_out`. M9 report §15.
+and `wrong_reason` is retired in favour of `not_locked_out`. The design is
+[ADR-021](docs/adr/021-independent-plant-lockouts.md); the history is M9 report
+§15; SCEN-046 (`scenario_concurrent_latches`) is the end-to-end proof that a
+leak reset leaves another latch refusing. **Path F — a lockout recorded after a
+command's last pre-publish check — is narrowed, not closed**, so SAFETY-003 is
+not declared closed.
 
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug. The default is
