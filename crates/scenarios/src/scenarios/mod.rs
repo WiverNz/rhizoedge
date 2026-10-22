@@ -4002,117 +4002,167 @@ fn battery_awake_cycle<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
 
 fn sleep_budget_cooldown<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
     Box::pin(async move {
-        setup_battery_plant(h).await?;
-        let authored = api_ok(
-            h,
-            Method::PUT,
-            "/api/v1/plants/battery-plant/offline-policy",
-            json!({}),
-        )
-        .await?;
-        ensure!(authored["enabled"] == false);
-        let enabled = api_ok(
-            h,
-            Method::POST,
-            "/api/v1/plants/battery-plant/offline-policy/enable",
-            json!({}),
-        )
-        .await?;
-        let version = enabled["policy_version"]
-            .as_u64()
-            .context("policy version")?;
-        for _ in 0..400 {
-            let state = h.get_json(&format!("{}/sim/state", h.battery_url)).await?;
-            if state["applied_policy_versions"]["battery-plant"] == version {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+        // A wall-clock bound on the whole scenario, on top of the bound on each
+        // wait. Its first CI-scale failure was not a failure at all: on a WSL2
+        // disk the battery simulator stopped answering HTTP, every poll blocked,
+        // and the suite sat on this scenario for five hours with nothing to
+        // say. A deadline turns that into a named error with the last state.
+        match tokio::time::timeout(SLEEP_BUDGET_COOLDOWN_LIMIT, sleep_budget_cooldown_steps(h))
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => bail!(
+                "scenario_sleep_budget_cooldown exceeded its wall-clock limit of \
+                 {SLEEP_BUDGET_COOLDOWN_LIMIT:?}; last battery state: {}",
+                battery_state_or_reason(h).await
+            ),
         }
-        h.battery_post(
-            "/sim/state",
-            json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
-        )
-        .await?;
-        h.battery_post(
-            "/sim/fault",
-            json!({"fault":"disconnect:172800","enabled":true}),
-        )
-        .await?;
-        // Bounded, like every other wait in the suite. An unbounded `loop` here
-        // has no failure mode of its own: if the cooldown never opens, the
-        // scenario spins until something outside it — the step timeout — kills
-        // the whole run, and the report says nothing about which scenario or
-        // what it was waiting for. A budget with the last observed state is the
-        // difference between a diagnosis and a restart.
-        let cooling = wait_simulator_url(h, &h.battery_url, 4_000, |s| {
+    })
+}
+
+/// The whole of `scenario_sleep_budget_cooldown`, in real time.
+const SLEEP_BUDGET_COOLDOWN_LIMIT: Duration = Duration::from_secs(600);
+
+async fn sleep_budget_cooldown_steps(h: &Harness) -> Result<()> {
+    setup_battery_plant(h).await?;
+    let authored = api_ok(
+        h,
+        Method::PUT,
+        "/api/v1/plants/battery-plant/offline-policy",
+        json!({}),
+    )
+    .await?;
+    ensure!(authored["enabled"] == false);
+    let enabled = api_ok(
+        h,
+        Method::POST,
+        "/api/v1/plants/battery-plant/offline-policy/enable",
+        json!({}),
+    )
+    .await?;
+    let version = enabled["policy_version"]
+        .as_u64()
+        .context("policy version")?;
+    // Best effort, as before: the cooldown wait below is what must succeed.
+    let _ = wait_battery_until(h, Duration::from_secs(10), "the policy applied", |s| {
+        s["applied_policy_versions"]["battery-plant"] == version
+    })
+    .await;
+    h.battery_post(
+        "/sim/state",
+        json!({"moisture_vwc":5.0,"tank_percent":100.0,"leak":"clear"}),
+    )
+    .await?;
+    h.battery_post(
+        "/sim/fault",
+        json!({"fault":"disconnect:172800","enabled":true}),
+    )
+    .await?;
+    let cooling = wait_battery_until(
+        h,
+        Duration::from_secs(120),
+        "an offline cooldown to start",
+        |s| {
             s["offline_cooldown_remaining_ms"]
                 .as_u64()
                 .unwrap_or_default()
                 > 0
-        })
-        .await?;
-        let before = cooling["offline_cooldown_remaining_ms"]
+        },
+    )
+    .await?;
+    let before = cooling["offline_cooldown_remaining_ms"]
+        .as_u64()
+        .context("cooldown")?;
+    let cold = h.battery_post("/sim/restart", json!({})).await?;
+    ensure!(cold["zero_credit_resets"].as_u64().unwrap_or_default() > 0);
+    ensure!(
+        cold["offline_cooldown_remaining_ms"]
             .as_u64()
-            .context("cooldown")?;
-        let cold = h.battery_post("/sim/restart", json!({})).await?;
-        ensure!(cold["zero_credit_resets"].as_u64().unwrap_or_default() > 0);
-        ensure!(
-            cold["offline_cooldown_remaining_ms"]
-                .as_u64()
-                .unwrap_or_default()
-                >= before.saturating_sub(60_000),
-            "cold reset shortened cooldown"
-        );
-        let corrupt = h.battery_post("/sim/rtc-corrupt", json!({})).await?;
-        ensure!(
-            corrupt["zero_credit_checksum_failures"]
-                .as_u64()
-                .unwrap_or_default()
-                > 0
-        );
-        let final_state = wait_simulator_url(h, &h.battery_url, 8_000, |s| {
-            s["credited_timer_wakes"].as_u64().unwrap_or_default() >= 190
-        })
-        .await?;
-        ensure!(
-            final_state["offline_budget_used_ml"]
-                .as_f64()
-                .unwrap_or_default()
-                <= 300.01
-        );
-        ensure!(
-            final_state["delivered_today_ml"]
-                .as_f64()
-                .unwrap_or_default()
-                <= 600.01
-        );
-        Ok(())
-    })
+            .unwrap_or_default()
+            >= before.saturating_sub(60_000),
+        "cold reset shortened cooldown"
+    );
+    let corrupt = h.battery_post("/sim/rtc-corrupt", json!({})).await?;
+    ensure!(
+        corrupt["zero_credit_checksum_failures"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    let final_state = wait_battery_until(
+        h,
+        Duration::from_secs(360),
+        "190 credited timer wakes",
+        |s| s["credited_timer_wakes"].as_u64().unwrap_or_default() >= 190,
+    )
+    .await?;
+    ensure!(
+        final_state["offline_budget_used_ml"]
+            .as_f64()
+            .unwrap_or_default()
+            <= 300.01
+    );
+    ensure!(
+        final_state["delivered_today_ml"]
+            .as_f64()
+            .unwrap_or_default()
+            <= 600.01
+    );
+    Ok(())
 }
 
-async fn wait_simulator_url(
+/// How long one `/sim/state` request may take before the wait says so.
+const BATTERY_POLL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Polls the battery simulator until `predicate` holds, within `budget` of real
+/// time.
+///
+/// A budget in time, not in polls: a poll costs one HTTP round trip, and on a
+/// simulator that answers slowly a poll count means hours (CLAUDE.md §7). Each
+/// request is bounded too, so a simulator that stops answering fails the wait
+/// with that said, instead of hanging inside one request.
+async fn wait_battery_until(
     h: &Harness,
-    url: &str,
-    attempts: usize,
+    budget: Duration,
+    what: &str,
     predicate: impl Fn(&Value) -> bool,
 ) -> Result<Value> {
-    for _ in 0..attempts {
-        let state = h.get_json(&format!("{url}/sim/state")).await?;
-        if predicate(&state) {
-            return Ok(state);
+    let started = tokio::time::Instant::now();
+    let deadline = started + budget;
+    let url = format!("{}/sim/state", h.battery_url);
+    let mut last = json!({ "unread": "no poll completed" });
+    let mut unanswered = 0_u32;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            bail!(
+                "waited {:?} for {what} on the battery simulator; {unanswered} polls went \
+                 unanswered for {BATTERY_POLL_TIMEOUT:?}; last observed: {last}",
+                started.elapsed()
+            );
+        }
+        match tokio::time::timeout(remaining.min(BATTERY_POLL_TIMEOUT), h.get_json(&url)).await {
+            Ok(Ok(state)) => {
+                if predicate(&state) {
+                    return Ok(state);
+                }
+                last = state;
+            }
+            Ok(Err(error)) => last = json!({ "unreadable": format!("{error:#}") }),
+            Err(_) => unanswered += 1,
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    // The last state, for the same reason `wait_simulator` reports it: this
-    // wait is used by the battery scenarios, which are the ones whose failures
-    // are hardest to reconstruct after the fact.
-    let last = h
-        .get_json(&format!("{url}/sim/state"))
-        .await
-        .unwrap_or_else(|error| json!({ "unreadable": error.to_string() }));
-    bail!(
-        "simulator state did not reach the expected condition after {attempts}          polls; last observed: {last}"
-    )
+}
+
+/// The battery simulator's state for a failure message, or why there is none.
+async fn battery_state_or_reason(h: &Harness) -> Value {
+    let url = format!("{}/sim/state", h.battery_url);
+    match tokio::time::timeout(BATTERY_POLL_TIMEOUT, h.get_json(&url)).await {
+        Ok(Ok(state)) => state,
+        Ok(Err(error)) => json!({ "unreadable": format!("{error:#}") }),
+        Err(_) => json!({ "unanswered": format!("no answer within {BATTERY_POLL_TIMEOUT:?}") }),
+    }
 }
 
 macro_rules! scenarios {

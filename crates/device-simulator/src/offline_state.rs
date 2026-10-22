@@ -100,6 +100,24 @@ impl OfflineRuntime {
         self.confirmation_elapsed_ms = state.confirm_elapsed.0;
     }
 
+    /// Whether forgetting the move from `self` to `next` leaves the device no
+    /// more permissive than `next` would.
+    ///
+    /// True only when the phase, the dose count, and the budget are unchanged,
+    /// the cooldown did not grow, and the confirmation did not shrink. Restoring
+    /// `self` after a crash then means a cooldown at least as long and a
+    /// confirmation at most as advanced as reality: more waiting, never an
+    /// earlier dose. A dose, a new cooldown, a phase change, and a confirmation
+    /// reset all fail this and are written before anything else happens.
+    #[must_use]
+    pub fn loss_is_conservative(&self, next: &OfflineState) -> bool {
+        CyclePhase::from(next.cycle) == self.cycle
+            && next.dose_count == self.dose_count
+            && next.budget_used_ml.to_bits() == self.budget_window.delivered_ml.to_bits()
+            && next.cooldown_remaining.0 <= self.cooldown_remaining_ms
+            && next.confirm_elapsed.0 >= self.confirmation_elapsed_ms
+    }
+
     /// Credits observed monotonic time to the rolling budget window.
     ///
     /// **Only time the device actually observed** — never a wall-clock
@@ -309,7 +327,18 @@ impl crate::device::Device {
     ///
     /// The window's own elapsed time is device bookkeeping and is not taken
     /// from the evaluator, which has no opinion about it.
+    ///
+    /// Written at once unless every field moved only in the direction a crash
+    /// may safely undo ([`OfflineRuntime::loss_is_conservative`]); then the
+    /// write is deferred and batched.
     pub fn apply_offline_decision(&mut self, next: &OfflineState) {
+        let current = self.store().state().offline_runtime;
+        if current.loss_is_conservative(next) {
+            self.store_mut().mutate_deferred(|state| {
+                state.offline_runtime.apply_offline_state(next);
+            });
+            return;
+        }
         if let Err(error) = self.store_mut().mutate(|state| {
             state.offline_runtime.apply_offline_state(next);
         }) {
@@ -344,6 +373,48 @@ impl crate::device::Device {
 mod tests {
     use super::*;
     use crate::state::{BudgetWindow, OfflineRuntime};
+
+    /// Only a move a crash may safely undo is deferred; each field that could
+    /// make a restored device more permissive forces an immediate write.
+    #[test]
+    fn only_a_conservative_move_may_be_deferred() {
+        let current = runtime();
+        let base = current.as_offline_state();
+        let moved = |change: &dyn Fn(&mut OfflineState)| {
+            let mut next = base;
+            change(&mut next);
+            current.loss_is_conservative(&next)
+        };
+        assert!(moved(&|_| {}), "no change");
+        assert!(
+            moved(&|n| n.cooldown_remaining.0 -= 60_000),
+            "a countdown: losing it leaves the cooldown longer"
+        );
+        assert!(
+            moved(&|n| n.confirm_elapsed.0 += 60_000),
+            "a confirmation advancing: losing it means confirming again"
+        );
+        assert!(
+            !moved(&|n| n.cooldown_remaining.0 += 60_000),
+            "a new or longer cooldown must be written"
+        );
+        assert!(
+            !moved(&|n| n.confirm_elapsed.0 = 0),
+            "a confirmation reset must be written"
+        );
+        assert!(
+            !moved(&|n| n.budget_used_ml += 35.0),
+            "a dose's volume must be written"
+        );
+        assert!(
+            !moved(&|n| n.dose_count += 1),
+            "a dose count must be written"
+        );
+        assert!(
+            !moved(&|n| n.cycle = OfflineCycle::Idle),
+            "a phase change must be written"
+        );
+    }
 
     fn runtime() -> OfflineRuntime {
         OfflineRuntime {

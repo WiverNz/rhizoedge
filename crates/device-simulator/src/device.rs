@@ -60,6 +60,19 @@ const SIMULATED_RSSI_DBM: i16 = -58;
 /// and the budget window shorter than reality, so a crash can never buy a dose.
 const OFFLINE_RUNTIME_PERSIST_MS: u64 = 60_000;
 
+/// How much virtual time a deferred offline-state change may wait before it is
+/// written.
+///
+/// Fifteen virtual minutes. The countdown of a cooldown, the growth of a
+/// confirmation, and the crediting of the budget window are deferred
+/// ([`StateStore::mutate_deferred`]); everything whose loss would be permissive
+/// is written at once. At `--time-scale 3600` this is four writes a real second
+/// rather than the hundred-odd that writing every 60-second step cost, which a
+/// slow disk could not sustain. A crash discards at most this much observed
+/// time, and discarding observed time leaves the cooldown longer and the budget
+/// window less credited than reality (SAFETY-015).
+const OFFLINE_RUNTIME_FLUSH_MS: u64 = 15 * 60_000;
+
 /// The device.
 #[derive(Debug)]
 pub struct Device {
@@ -123,6 +136,8 @@ pub struct Device {
     pub(crate) last_policy_rejection: Option<crate::policy::PolicyRejection>,
     /// Observed monotonic time not yet folded into the persisted runtime state.
     unpersisted_runtime_ms: u64,
+    /// Virtual time since a deferred store change was first left unwritten.
+    deferred_state_ms: u64,
     /// What the most recent `event.ack` did.
     last_ack_outcome: Option<AckOutcome>,
     /// The wake cycle. Always-on devices carry an inert one.
@@ -176,6 +191,11 @@ impl Device {
     /// dry up because the device rebooted. One-shot faults disable themselves
     /// before restarting, so a `--fault restart` cannot loop forever.
     pub fn restart(&mut self) {
+        // A deferred write is an I/O batching decision, not a model of RAM
+        // loss: the state a restart reloads is what the device had committed
+        // before batching existed. Losing it here would only make the
+        // simulator's reboot depend on how recently the batch was written.
+        self.flush_state();
         let settings = std::sync::Arc::clone(&self.settings);
         let environment = self.environment.clone();
         let faults = self.faults.clone();
@@ -268,6 +288,7 @@ impl Device {
             recent_samples: RecentSamples::default(),
             last_policy_rejection: None,
             unpersisted_runtime_ms: 0,
+            deferred_state_ms: 0,
             last_offline_refusal: None,
             last_ack_outcome: None,
             last_result_publish_ms: 0,
@@ -672,6 +693,7 @@ impl Device {
             return Vec::new();
         }
         self.monotonic.advance_ms(elapsed_ms);
+        self.flush_deferred_if_due(elapsed_ms);
         self.environment.step(elapsed_ms);
         // The plant does not sleep. Soil, reservoir, and pot keep evolving while
         // the device is off the air, which is what makes a missed wake visible
@@ -896,10 +918,33 @@ impl Device {
         // the budget it is holding was spent under *some* policy, and inventing
         // a window in which to forgive it would be the permissive one.
         let window_ms = window_ms.unwrap_or(0);
-        if let Err(e) = self.store.mutate(|state| {
+        // Deferred: crediting the window only ever releases budget, so losing
+        // the credit to a crash leaves less water available, never more.
+        self.store.mutate_deferred(|state| {
             state.offline_runtime.advance(pending, window_ms);
-        }) {
-            tracing::error!(error = %e, "could not persist the offline runtime state");
+        });
+    }
+
+    /// Writes deferred state once it has waited `OFFLINE_RUNTIME_FLUSH_MS`.
+    fn flush_deferred_if_due(&mut self, elapsed_ms: u64) {
+        if !self.store.has_deferred_changes() {
+            self.deferred_state_ms = 0;
+            return;
+        }
+        self.deferred_state_ms = self.deferred_state_ms.saturating_add(elapsed_ms);
+        if self.deferred_state_ms >= OFFLINE_RUNTIME_FLUSH_MS {
+            self.flush_state();
+        }
+    }
+
+    /// Writes any deferred state now.
+    ///
+    /// Called before a restart and at shutdown. A failure is logged and the
+    /// change stays pending, exactly as a failed `mutate` keeps its change.
+    pub fn flush_state(&mut self) {
+        match self.store.flush() {
+            Ok(()) => self.deferred_state_ms = 0,
+            Err(e) => tracing::error!(error = %e, "could not write the deferred state"),
         }
     }
 

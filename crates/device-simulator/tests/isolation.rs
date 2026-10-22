@@ -584,3 +584,145 @@ fn commanded_actuation_still_works_after_an_isolation() {
         "an isolation must not leave the device unable to obey a command"
     );
 }
+
+// ------------------------------------ batched writes under accelerated time
+
+/// A provisioned device on a slow telemetry cadence and a wet plant, so that
+/// the offline evaluator runs every step but nothing doses and nothing is
+/// sampled often: what remains is the evaluator's own bookkeeping.
+fn quiet_isolated_device(state_file: &str, cooldown_ms: u64) -> Device {
+    let args = [
+        "device-simulator",
+        "--device-id",
+        "plant-node-01",
+        "--telemetry-interval",
+        "900",
+        "--initial-moisture",
+        "40",
+        "--state-file",
+        state_file,
+    ];
+    let cli = Cli::try_parse_from(args).expect("test flags must parse");
+    cli.validate().expect("test flags must validate");
+    let mut device = Device::new(&cli);
+    device.on_connected().unwrap();
+    device.on_message(&policy_topic(), &policy_envelope(7));
+    assert!(device.active_policy().is_some());
+    device
+        .store_mut_for_test(|state| {
+            state.offline_runtime.cycle = CyclePhase::Cooldown;
+            state.offline_runtime.cooldown_remaining_ms = cooldown_ms;
+        })
+        .unwrap();
+    device.on_disconnected();
+    assert!(device.is_isolated());
+    device
+}
+
+/// The regression behind `scenario_sleep_budget_cooldown` stalling on WSL2.
+///
+/// Counting a cooldown down used to write the whole state file, with `fsync`,
+/// on every 60-second virtual step — twice, once for the window and once for
+/// the evaluator — which at `--time-scale 3600` is over a hundred writes per
+/// real second. The countdown is now batched; the arithmetic is unchanged.
+#[test]
+fn an_isolated_countdown_is_written_in_batches_not_on_every_step() {
+    let state_file = scratch_state_file().display().to_string();
+    let mut device = quiet_isolated_device(&state_file, 8 * 3_600_000);
+    let before = device.store().writes();
+    for _ in 0..360 {
+        device.tick(60_000);
+    }
+    let writes = device.store().writes() - before;
+    assert_eq!(
+        device.offline_cooldown_remaining_ms(),
+        2 * 3_600_000,
+        "six observed hours are six hours off the cooldown, batched or not"
+    );
+    // Six hours: 24 batches at fifteen minutes, 24 telemetry cycles buffered
+    // while isolated, and headroom. The old behaviour was 720 or more.
+    assert!(
+        writes <= 60,
+        "{writes} state-file writes for 360 steps; the countdown is not batched"
+    );
+}
+
+/// A crash between batches restores an *older* countdown: a cooldown at least
+/// as long as reality, and never more than one batch longer.
+#[test]
+fn a_crash_between_batches_restores_a_longer_cooldown_never_a_shorter_one() {
+    let state_file = scratch_state_file().display().to_string();
+    let in_memory = {
+        let mut device = quiet_isolated_device(&state_file, 8 * 3_600_000);
+        for _ in 0..40 {
+            device.tick(60_000);
+        }
+        assert!(device.store().has_deferred_changes());
+        device.offline_cooldown_remaining_ms()
+        // Dropped without a flush: the process died.
+    };
+    let restored = Device::new(&settings_at(&state_file, &[]))
+        .store()
+        .state()
+        .offline_runtime;
+    assert_eq!(restored.cycle, CyclePhase::Cooldown);
+    assert!(
+        restored.cooldown_remaining_ms >= in_memory,
+        "a crash shortened the cooldown: {} < {in_memory}",
+        restored.cooldown_remaining_ms
+    );
+    assert!(
+        restored.cooldown_remaining_ms - in_memory <= 15 * 60_000,
+        "a crash may cost one batch of observed time, not more: {} vs {in_memory}",
+        restored.cooldown_remaining_ms
+    );
+}
+
+/// A restart is not a crash of the batching: it writes what is pending first,
+/// so a reboot resumes exactly where the device was (SAFETY-015's "a reboot
+/// keeps what is left").
+#[test]
+fn a_restart_writes_the_pending_batch_before_it_reloads() {
+    let state_file = scratch_state_file().display().to_string();
+    let mut device = quiet_isolated_device(&state_file, 8 * 3_600_000);
+    for _ in 0..10 {
+        device.tick(60_000);
+    }
+    assert!(device.store().has_deferred_changes());
+    let before = device.offline_cooldown_remaining_ms();
+    device.restart();
+    assert_eq!(device.offline_cooldown_remaining_ms(), before);
+    assert!(!device.store().has_deferred_changes());
+}
+
+/// What a crash must never lose is written at once: a dose's budget, its
+/// cooldown, and its phase reach the file in the step that dosed, whatever the
+/// batch is doing.
+#[test]
+fn an_offline_dose_is_written_in_the_step_that_delivers_it() {
+    let (mut device, state_file) = provisioned(&[]);
+    device.on_disconnected();
+    assert!(device.is_isolated());
+    let mut dosed = false;
+    for _ in 0..600 {
+        device.tick(60_000);
+        if device.offline_budget_used_ml() > 0.0 {
+            dosed = true;
+            break;
+        }
+    }
+    assert!(dosed, "the dry, isolated plant was dosed");
+    let in_memory = device.store().state().offline_runtime;
+    drop(device);
+    let restored = Device::new(&settings_at(&state_file, &[]))
+        .store()
+        .state()
+        .offline_runtime;
+    assert_eq!(
+        restored.budget_window.delivered_ml, in_memory.budget_window.delivered_ml,
+        "a crash after a dose must not give its volume back"
+    );
+    assert_eq!(restored.dose_count, in_memory.dose_count);
+    assert_eq!(restored.cycle, in_memory.cycle);
+    assert!(restored.cooldown_remaining_ms >= in_memory.cooldown_remaining_ms);
+}

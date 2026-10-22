@@ -22,6 +22,16 @@ use crate::shutdown;
 /// every scale.
 pub const TICK_INTERVAL: Duration = Duration::from_millis(100);
 
+/// The most real time one tick may spend applying virtual time.
+///
+/// Virtual time a tick could not apply within this budget is handed back to the
+/// clock and applied on the next tick, so on a machine too slow for the chosen
+/// scale the simulation runs *slower* rather than falling ever further behind.
+/// Without it a slow tick produced a longer interval, the longer interval a
+/// slower tick, and the device mutex was never free for the control API: on a
+/// WSL2 disk with ~16 ms `fsync`, `/sim/state` stopped answering for hours.
+pub const TICK_WORK_BUDGET: Duration = Duration::from_millis(50);
+
 /// Runs one device until it is asked to stop.
 ///
 /// # Errors
@@ -118,6 +128,7 @@ pub async fn run(cli: Cli) -> Result<shutdown::Signal, MqttError> {
     // lines: `docker compose stop` sends SIGTERM to PID 1, and whether that
     // reached the binary or only a shell wrapper is invisible from outside.
     tracing::info!(reason = signal.reason(), "graceful shutdown requested");
+    crate::mqtt::lock(&device).flush_state();
     connection.shutdown().await;
     if let (Some(capture), Some(directory)) = (connection.capture(), cli.capture_fixtures.as_ref())
     {
@@ -223,24 +234,43 @@ async fn deep_sleep(
 /// overshoot decay each resolve to a single leap. The model would then behave
 /// differently at different scales, and an accelerated test would be a test of
 /// something other than the system it claims to exercise.
+///
+/// The device mutex is taken per step, not for the whole interval, so the
+/// control API is never locked out for longer than one step; and the interval
+/// is cut off after [`TICK_WORK_BUDGET`] of real time, with the remainder
+/// returned to the clock for the next tick.
 fn advance(
     device: &Arc<Mutex<Device>>,
     clock: &mut AcceleratedClock,
 ) -> (Vec<crate::envelope::Publication>, bool) {
+    advance_within(device, clock, TICK_WORK_BUDGET)
+}
+
+/// [`advance`] with an explicit real-time budget, for the tests.
+fn advance_within(
+    device: &Arc<Mutex<Device>>,
+    clock: &mut AcceleratedClock,
+    budget: Duration,
+) -> (Vec<crate::envelope::Publication>, bool) {
     let elapsed = clock.take_elapsed_ms();
+    let work = crate::clock::WorkBudget::start(budget);
     let mut publications = Vec::new();
-    let mut restarted = false;
-    let mut guard = crate::mqtt::lock(device);
+    let mut applied = 0_u64;
     for step in AcceleratedClock::steps(elapsed) {
-        publications.extend(guard.tick(step));
-        if guard.take_restart_notice() {
-            restarted = true;
-            // A restart replaced the device; the rest of this interval belongs
-            // to the new boot, which starts its own clock at zero.
+        if applied > 0 && work.exhausted() {
+            clock.defer_ms(elapsed - applied);
             break;
         }
+        let mut guard = crate::mqtt::lock(device);
+        publications.extend(guard.tick(step));
+        applied += step;
+        if guard.take_restart_notice() {
+            // A restart replaced the device; the rest of this interval belongs
+            // to the new boot, which starts its own clock at zero.
+            return (publications, true);
+        }
     }
-    (publications, restarted)
+    (publications, false)
 }
 
 /// Replaces the broker connection after a restart.
@@ -274,5 +304,74 @@ async fn stop_signal(duration: Option<u64>) -> shutdown::Signal {
             () = tokio::time::sleep(Duration::from_secs(seconds)) => shutdown::Signal::DurationElapsed,
         },
         None => signalled.await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    /// The stall `scenario_sleep_budget_cooldown` hit on WSL2, reproduced.
+    ///
+    /// An isolated device buffers a telemetry cycle on every 60-second step, and
+    /// each buffered event is written with `fsync`. With every write taking
+    /// 16 ms (measured on the WSL2 volume) and the clock at 3 600x, one tick of
+    /// virtual time costs more real time than it covers. The run loop used to
+    /// hold the device mutex for the whole interval, each interval grew, and the
+    /// control API waited for minutes, then hours.
+    #[test]
+    fn a_slow_disk_never_locks_the_control_api_out_of_the_device() {
+        let cli = crate::testutil::cli(&["--telemetry-interval", "10", "--time-scale", "3600"]);
+        let mut device = Device::new(&cli);
+        device
+            .store_mut()
+            .set_write_delay_for_test(Duration::from_millis(16));
+        assert!(!device.is_connected());
+        let device = Arc::new(Mutex::new(device));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let run_loop = {
+            let device = Arc::clone(&device);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut clock = AcceleratedClock::new(3_600.0);
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = advance(&device, &mut clock);
+                    std::thread::sleep(TICK_INTERVAL);
+                }
+            })
+        };
+
+        // The control API's side: take the lock, read, let go, every 10 ms.
+        let mut worst = Duration::ZERO;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while tokio::time::Instant::now() < deadline {
+            let asked = tokio::time::Instant::now();
+            let uptime = crate::mqtt::lock(&device).uptime_ms();
+            worst = worst.max(asked.elapsed());
+            let _ = uptime;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        stop.store(true, Ordering::Relaxed);
+        run_loop.join().unwrap();
+
+        let device = crate::mqtt::lock(&device);
+        assert!(
+            device.uptime_ms() >= 10 * 60_000,
+            "virtual time still advances on a slow disk, only slower: {} ms",
+            device.uptime_ms()
+        );
+        assert!(
+            device.store().writes() > 10,
+            "the slow disk was actually exercised"
+        );
+        assert!(
+            worst < Duration::from_millis(500),
+            "the control API waited {worst:?} for the device"
+        );
     }
 }

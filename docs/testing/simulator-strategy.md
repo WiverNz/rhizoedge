@@ -162,6 +162,20 @@ The simulator also maintains the same durable state the firmware does — a
 small JSON file so that `--restart` mid-dose reproduces SAFETY-011 behaviour
 faithfully.
 
+Writes are atomic (temp file, `fsync`, rename) and, with one exception, happen on
+every change. The exception is the offline bookkeeping whose loss is
+conservative: a cooldown counting down, a confirmation advancing, the budget
+window being credited. Those are batched and written at least every 15 virtual
+minutes, before a simulated restart, and at shutdown; a dose, a new cooldown, a
+phase change, or a confirmation reset is written at once. A process killed
+between batches restores a cooldown at most one batch *longer* than reality.
+Batching exists because writing the countdown on every 60-second step was over a
+hundred `fsync`s per real second at `--time-scale 3600`. On a WSL2 disk
+(~16 ms each) that stalled the simulator's control API for hours. The run loop
+also takes the device lock per step and gives each 100 ms tick at most 50 ms of
+work, carrying the rest forward. On a machine too slow for the chosen scale,
+virtual time runs slower instead of starving the control API.
+
 ---
 
 ## 6. Fault injection

@@ -104,6 +104,35 @@ impl WallClock {
     }
 }
 
+/// A real-time budget for one tick of work.
+///
+/// Measures how long the *host* has spent, not how much virtual time has
+/// passed, and decides nothing about the device: it only tells the run loop when
+/// to stop applying virtual time and give the control API a turn. It lives here
+/// because this module is the one place that reads a clock (ADR-013).
+#[derive(Debug)]
+pub struct WorkBudget {
+    started: Instant,
+    budget: std::time::Duration,
+}
+
+impl WorkBudget {
+    /// Starts a budget of `budget` real time.
+    #[must_use]
+    pub fn start(budget: std::time::Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            budget,
+        }
+    }
+
+    /// Whether the budget has been spent.
+    #[must_use]
+    pub fn exhausted(&self) -> bool {
+        self.started.elapsed() >= self.budget
+    }
+}
+
 /// The virtual clock the whole process runs on.
 ///
 /// ```text
@@ -170,6 +199,15 @@ impl AcceleratedClock {
         elapsed
     }
 
+    /// Returns virtual time that was taken but not applied.
+    ///
+    /// The next [`AcceleratedClock::take_elapsed_ms`] includes it again, so no
+    /// virtual time is lost — it is only applied later. The run loop uses this
+    /// when a tick runs out of its real-time budget.
+    pub const fn defer_ms(&mut self, ms: u64) {
+        self.reported_virtual_ms = self.reported_virtual_ms.saturating_sub(ms);
+    }
+
     /// Converts real milliseconds to virtual ones.
     ///
     /// Saturating rather than wrapping: an absurd scale must slow the clock
@@ -221,6 +259,17 @@ pub const MAX_VIRTUAL_STEP_MS: u64 = 60_000;
 #[cfg(test)]
 mod accelerated_clock_tests {
     use super::*;
+
+    /// Virtual time a tick could not apply is applied later, never dropped.
+    #[test]
+    fn deferred_virtual_time_comes_back_on_the_next_take() {
+        let mut clock = AcceleratedClock::new(1_000_000.0);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let taken = clock.take_elapsed_ms();
+        assert!(taken >= 5_000_000);
+        clock.defer_ms(taken);
+        assert!(clock.take_elapsed_ms() >= taken, "all of it comes back");
+    }
 
     #[test]
     fn scale_one_is_real_time() {

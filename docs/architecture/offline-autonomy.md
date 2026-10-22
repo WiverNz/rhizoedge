@@ -233,6 +233,13 @@ last_reconciled_seq
 deadline precisely because the device may have no absolute time. On boot the
 remaining duration is restored intact, so a reboot cannot shorten a cooldown.
 
+The simulator batches the writes of a cooldown counting down, a confirmation
+advancing, and the budget window being credited, because losing any of them
+leaves the restored device more restrictive than reality, never less. Everything
+else is written at once ([simulator-strategy.md](../testing/simulator-strategy.md)
+§5). A crash may therefore restore a cooldown that is *longer* than the one in
+memory, by at most one 15-minute batch, and never one that is shorter.
+
 Likewise `budget_used_ml` is **not** cleared on boot. It is reduced only when the
 device can demonstrate that the window elapsed — either from monotonic time it
 actually observed, or from a wall clock it trusts. A device that reboots

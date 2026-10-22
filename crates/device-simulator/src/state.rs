@@ -418,6 +418,14 @@ pub enum StateError {
 pub struct StateStore {
     path: PathBuf,
     state: PersistentState,
+    /// Whether the in-memory state holds a [`StateStore::mutate_deferred`]
+    /// change that has not reached the file yet.
+    dirty: bool,
+    /// How many times the file has been written, for the I/O-rate tests.
+    writes: u64,
+    /// Added to every write, so a test can stand in for a slow disk.
+    #[cfg(any(test, feature = "test-hooks"))]
+    write_delay: std::time::Duration,
 }
 
 impl StateStore {
@@ -482,7 +490,14 @@ impl StateStore {
                 })
             }
         };
-        let mut store = Self { path, state };
+        let mut store = Self {
+            path,
+            state,
+            dirty: false,
+            writes: 0,
+            #[cfg(any(test, feature = "test-hooks"))]
+            write_delay: std::time::Duration::ZERO,
+        };
         store.state.boot_count = store.state.boot_count.saturating_add(1);
         // Persist the incremented boot count — and, after a corrupt load, the
         // fault itself — so the lockout survives the next restart too.
@@ -534,6 +549,58 @@ impl StateStore {
         Ok(outcome)
     }
 
+    /// Changes the state in memory and leaves the write to a later flush.
+    ///
+    /// **Only for a change whose loss is conservative**: one that, if a crash
+    /// discards it, leaves the restored state *more* restrictive than reality
+    /// — a cooldown longer, a confirmation shorter, a budget window less
+    /// credited. The caller decides that; [`crate::device::Device`] does so
+    /// field by field and writes anything else with [`StateStore::mutate`].
+    /// Every `mutate`, and every [`StateStore::flush`], writes the whole state,
+    /// so a deferred change can be delayed but never reordered after a write
+    /// that does matter.
+    ///
+    /// This exists because the simulator runs at up to 3 600x: writing the
+    /// countdown of an offline cooldown on every 60-second virtual step meant
+    /// about a hundred `fsync`s per real second, which a slow disk cannot do.
+    pub fn mutate_deferred<T>(&mut self, change: impl FnOnce(&mut PersistentState) -> T) -> T {
+        let outcome = change(&mut self.state);
+        self.dirty = true;
+        outcome
+    }
+
+    /// Writes any deferred change.
+    ///
+    /// # Errors
+    ///
+    /// Returns the write failure; the change stays pending and is retried by
+    /// the next flush or `mutate`.
+    pub fn flush(&mut self) -> Result<(), StateError> {
+        if self.dirty {
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    /// Whether a deferred change is waiting for a flush.
+    #[must_use]
+    pub const fn has_deferred_changes(&self) -> bool {
+        self.dirty
+    }
+
+    /// How many times this store has written its file.
+    #[must_use]
+    pub const fn writes(&self) -> u64 {
+        self.writes
+    }
+
+    /// Makes every write take at least `delay` longer, standing in for a slow
+    /// disk (WSL2's measured ~16 ms `fsync`).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn set_write_delay_for_test(&mut self, delay: std::time::Duration) {
+        self.write_delay = delay;
+    }
+
     /// Re-reads the state file from disk, without touching this store.
     ///
     /// The read-back half of ADR-015 §7 step 4. Verifying the copy still held
@@ -566,7 +633,7 @@ impl StateStore {
     /// # Errors
     ///
     /// Returns the write failure.
-    pub fn save(&self) -> Result<(), StateError> {
+    pub fn save(&mut self) -> Result<(), StateError> {
         let encoded = encode_state(&self.state)?;
         let temp = self.path.with_extension("json.tmp");
         if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -584,10 +651,17 @@ impl StateStore {
             drop(file);
             std::fs::rename(&temp, &self.path)
         };
+        #[cfg(any(test, feature = "test-hooks"))]
+        if !self.write_delay.is_zero() {
+            std::thread::sleep(self.write_delay);
+        }
         write().map_err(|source| StateError::Write {
             path: self.path.clone(),
             source,
-        })
+        })?;
+        self.writes = self.writes.saturating_add(1);
+        self.dirty = false;
+        Ok(())
     }
 }
 
