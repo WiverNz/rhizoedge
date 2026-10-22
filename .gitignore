@@ -68,3 +68,5 @@ AGENTS.override.md
 # mutation-verification.md §Never revert with a path); .claude/settings.json
 # is where a rule meant for everyone would go instead.
 /.claude/settings.local.json
+# Local Claude policy implementation, tests, and operating notes.
+/.claude/hooks/
