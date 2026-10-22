@@ -170,6 +170,7 @@ GET    /api/v1/plants/{plant_id}/watering-events?from=&to=&limit=
   "irrigation_state": "Normal",
   "auto_watering_enabled": true,
   "lockout": null,
+  "lockouts": [],
   "latest": {
     "measured_at": "2026-08-25T11:30:00Z",
     "age_seconds": 42,
@@ -206,6 +207,33 @@ A locked-out plant carries:
 
 `clearable: false` means the condition must physically resolve first; the UI
 renders no clear button in that case.
+
+`lockout` is a **one-reason summary**, kept for existing clients. What actually
+refuses watering is every recorded lockout, listed in `lockouts` — also on each
+entry of `GET /api/v1/plants` and `GET /api/v1/overview`:
+
+```json
+"lockouts": [
+  { "reason": "leak", "kind": "latch", "since": "2026-08-25T09:12:00Z",
+    "hold_until": null, "operator_clearable": true, "recognised": true },
+  { "reason": "flood_v9", "kind": "latch", "since": "2026-08-20T06:00:00Z",
+    "hold_until": null, "operator_clearable": true, "recognised": false },
+  { "reason": "uncertain", "kind": "hold", "since": "2026-08-25T09:30:00Z",
+    "hold_until": "2026-08-25T15:30:00Z", "operator_clearable": false, "recognised": true }
+]
+```
+
+- **Order is display order**, never write order: latches by rank (`leak`,
+  `pump_fault`, `no_delivery_detected`, `max_doses_reached`, then any name the
+  edge does not recognise), then holds; ties by name.
+- A **latch** stays until an operator clears that one reason. A **hold** ends
+  at `hold_until` and cannot be cleared; an expired hold is not listed.
+- `recognised: false` marks a stored name this edge does not know — typically
+  carried over from an older database. It still refuses watering, and is
+  cleared by sending that exact name.
+- Derived conditions (stale data, tank low, a silent sensor) are never listed:
+  they are re-evaluated on every pass and show in `lockout` and in the
+  recommendation's `blocked_by`.
 
 ### 2.5 Recommendation
 
@@ -318,9 +346,19 @@ For `leak`, the latest reading on the bound leak stream must be `ok`, dry, and
 fresh, checked inside the same write transaction that removes the latch. A hold
 is never an operator's to clear: naming one returns **409 `hold_not_clearable`**
 with its `hold_until`, and it ends at its deadline. Naming a reason the plant is
-not locked by returns 409 `wrong_reason` while anything else is recorded, or
-`not_locked_out` when nothing is. The response body is unchanged; listing every
-recorded lockout is a later, additive change.
+not locked by — never recorded, already cleared, or a typo — returns **409
+`not_locked_out`** with `details.lockouts` listing what is recorded; it clears
+nothing in its place. (An earlier `wrong_reason` code is retired.)
+
+A successful clear answers with what still refuses watering:
+
+```json
+{ "plant_id": "monstera-01", "cleared": "leak", "cleared_at": "2026-08-25T10:02:00Z",
+  "remaining": [ { "reason": "uncertain", "kind": "hold", "...": "..." } ] }
+```
+
+`remaining: []` is the only answer that means nothing is recorded; watering may
+still be refused by a derived condition, which the next `POST /water` reports.
 
 ### 2.7 Profiles
 

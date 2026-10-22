@@ -90,6 +90,49 @@ pub fn timestamp(value: i64) -> Option<serde_json::Value> {
         .map(|v| serde_json::Value::String(v.to_rfc3339_opts(SecondsFormat::Millis, true)))
 }
 
+/// Every recorded lockout of a plant, as the API renders it.
+///
+/// **Display order, not write order**: best-ranked reason first
+/// (`display_rank` — latches, then holds), then the stored name, so the same
+/// records always read the same way. Each entry names its `kind`; a hold
+/// carries `hold_until` and is never `operator_clearable`; a latch is cleared by
+/// naming its `reason` exactly. `recognised: false` marks a stored name this
+/// edge does not know — typically carried over by migration `0002` — which
+/// still refuses watering until an operator clears it by that name. Callers
+/// pass `repo::lockout::active`, so an expired hold never appears here.
+#[must_use]
+pub fn lockouts_json(records: &[rhizo_storage::repo::lockout::LockoutRecord]) -> serde_json::Value {
+    let mut ordered: Vec<&rhizo_storage::repo::lockout::LockoutRecord> = records.iter().collect();
+    ordered.sort_by(|a, b| {
+        let rank = |record: &rhizo_storage::repo::lockout::LockoutRecord| {
+            rhizo_domain::irrigation::display_rank(
+                crate::plant::lockout_from_str(&record.reason)
+                    .unwrap_or(rhizo_domain::LockoutReason::Unknown),
+            )
+        };
+        rank(a).cmp(&rank(b)).then_with(|| a.reason.cmp(&b.reason))
+    });
+    serde_json::Value::Array(
+        ordered
+            .into_iter()
+            .map(|record| {
+                let latch = record.kind == rhizo_storage::repo::lockout::LockoutKind::Latch;
+                let recognised = crate::plant::lockout_from_str(&record.reason)
+                    .is_some_and(|reason| reason != rhizo_domain::LockoutReason::Unknown)
+                    || record.reason == "unknown";
+                serde_json::json!({
+                    "reason": record.reason,
+                    "kind": record.kind.as_str(),
+                    "since": timestamp(record.since),
+                    "hold_until": record.hold_until.and_then(timestamp),
+                    "operator_clearable": latch,
+                    "recognised": recognised,
+                })
+            })
+            .collect(),
+    )
+}
+
 /// RFC 3339 in, edge milliseconds out.
 #[must_use]
 pub fn parse_timestamp(value: &str) -> Option<i64> {

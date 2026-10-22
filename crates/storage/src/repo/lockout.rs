@@ -396,6 +396,45 @@ pub async fn active(
         .collect())
 }
 
+/// Every live plant's blocking lockouts at `now`, as `(plant_id, record)`, in
+/// one read — for views that list many plants. Same rule as [`active`].
+///
+/// # Errors
+///
+/// A database failure.
+pub async fn active_all(
+    db: &EdgeDb,
+    now: i64,
+) -> Result<Vec<(String, LockoutRecord)>, StorageError> {
+    let rows = sqlx::query(
+        "SELECT l.plant_id,l.reason,l.kind,l.since,l.hold_until FROM plant_lockouts l \
+         JOIN plants p ON p.plant_id=l.plant_id AND p.deleted_at IS NULL \
+         WHERE l.kind='latch' OR l.hold_until>? ORDER BY l.plant_id, l.reason",
+    )
+    .bind(now)
+    .fetch_all(db.pool())
+    .await
+    .map_err(StorageError::from_sqlx)?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            (
+                row.get("plant_id"),
+                LockoutRecord {
+                    reason: row.get("reason"),
+                    kind: if row.get::<String, _>("kind") == "hold" {
+                        LockoutKind::Hold
+                    } else {
+                        LockoutKind::Latch
+                    },
+                    since: row.get("since"),
+                    hold_until: row.get("hold_until"),
+                },
+            )
+        })
+        .collect())
+}
+
 /// Inserts a latch on a live plant; `true` if it was not already there.
 async fn insert_latch_row(
     tx: &mut Transaction<'_, Sqlite>,

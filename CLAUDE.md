@@ -600,7 +600,9 @@ sensor) are never recorded. `command_repo::issue` and `authorize_publish`
 (before every publish attempt) refuse a command for a plant with any record,
 inside `BEGIN IMMEDIATE`; a command refused at publish is `failed` with reason
 `blocked_by_lockout`. Scenario resets must delete `plant_lockouts` before
-`plants`. M9 report §15.
+`plants`. The API lists records as `lockouts[]` (display order) on the plant,
+the plant list, and the overview; `lockout/clear` answers with `remaining[]`,
+and `wrong_reason` is retired in favour of `not_locked_out`. M9 report §15.
 
 **`auto_watering_enabled` defaults to `false`.** If a plant never waters in a
 test, check that first — it is intended behaviour, not a bug. The default is

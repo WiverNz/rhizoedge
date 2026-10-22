@@ -26,7 +26,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rhizo_domain::irrigation::types::{EvaluationMode, IrrigationDecision};
-use rhizo_domain::irrigation::{display_rank, is_auto_clearable, safety_gate};
+use rhizo_domain::irrigation::{is_auto_clearable, safety_gate};
 use rhizo_domain::state::LockoutReason;
 use rhizo_storage::repo::{lockout as lockout_repo, plant as plant_repo};
 use serde::Deserialize;
@@ -415,26 +415,17 @@ pub async fn clear_lockout(
         return storage_error();
     };
     let Some(named) = records.iter().find(|record| record.reason == body.reason) else {
-        if records.is_empty() {
-            return error(
-                StatusCode::CONFLICT,
-                "not_locked_out",
-                "this plant is not locked out",
-            );
-        }
-        let shown = records
-            .iter()
-            .min_by_key(|record| {
-                display_rank(
-                    plant::lockout_from_str(&record.reason).unwrap_or(LockoutReason::Unknown),
-                )
-            })
-            .map(|record| record.reason.clone());
+        // Nothing by that name: never latched, already cleared, or a typo. The
+        // answer names what *is* recorded, so a client can correct itself; it
+        // never clears anything else in its place.
         return error_with(
             StatusCode::CONFLICT,
-            "wrong_reason",
-            "the plant is locked out for a different reason",
-            serde_json::json!({ "reason": shown }),
+            "not_locked_out",
+            "this plant is not locked out for that reason",
+            serde_json::json!({
+                "reason": body.reason,
+                "lockouts": super::support::lockouts_json(&records),
+            }),
         );
     };
     if named.kind == lockout_repo::LockoutKind::Hold {
@@ -514,10 +505,11 @@ pub async fn clear_lockout(
         Ok(lockout_repo::ClearOutcome::Cleared { .. }) => {}
         Ok(lockout_repo::ClearOutcome::NotLatched) => {
             // Cleared by someone else between the read above and now.
-            return error(
+            return error_with(
                 StatusCode::CONFLICT,
                 "not_locked_out",
-                "this plant is not locked out",
+                "this plant is not locked out for that reason",
+                serde_json::json!({ "reason": body.reason }),
             );
         }
         Ok(lockout_repo::ClearOutcome::LeakNotClear) => return not_clear(),
@@ -546,10 +538,16 @@ pub async fn clear_lockout(
             tracing::warn!(plant_id = %id, %error, "could not refresh the lockout summary");
         }
     }
+    // What still refuses watering, so a client never has to infer it from a
+    // 200: an empty list is the only answer that means "nothing recorded".
+    let Ok(remaining) = lockout_repo::active(&state.db, &id, now_ms).await else {
+        return storage_error();
+    };
     Json(serde_json::json!({
         "plant_id": id,
         "cleared": body.reason,
         "cleared_at": timestamp(now_ms),
+        "remaining": super::support::lockouts_json(&remaining),
     }))
     .into_response()
 }
@@ -1578,6 +1576,202 @@ mod water {
         .await
         .unwrap();
         refused(&api, "max_doses_reached").await;
+    }
+
+    // ------------------------------------------------- the lockouts[] API view
+
+    /// Records of every shape, written in an order unrelated to how they
+    /// should read: a hold that has expired, an active `clock_unsynced` hold,
+    /// a stored name this edge does not know, and two latches.
+    async fn mixed_records(api: &TestApi) {
+        let now = api.clock.now().timestamp_millis();
+        let db = &api.db;
+        rhizo_storage::repo::lockout::hold(db, "monstera-01", "uncertain", now - 1, now - 10)
+            .await
+            .unwrap();
+        rhizo_storage::repo::lockout::hold(
+            db,
+            "monstera-01",
+            "clock_unsynced",
+            now + 3_600_000,
+            now,
+        )
+        .await
+        .unwrap();
+        for reason in ["flood_v9", "no_delivery_detected", "leak"] {
+            rhizo_storage::repo::lockout::latch(db, "monstera-01", reason, now)
+                .await
+                .unwrap();
+        }
+    }
+
+    fn reasons_of(list: &serde_json::Value) -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["reason"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// GET shows every active record in display order — latches by rank, an
+    /// unrecognised name among them, then holds — never an expired hold, and
+    /// keeps the one-reason `lockout` field for existing clients. The plant
+    /// list and the overview agree with it.
+    #[tokio::test]
+    async fn the_plant_view_lists_every_recorded_lockout_in_display_order() {
+        let api = TestApi::start().await;
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        mixed_records(&api).await;
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+
+        let (status, plant) = api
+            .json("GET", "/api/v1/plants/monstera-01", serde_json::Value::Null)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{plant}");
+        let lockouts = &plant["lockouts"];
+        assert_eq!(
+            reasons_of(lockouts),
+            ["leak", "no_delivery_detected", "flood_v9", "clock_unsynced"]
+        );
+        let by = |reason: &str| {
+            lockouts
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["reason"] == reason)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(by("leak")["kind"], "latch");
+        assert_eq!(by("leak")["operator_clearable"], true);
+        assert!(by("leak")["hold_until"].is_null());
+        assert!(by("leak")["since"].is_string());
+        assert_eq!(by("flood_v9")["recognised"], false);
+        assert_eq!(by("flood_v9")["operator_clearable"], true);
+        assert_eq!(by("leak")["recognised"], true);
+        assert_eq!(by("clock_unsynced")["kind"], "hold");
+        assert_eq!(by("clock_unsynced")["operator_clearable"], false);
+        assert!(by("clock_unsynced")["hold_until"].is_string());
+        assert_eq!(plant["lockout"]["reason"], "leak", "the summary is kept");
+
+        let (_, list) = api
+            .json("GET", "/api/v1/plants", serde_json::Value::Null)
+            .await;
+        assert_eq!(list["plants"][0]["lockouts"], *lockouts);
+        let (_, overview) = api
+            .json("GET", "/api/v1/overview", serde_json::Value::Null)
+            .await;
+        let entry = &overview["plants"][0];
+        assert_eq!(entry["lockouts"], *lockouts);
+        refused(&api, "leak").await;
+    }
+
+    /// Clearing names exactly one latch and answers with what remains; the
+    /// same request again, a hold, or a reason never recorded are refused and
+    /// change nothing; an unrecognised name clears by that name. One
+    /// `lockout_cleared` event and one outbox row per clear — the summary
+    /// following it adds none.
+    #[tokio::test]
+    async fn clearing_answers_with_what_remains_and_clears_nothing_else() {
+        let api = TestApi::start().await;
+        rhizo_storage::repo::outbox::configure(&api.db, true, 500_000)
+            .await
+            .unwrap();
+        api.waterable("monstera-01").await;
+        api.device_connected().await;
+        mixed_records(&api).await;
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+        let cleared_events = || async {
+            let local: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM plant_events WHERE kind='lockout_cleared'",
+            )
+            .fetch_one(api.db.pool())
+            .await
+            .unwrap();
+            let outbox: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pending_cloud_events WHERE kind='lockout.cleared'",
+            )
+            .fetch_one(api.db.pool())
+            .await
+            .unwrap();
+            (local, outbox)
+        };
+        assert_eq!(cleared_events().await, (0, 0));
+
+        let (status, body) = clear(&api, "leak").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["cleared"], "leak");
+        assert_eq!(
+            reasons_of(&body["remaining"]),
+            ["no_delivery_detected", "flood_v9", "clock_unsynced"]
+        );
+        assert_eq!(cleared_events().await, (1, 1));
+        refused(&api, "no_delivery_detected").await;
+
+        let (status, body) = clear(&api, "leak").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "not_locked_out");
+        assert_eq!(
+            reasons_of(&body["error"]["details"]["lockouts"]),
+            ["no_delivery_detected", "flood_v9", "clock_unsynced"]
+        );
+        let (status, body) = clear(&api, "clock_unsynced").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "hold_not_clearable");
+        let (status, body) = clear(&api, "pump_fault").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["code"], "not_locked_out");
+        assert_eq!(cleared_events().await, (1, 1), "a refusal records nothing");
+
+        let (status, body) = clear(&api, "flood_v9").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = clear(&api, "no_delivery_detected").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(reasons_of(&body["remaining"]), ["clock_unsynced"]);
+        assert_eq!(cleared_events().await, (3, 3));
+        refused(&api, "clock_unsynced").await;
+
+        api.clock.advance(chrono::Duration::hours(2));
+        healthy(&api).await;
+        api.irrigate("monstera-01").await;
+        let (_, plant) = api
+            .json("GET", "/api/v1/plants/monstera-01", serde_json::Value::Null)
+            .await;
+        assert_eq!(plant["lockouts"], serde_json::json!([]));
+        assert_eq!(
+            cleared_events().await.0,
+            4,
+            "the expired hold's end is recorded once, by the summary"
+        );
+        permitted(&api).await;
+    }
+
+    /// A restart is a new edge over the same database: the view is identical.
+    #[tokio::test]
+    async fn the_lockouts_view_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edge.sqlite");
+        let before = {
+            let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+            api.waterable("monstera-01").await;
+            api.device_connected().await;
+            mixed_records(&api).await;
+            let (_, plant) = api
+                .json("GET", "/api/v1/plants/monstera-01", serde_json::Value::Null)
+                .await;
+            api.db.pool().close().await;
+            plant["lockouts"].clone()
+        };
+        let api = TestApi::start_on(EdgeDb::connect(&path).await.unwrap()).await;
+        let (_, plant) = api
+            .json("GET", "/api/v1/plants/monstera-01", serde_json::Value::Null)
+            .await;
+        assert_eq!(plant["lockouts"], before);
+        assert_eq!(reasons_of(&before).len(), 4);
+        refused(&api, "leak").await;
     }
 
     /// Clearing a lockout the plant does not have, or naming the wrong one, is

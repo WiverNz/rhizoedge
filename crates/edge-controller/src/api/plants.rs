@@ -32,10 +32,12 @@ struct Derived {
     has_actuator: bool,
     irrigation_state: Option<String>,
     pending_intent: Option<serde_json::Value>,
+    lockouts: serde_json::Value,
 }
 
 fn plant_json(plant: &plant_repo::PlantRow, derived: &Derived) -> serde_json::Value {
     let Derived {
+        lockouts,
         state,
         latest,
         bindings,
@@ -80,6 +82,10 @@ fn plant_json(plant: &plant_repo::PlantRow, derived: &Derived) -> serde_json::Va
             ),
             "message": "watering is locked out",
         })),
+        // Every recorded lockout — each latch and each active hold — in
+        // display order. `lockout` above is the one-reason summary, kept for
+        // existing clients; this is what refuses watering.
+        "lockouts": lockouts,
         "latest": latest,
         "bindings": bindings,
         "thresholds": thresholds,
@@ -181,6 +187,9 @@ async fn one(
                 .await?
                 .map(|row| row.state),
             pending_intent: super::intents::open_for_plant(&state.db, plant_id).await,
+            lockouts: super::support::lockouts_json(
+                &rhizo_storage::repo::lockout::active(&state.db, plant_id, now_ms).await?,
+            ),
         },
     )))
 }

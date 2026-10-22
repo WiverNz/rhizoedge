@@ -87,21 +87,35 @@ pub async fn get(State(state): State<ApiState>) -> Result<Json<Value>, StatusCod
     .fetch_all(pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut records: std::collections::BTreeMap<
+        String,
+        Vec<rhizo_storage::repo::lockout::LockoutRecord>,
+    > = std::collections::BTreeMap::new();
+    for (plant_id, record) in rhizo_storage::repo::lockout::active_all(&state.db, now)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        records.entry(plant_id).or_default().push(record);
+    }
     let mut plants = Vec::with_capacity(plant_rows.len());
     let mut plants_locked_out = 0i64;
     for row in &plant_rows {
+        let plant_id: String = row.get("plant_id");
         let lockout: Option<String> = row.get("lockout_reason");
-        if lockout.is_some() {
+        let recorded = records.get(&plant_id).map_or(&[][..], Vec::as_slice);
+        // Locked by a record even when the summary has not caught up yet.
+        if lockout.is_some() || !recorded.is_empty() {
             plants_locked_out += 1;
         }
         plants.push(json!({
-            "plant_id": row.get::<String, _>("plant_id"),
+            "plant_id": plant_id,
             "name": row.get::<Option<String>, _>("name"),
             "auto_watering_enabled": row.get::<i64, _>("auto_watering_enabled") != 0,
             "irrigation_state": row.get::<Option<String>, _>("state"),
             "decision": row.get::<Option<String>, _>("decision"),
             "lockout_reason": lockout,
             "lockout_since": timestamp(row.get("lockout_since")),
+            "lockouts": super::support::lockouts_json(recorded),
         }));
     }
 
