@@ -67,7 +67,7 @@ probe in known soil → optional two-point check
 | F-100-03 | A generic Modbus RTU client: read holding/input registers, configurable slave address, register map, and scaling |
 | F-100-04 | Register maps are **data, not code** — a new probe model is a configuration entry |
 | F-100-05 | Analogue capacitive adapter via ADC with oversampling (16 samples, median) |
-| F-100-06 | RS485 half-duplex direction control with correct turnaround timing |
+| F-100-06 | RS485 half-duplex direction switching is provided by the interface hardware. On the reference build that is the **DFRobot DFR0845** isolated RS485-to-UART module, which switches direction itself: firmware drives plain UART TX/RX, and there is no DE or /RE GPIO and no firmware-configurable turnaround timing. A future board profile with a bare transceiver would supply DE/RE control from its own board layer (ADR-007) |
 
 ### Calibration
 
@@ -279,9 +279,17 @@ That last criterion is the real test of M9's abstraction.
 ## Dependencies
 
 - M9 (firmware foundation, trait boundaries).
-- Hardware: an RS485 soil probe **or** a capacitive sensor, an RS485
-  transceiver if applicable, and a means of gravimetric reference (a kitchen
-  scale and an oven).
+- Hardware: an RS485 soil probe **or** a capacitive sensor, the **DFRobot
+  DFR0845** active isolated RS485-to-UART module for the RS485 path (MCU side:
+  TX, RX, GND, VCC). Its MCU side is powered from **3.3 V**, which is the
+  condition under which its TX/RX connect directly to the ESP32-C3. Never power
+  it from 5 V into ESP32 GPIOs, because its output-high follows the logic-side
+  supply. Also needed: a means of gravimetric reference (a kitchen scale and
+  an oven). **The DFR0845 is not hot-pluggable: do not connect, disconnect, or
+  reconnect it while powered.** The "probe unplugged" acceptance check
+  therefore removes the *probe's own* 12 V supply while the node runs, which
+  makes the probe silent exactly as a lost probe would; alternatively, rewire
+  with all power off and boot with the probe absent.
 - Hardware for M10-012: a current-measurement instrument with a **wide dynamic
   range** — sleep current is microamps and wake current is hundreds of
   milliamps within the same second, and a handheld multimeter either burdens the

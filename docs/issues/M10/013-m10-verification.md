@@ -48,6 +48,9 @@ why before M11 adds actuators behind the same pattern.
 - [ ] Switching analogue to Modbus is a configuration change.
 - [ ] Adding a probe model is a register-map entry.
 - [ ] Unplugging the probe produces `null`, unhealthy, and a `SensorFault` lockout.
+      Emulate the loss by removing the probe's own 12 V supply, or rewire with all
+      power off: the DFR0845 is not hot-pluggable and is never disconnected or
+      reconnected while powered.
 - [ ] An uncalibrated sensor publishes `null`.
 - [ ] Readings match the gravimetric reference within documented bounds.
 - [ ] Four weeks of drift are recorded.

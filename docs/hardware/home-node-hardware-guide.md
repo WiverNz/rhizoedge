@@ -100,7 +100,7 @@ Leak and tank stay on direct GPIOs and are never moved behind the expander. Thei
 **Limitations this plan records rather than hides:**
 
 - A two-pin ultrasonic tank sensor (trigger/echo) does not fit. Use an I2C or analogue-output variant, or the float/resistive options PRD 110 already lists.
-- The RS485 interface is the **DFRobot DFR0845 Active Isolated RS485 to UART** module. Its MCU side is UART TX/RX only and exposes no DE or /RE control pin, so no GPIO is allocated for direction control. PRD 100's F-100-06 and M10-002 still describe ESP-driven direction control and turnaround timing; M10 must reconcile them with this module.
+- The RS485 interface is the **DFRobot DFR0845 Active Isolated RS485 to UART** module. Its MCU side is UART TX/RX only and exposes no DE or /RE control pin, so no GPIO is allocated for direction control. PRD 100's F-100-06, M10-002 and M10-008 were amended on 2026-10-23 to match: no DE/RE GPIO and no firmware turnaround timing on this build. It is not hot-pluggable (see the M10 section).
 - While the RS485 rail is off, firmware must not leave TX high into the unpowered module, or it back-powers it through its input clamp. This is an M10 adapter concern; the current sleep configuration isolates the pads.
 - ESP-IDF's secondary console on USB Serial/JTAG (`CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y`, the default) should be disabled when M10 claims GPIO18/19. It is harmless but writes to a pad that is no longer USB.
 - A different board (XIAO, Super Mini, custom) gets its own table. Nothing here transfers automatically.
@@ -134,7 +134,7 @@ M10 adds the selected physical soil path and proves calibration, stabilization, 
 | Purpose | Recommended development item/type | Qty | Approx. dimensions | EUR | Bench or final | Reused by |
 |---|---|---:|---|---:|---|---|
 | Moisture/temperature/EC input | **DFRobot SEN0601** or selected RS485 Modbus soil probe | 1 | probe roughly 140–150 mm long; verify revision | €35–55 | Both | M11–M14 |
-| 3.3 V UART/RS485 interface | MAX3485/SP3485-class module explicitly compatible with 3.3 V logic | 2, one spare | typically 20–45 mm | €4–10 | Both | M11–M14 |
+| UART/RS485 interface | **DFRobot DFR0845** Gravity: Active Isolated RS485 to UART (selected for the reference build) | 1, a spare optional | verify on the product page | verify current listing | Both | M11–M14 |
 | Sensor supply independent of USB | Current-limited bench supply or certified 12 V / 2 A adapter | 1 | external | €12–30 | Bench | M11 |
 | Secure field wiring | Twisted pair, terminals, ferrules or probe-matching waterproof pigtail | 1 set | as needed | €8–20 | Both | M11–M14 |
 | Calibration reference | Suitable digital scale, soil containers and labels | 1 set | benchtop | €15–35 | Shared bench | M11 |
@@ -143,17 +143,22 @@ M10 adds the selected physical soil path and proves calibration, stabilization, 
 **M10 increment: €72–145; M9 + M10 sensor bench: €224–461.**
 
 ```text
-DEVKITM-1-N4X UART1 TX/RX ── DFR0845 isolated RS485 (no DE/RE pin) ── twisted A/B ── probe
-                         GND ───────── common reference ────────────────────────────┘
-12 V sensor supply ────────────────────────────────────────────────────────────────┘
+DEVKITM-1-N4X UART1 TX/RX, VCC, GND ── DFR0845 (isolated; no DE/RE pin) ── twisted A/B + bus-side reference ── probe
+12 V probe supply ──────────────────────────────────────────────────────────────────────────────────────────── probe
 ```
 
-Verify the purchased probe's wire colors, polarity, supply, Modbus address/baud rate, and register map before power-up. Never connect a 5 V-only MAX485 receiver output directly to ESP32 GPIO.
+The DFR0845's MCU side is **TX, RX, GND and VCC only**. The module switches RS485 direction itself, so the ESP32 drives ordinary UART TX/RX, no DE or /RE GPIO is wired, there is no firmware turnaround timing (F-100-06), and **GPIO10 stays free and unreserved**. Because the module is isolated, the probe's signal reference goes to the module's bus side, not to ESP32 GND; confirm terminal labels against DFRobot's documentation.
+
+**Do not hot-plug or disconnect/reconnect the DFR0845 while powered.** DFRobot documents the module as not hot-pluggable. Rewire only with all power removed. To test a lost probe (PRD 100 / M10-013), remove the probe's own 12 V supply instead of pulling the module or its wiring. Power-gating the module through the RS485 rail (GPIO7) is a supply cycle rather than a hot-plug, but it carries the same back-powering hazard; M10 must confirm it against DFRobot's documentation, and UART1 TX/RX stay inactive while the rail is off until M10-012 has measured the back-powering behaviour.
+
+**Reference-build electrical rule (DFR0845 ↔ ESP32-C3).** Power the DFR0845's UART/MCU side (VCC) from **3.3 V**. The module accepts a 3.3–5 V MCU-side supply, its isolated UART transceiver works at 3.3 V or 5 V logic, and its RXD output-high follows that logic-side supply. A 3.3 V supply is therefore what makes a direct connection safe. Under that condition only, connect the module's `T/TX` and `R/RX` directly to ESP32 UART1 (GPIO18 TX, GPIO19 RX), crossed as DFRobot's wiring diagram shows. **Never power the UART side from 5 V and feed its RXD/T output directly into an ESP32 GPIO**: the output would then swing to 5 V, beyond the ESP32-C3's 3.3 V I/O. The isolated RS485-side ground stays separate from ESP32 GND, as above.
+
+Verify the purchased probe's wire colors, polarity, supply, Modbus address/baud rate, and register map before power-up.
 
 Measure repeated reference points, repeatability, cold-start time until the selected stability criterion is met, active current, power-gated leakage, and full sampling-cycle energy. Stabilization time is **TBD until measured**. Report separately:
 
 - ESP32 chip deep-sleep current at an appropriate supply boundary; and
-- complete node/system use, including board overhead, transceiver, probe, radio association, MQTT exchange, and wake duration.
+- complete node/system use, including board overhead, the DFR0845 RS485 module (measured on the real module: active, idle, rail-disabled, and any back-power through UART TX/RX, per M10-012; never a transceiver-IC datasheet figure), probe, radio association, MQTT exchange, and wake duration.
 
 Only the latter supports battery sizing.
 
@@ -255,7 +260,7 @@ Battery autonomy is **target/TBD, never guaranteed**. Calculate it from measured
 ## Exact selections still open
 
 - compact production board and its measured sleep/GPIO behavior;
-- exact probe revision/vendor, connector, and RS485 module/termination needs;
+- exact probe revision/vendor, connector, and RS485 bus termination/biasing needs (the RS485 module itself is selected: DFR0845);
 - current/energy profiler and high-current fixture;
 - pump, tubing, driver/flyback implementation, pump supply, tank sensor and leak detector;
 - regulator, sensor switch, optional pump rail, battery, charger, enclosure, glands, vent, connectors, fuses and wire gauges;

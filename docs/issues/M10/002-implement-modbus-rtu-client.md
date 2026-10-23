@@ -9,14 +9,15 @@ means a new probe model is configuration rather than code.
 
 ## Goal
 
-Implement Modbus RTU over UART with RS485 direction control.
+Implement Modbus RTU over plain UART TX/RX through the DFR0845 isolated RS485
+module.
 
 ## Scope
 
 - Read holding and input registers
 - CRC-16 computation and verification
 - Configurable slave address, baud, parity
-- RS485 half-duplex direction control with correct turnaround timing
+- Configurable response timeout with a documented default
 - Timeout, CRC error, and exception response handled **distinctly**
 
 ## Non-goals
@@ -29,9 +30,14 @@ Implement Modbus RTU over UART with RS485 direction control.
 
 ## Implementation notes
 
-Turnaround timing is the classic RS485 bug: releasing the driver too early
-truncates the last byte, too late collides with the response. Make it
-configurable and document the default.
+The reference RS485 interface is the **DFRobot DFR0845**, whose MCU side is TX,
+RX, GND and VCC only. It switches the bus direction itself, so this client owns
+no DE or /RE GPIO and no turnaround setting (F-100-06): direction timing is not
+a firmware parameter on this board, and adding one would configure nothing.
+What remains timing-sensitive is Modbus RTU framing itself: honour the
+3.5-character inter-frame silence and a bounded response timeout. A future
+board profile with a bare transceiver would add DE/RE control in its board
+layer, not in this client.
 
 Distinct error variants matter for diagnosis: a timeout usually means wiring or
 address, a CRC error usually means cable length or termination.
@@ -41,7 +47,8 @@ address, a CRC error usually means cable length or termination.
 - [ ] Register reads work against a mock responder.
 - [ ] CRC is computed and verified correctly.
 - [ ] Timeout, CRC error, and exception produce distinct errors.
-- [ ] Direction control timing is configurable.
+- [ ] The response timeout is configurable and its default documented; no DE/RE
+      GPIO or turnaround setting is introduced for the DFR0845 reference build.
 - [ ] Host tests cover the frame layer with a fake UART.
 
 ## Verification

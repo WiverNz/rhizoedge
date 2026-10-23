@@ -17,7 +17,8 @@ complete board/system sleep current   what the assembled thing actually draws
 ```
 
 The second includes regulator quiescent current, load-switch and level-shifter
-leakage, the RS485 transceiver's off-state, pull-ups, the sensor rail's residual,
+leakage, the DFR0845 RS485 module's off-state (and its isolated DC-DC converter
+if it is left powered), pull-ups, the sensor rail's residual,
 and any indicator LED. It is routinely an order of magnitude or more above the
 first, and it is the only one that predicts battery life.
 
@@ -36,6 +37,14 @@ from measurements rather than from datasheets.
   rail-on and warm-up (using M10-011's figure), sampling, Wi-Fi association,
   MQTT connect and publish, receive window, sleep entry
 - The same for a wake that includes a watering cycle
+- The real **DFR0845** RS485 module measured on its own supply branch at its
+  3.3 V MCU-side supply: active current (during a Modbus exchange), idle current
+  (powered, bus quiet), rail-disabled/off-state current, and any back-powering
+  through UART TX/RX while its rail is disabled (current into the pins and the
+  resulting voltage on the module's unpowered VCC). The transceiver IC's
+  datasheet current is not a substitute; the module measurement is
+  authoritative. Until back-powering is measured, firmware keeps UART TX/RX
+  inactive while the rail is off.
 - At least 20 cycles, reported as a distribution — Wi-Fi association time is the
   most variable term and a median hides it
 - The budget model, written down with every input labelled measured or assumed:
@@ -103,6 +112,9 @@ under SAFETY-005 — so none is a free win and none is chosen here.
       being the system figure.
 - [ ] Wake-cycle energy integrated and broken into named phases.
 - [ ] A watering wake measured separately from a sampling wake.
+- [ ] The DFR0845 module's active, idle and rail-disabled currents, and any
+      back-powering through UART TX/RX with its rail disabled, measured on the
+      real module, not taken from a transceiver-IC datasheet.
 - [ ] At least 20 cycles; results given as a distribution.
 - [ ] Every input to the budget model labelled measured or assumed.
 - [ ] The dominant term identified, with a sensitivity statement per input.

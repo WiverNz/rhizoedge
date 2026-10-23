@@ -70,8 +70,8 @@ the answer is the poll interval, and a figure of "under 500 ms" derived from
 500 ms polls says nothing.
 
 Watch for two distinct effects and report them separately, because they have
-different fixes. **Electrical settling** is the supply rail and the transceiver
-coming up, and is short. **Sensor settling** is the probe's own measurement
+different fixes. **Electrical settling** is the supply rail and the DFR0845 RS485
+module (including its isolated supply) coming up, and is short. **Sensor settling** is the probe's own measurement
 converging, and for a capacitive probe in soil it can be much longer. If the
 Modbus device also needs a startup delay before it will answer at all, that is a
 third number — time to first valid response, distinct from time to stable value.

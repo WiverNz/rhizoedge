@@ -14,7 +14,8 @@ Extend the device config with sensor settings.
 ## Scope
 
 - `soil_sensor` block: kind, slave address, register map name, calibration
-- Bus parameters: baud, parity, turnaround
+- Bus parameters: baud, parity, response timeout (no turnaround parameter: the
+  DFR0845 switches RS485 direction itself, F-100-06)
 - Validation with rejection of impossible values
 - Config changes applied without a reboot where possible
 - **Still no safety limit fields**
