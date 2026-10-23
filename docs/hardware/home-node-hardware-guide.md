@@ -69,11 +69,11 @@ Board facts that decide the plan:
 | 5 | pump | **pump driver input**, active high | out | input, no pull, no glitch | **10 kΩ pull-down, mandatory** (SAFETY-011, F-110-03) | **yes** | The only boot-quiet pin whose sole analogue function (ADC2) is unusable anyway. It shares nothing. HIL-1 and the docs already name it. |
 | 6 | sensor rail EN | sensor rail EN (unchanged) | out | input **with weak pull-up** | 10 kΩ pull-down (beats ~45 kΩ, leaving ≈0.6 V) | no (power) | Already wired. The pull-down keeps the rail off through boot and sleep. |
 | 7 | RS485 rail EN | RS485 rail EN (unchanged) | out | input, no pull | 10 kΩ pull-down | no (power) | Already wired. |
-| 10 | free | **RS485 DE + /RE, tied together** | out | input, no pull, 5 ns low glitch | 10 kΩ pull-down: receive, driver off | no | Not ADC and not strapping, so it spends no analogue pin. Low at boot means the transceiver never drives the bus by accident. |
-| 18 | free (incorrectly "reserved for USB") | **UART1 TX → transceiver DI** | out | 50 µs **high** glitch | — | no | TX idles high, so the glitch is a legal idle level and is harmless with DE low. It is also why 18 must never be an enable. |
-| 19 | free | **UART1 RX ← transceiver RO** | in | USB D+ pull-up until claimed | — | no | RX idles high, so the pull-up is harmless. Not on 18, because its glitch would fight the transceiver's RO output. |
+| 10 | free | **available**: no peripheral claims it; candidate future SCL alternative (see the OLED note) | — | input, no pull, 5 ns low glitch | — | no | Not ADC and not strapping. Deliberately left unreserved. |
+| 18 | free (incorrectly "reserved for USB") | **UART1 TX → DFR0845 RS485 module** | out | 50 µs **high** glitch | — | no | TX idles high, so the glitch is a legal idle level. It is also why 18 must never be an enable. |
+| 19 | free | **UART1 RX ← DFR0845 RS485 module** | in | USB D+ pull-up until claimed | — | no | RX idles high, so the pull-up is harmless. Not on 18, because its glitch would fight the module's UART output. |
 | 3 | free | **I2C SDA** | open-drain | input, no pull | **4.7 kΩ to 3V3 on the node** | no | Not strapping, which SDA must not be. It costs ADC1 ch3, the price of an I2C bus. It is next to GPIO2 on J1 (pins 5 and 4), so the bus is one short adjacent pair. |
-| 2 | free | **I2C SCL** | open-drain | floating | **4.7 kΩ to 3V3 on the node, required** | no | Strapping pin by necessity: no other non-strapping pin remains. Only the master drives SCL, and neither the INA260 nor the SH1106 stretches the clock, so nothing can hold it low at reset. The pull-up raises GPIO2 from floating to the recommended high level. Verified on the board (see the OLED section). |
+| 2 | free | **I2C SCL** | open-drain | floating | **4.7 kΩ to 3V3 on the node, required** | no | The current verified choice, not forced: GPIO10 is a non-strapping alternative (see the OLED note). Only the master drives SCL, and neither the INA260 nor the SH1106 stretches the clock, so nothing can hold it low at reset. The pull-up raises GPIO2 from floating to the recommended high level. Verified on the board (see the OLED section). |
 | 0 | free | **leak input** | in | floating | pull-up/conditioning per the chosen sensor | **yes** (refusal input) | ADC1 ch0 and deep-sleep-wake-capable (GPIO0–5), so a sleeping node can later wake on a leak (F-110-31). Not strapping, so a wet sensor at reset cannot change the boot mode. |
 | 1 | free | **tank input** | in | floating | pull-up for a float switch | **yes** (refusal input) | ADC1 ch1, so a resistive tank sensor (F-110-20) needs no rewiring. Not strapping, so a closed float at reset cannot change the boot mode. |
 | 4 | free (OLED SDA on the bench 2026-10-23, before the move) | **analogue soil probe** (F-100-05) | in (ADC) | input, no pull | — | no | ADC1 ch4. PRD 100 requires that Modbus ↔ analogue be a configuration change rather than a rebuild, so this pin must exist in the same profile as RS485. |
@@ -82,7 +82,7 @@ Board facts that decide the plan:
 | 20 / 21 | UART0 console | UART0 console, provisioning, `espflash` | — | — | fitted on board | no | CP2102N. Do not reuse. |
 | 11–17 | flash | flash | — | — | — | — | Not exposed. |
 
-**Kept intentionally free:** none. All 15 header GPIOs are allocated: 11 to peripherals, plus GPIO8 (LED), GPIO9 (BOOT) and 20/21 (console). That is only possible because SCL takes GPIO2. Without that step the profile is one pin short: pump, two rail enables, RS485 TX/RX/DE, I2C SDA/SCL, leak, tank and analogue soil make 11 signals, and only 10 pins are neither strapping, flash, console nor LED.
+**Kept free:** GPIO10. Pump, two rail enables, RS485 TX/RX, I2C SDA/SCL, leak, tank and analogue soil make 10 signals. With SCL on GPIO2, nine of them use the 10 pins that are neither strapping, flash, console nor LED, leaving GPIO10 unclaimed. GPIO8 (LED), GPIO9 (BOOT) and 20/21 (console) stay as they are. GPIO10 is not reserved for anything.
 
 **Expansion is on the I2C bus, not on pins.** Addresses in use or reserved:
 
@@ -100,8 +100,8 @@ Leak and tank stay on direct GPIOs and are never moved behind the expander. Thei
 **Limitations this plan records rather than hides:**
 
 - A two-pin ultrasonic tank sensor (trigger/echo) does not fit. Use an I2C or analogue-output variant, or the float/resistive options PRD 110 already lists.
-- RS485 assumes a MAX3485/SP3485-class transceiver with DE and /RE tied (F-100-06 needs controlled turnaround). An auto-direction module would free GPIO10, but that changes F-100-06.
-- While the RS485 rail is off, firmware must not leave TX high into the unpowered transceiver, or it back-powers it through its input clamp. This is an M10 adapter concern; the current sleep configuration isolates the pads.
+- The RS485 interface is the **DFRobot DFR0845 Active Isolated RS485 to UART** module. Its MCU side is UART TX/RX only and exposes no DE or /RE control pin, so no GPIO is allocated for direction control. PRD 100's F-100-06 and M10-002 still describe ESP-driven direction control and turnaround timing; M10 must reconcile them with this module.
+- While the RS485 rail is off, firmware must not leave TX high into the unpowered module, or it back-powers it through its input clamp. This is an M10 adapter concern; the current sleep configuration isolates the pads.
 - ESP-IDF's secondary console on USB Serial/JTAG (`CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y`, the default) should be disabled when M10 claims GPIO18/19. It is harmless but writes to a pad that is no longer USB.
 - A different board (XIAO, Super Mini, custom) gets its own table. Nothing here transfers automatically.
 
@@ -117,7 +117,7 @@ Verified on the official DEVKITM-1-N4X (chip rev v1.1) with `firmware/esp32-node
 > **Note — status of the GPIO2/GPIO3 choice.** GPIO2/GPIO3 is the current verified I2C allocation on the real ESP32-C3 board. GPIO2 is a strapping pin, so this should not be described as an unconditionally ideal permanent choice. The current wiring has been verified to boot and operate correctly with the OLED attached. GPIO10 remains a possible alternative SCL pin if future expansion or production hardening requires avoiding a strapping pin.
 >
 > - Do not change the current OLED wiring now.
-> - GPIO10 is documented as a future alternative, not an immediate migration. The allocation table above currently plans GPIO10 for RS485 DE + /RE, so moving SCL there would mean re-planning that signal at the same time.
+> - GPIO10 is documented as a future alternative, not an immediate migration. It is currently available: the RS485 interface (DFR0845) needs only UART TX/RX, and no other peripheral claims GPIO10.
 > - This creates no requirement to reserve GPIO10 for I2C unless a future hardware need actually appears.
 > - The OLED remains a temporary bench/debug accessory, excluded from battery-life, deep-sleep and solar power budgets (below).
 
@@ -143,9 +143,9 @@ M10 adds the selected physical soil path and proves calibration, stabilization, 
 **M10 increment: €72–145; M9 + M10 sensor bench: €224–461.**
 
 ```text
-DEVKITM-1-N4X UART TX/RX + DE/RE ── 3.3 V MAX3485/SP3485 ── twisted A/B ── probe
-                         GND ───────── common reference ────────────────────┘
-12 V sensor supply ────────────────────────────────────────────────────────┘
+DEVKITM-1-N4X UART1 TX/RX ── DFR0845 isolated RS485 (no DE/RE pin) ── twisted A/B ── probe
+                         GND ───────── common reference ────────────────────────────┘
+12 V sensor supply ────────────────────────────────────────────────────────────────┘
 ```
 
 Verify the purchased probe's wire colors, polarity, supply, Modbus address/baud rate, and register map before power-up. Never connect a 5 V-only MAX485 receiver output directly to ESP32 GPIO.

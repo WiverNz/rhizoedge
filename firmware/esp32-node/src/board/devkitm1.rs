@@ -20,9 +20,9 @@
 //! | 5 | **pump driver input** (constructed) | out | input, no pull, no glitch | **10 kΩ pull-down** |
 //! | 6 | sensor rail enable (constructed) | out | input **with weak pull-up** (JTAG pad) | 10 kΩ pull-down |
 //! | 7 | RS485 rail enable (constructed) | out | input, no pull | 10 kΩ pull-down |
-//! | 10 | RS485 DE + /RE, tied | out | input, no pull | 10 kΩ pull-down |
-//! | 18 | UART1 TX → transceiver DI | out | 50 µs high glitch | — |
-//! | 19 | UART1 RX ← transceiver RO | in | USB D+ pull-up | — |
+//! | 10 | available; candidate future SCL alternative, not reserved | — | input, no pull | — |
+//! | 18 | UART1 TX → DFR0845 RS485 module | out | 50 µs high glitch | — |
+//! | 19 | UART1 RX ← DFR0845 RS485 module | in | USB D+ pull-up | — |
 //! | 3 | I2C SDA (INA260; bench OLED) | od | input, no pull | 4.7 kΩ to 3V3 |
 //! | 2 | I2C SCL — strapping pin | od | floating | 4.7 kΩ to 3V3, **required** |
 //! | 0 | leak input | in | floating | pull-up per sensor |
@@ -44,8 +44,10 @@
 //!   SDA low through a reset. SCL on GPIO2 is safe because only the master
 //!   drives SCL, neither the INA260 nor the SH1106 stretches the clock, and the
 //!   required pull-up holds GPIO2 at the level the datasheet recommends.
-//! - **No pin is spare.** Further expansion goes on the I2C bus, never by
-//!   doubling up a pin. GPIO 11–17 are the in-package flash and are not on the
+//! - **GPIO10 is the only unclaimed pin**, and it is not reserved. The
+//!   DFR0845 RS485 module needs UART TX/RX only, with no DE or /RE pin.
+//!   Further expansion goes on the I2C bus, never by doubling up a pin.
+//!   GPIO 11–17 are the in-package flash and are not on the
 //!   header; the micro-USB connector reaches GPIO18/19 only through unfitted
 //!   R2/R3, so on this board native USB is unused and the console is UART0.
 //!
