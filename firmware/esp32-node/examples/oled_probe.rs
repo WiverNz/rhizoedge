@@ -1,17 +1,23 @@
-//! Temporary bench probe for an SH1106 128x64 I2C OLED.
+//! Bench probe for the SH1106 128x64 I2C OLED, a development accessory only.
 //!
-//! Wiring under test: SDA = GPIO4, SCL = GPIO5, 3V3, GND. Scans the bus,
-//! initialises the SH1106 at the address it found, and draws a frame and three
-//! lines of text. Every log line starts with `OLED_PROBE` so a serial capture
-//! can be filtered.
+//! Wiring under test is the permanent `devkitm1` I2C pair: **SDA = GPIO3,
+//! SCL = GPIO2** (adjacent, J1 pins 5 and 4), VCC = 3V3, GND = GND (pin plan
+//! in `src/board/devkitm1.rs`).
+//! Scans the bus, initialises the SH1106 at the address it found (verified
+//! 0x3C), and draws a frame and three lines of text. Every log line starts
+//! with `OLED_PROBE` so a serial capture can be filtered.
 //!
-//! **Not part of the image, and not a board profile.** It deliberately does
-//! not construct `board::ActiveBoard`, so it drives no pump and no rail. GPIO5
-//! is the `devkitm1` pump output: never flash this to a board with a pump
-//! driver wired to GPIO5, because I2C clocking would toggle it.
+//! GPIO2 is a strapping pin. SCL may sit there only because the master is the
+//! sole driver of SCL and the bus pull-up holds it at the level the datasheet
+//! recommends at reset. When re-verifying, check the ROM's reset line: with the
+//! bus pull-up present it reads `boot:0xd (SPI_FAST_FLASH_BOOT)` (bit 0 is
+//! GPIO2, sampled high); a floating GPIO2 reads `boot:0xc`. Either is SPI boot.
 //!
-//! It touches no NVS. Restore the node image afterwards with an ordinary
-//! `espflash flash`.
+//! **Not part of the image, and not a board profile.** It does not construct
+//! `board::ActiveBoard`, so it drives no pump and no rail, and it touches no
+//! NVS. Restore the node image afterwards with an ordinary `espflash flash`.
+//! Nothing in the image depends on the display, and it is outside every power
+//! budget.
 
 use embedded_graphics::mono_font::ascii::FONT_6X10;
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -45,12 +51,12 @@ fn run() -> Result<u8, String> {
     let config = I2cConfig::new().baudrate(Hertz(100_000));
     let mut i2c = I2cDriver::new(
         peripherals.i2c0,
-        peripherals.pins.gpio4,
-        peripherals.pins.gpio5,
+        peripherals.pins.gpio3,
+        peripherals.pins.gpio2,
         &config,
     )
     .map_err(|e| format!("i2c driver install: {e}"))?;
-    log::info!("OLED_PROBE I2C0 up: SDA=GPIO4 SCL=GPIO5 100kHz internal pull-ups on");
+    log::info!("OLED_PROBE I2C0 up: SDA=GPIO3 SCL=GPIO2 100kHz internal pull-ups on");
 
     // An empty write is START, address+W, STOP: it asks only "does anyone ACK".
     let timeout = TickType::new_millis(20).ticks();

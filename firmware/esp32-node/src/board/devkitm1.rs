@@ -7,14 +7,47 @@
 //! factor that tolerates a multimeter probe on the pump driver input — which is
 //! exactly what HIL-1 requires.
 //!
-//! # The pin map, and why these pins
+//! # The pin plan (2026-10-23)
 //!
-//! ESP32-C3 GPIO 2, 8 and 9 are strapping pins and are avoided: their level at
-//! reset selects the boot mode, so driving one is a way to make a board
-//! unflashable. GPIO 11–17 serve the SPI flash on an N4X module. GPIO 18 and 19
-//! are the USB Serial/JTAG pair and are left alone so `espflash --monitor`
-//! keeps working. What remains — 0, 1, 3, 4, 5, 6, 7, 10 — is what this profile
-//! uses.
+//! This profile **constructs** only GPIO5, 6 and 7 today. The rest of the table
+//! is the permanent allocation the later adapters must use, so that every
+//! peripheral below can be wired at once with no replugging and no second
+//! profile. Rationale, datasheet references and wiring are in
+//! `docs/hardware/home-node-hardware-guide.md` §DEVKITM-1 pin allocation.
+//!
+//! | GPIO | Use | Dir | State from reset until configured | External part |
+//! |---|---|---|---|---|
+//! | 5 | **pump driver input** (constructed) | out | input, no pull, no glitch | **10 kΩ pull-down** |
+//! | 6 | sensor rail enable (constructed) | out | input **with weak pull-up** (JTAG pad) | 10 kΩ pull-down |
+//! | 7 | RS485 rail enable (constructed) | out | input, no pull | 10 kΩ pull-down |
+//! | 10 | RS485 DE + /RE, tied | out | input, no pull | 10 kΩ pull-down |
+//! | 18 | UART1 TX → transceiver DI | out | 50 µs high glitch | — |
+//! | 19 | UART1 RX ← transceiver RO | in | USB D+ pull-up | — |
+//! | 3 | I2C SDA (INA260; bench OLED) | od | input, no pull | 4.7 kΩ to 3V3 |
+//! | 2 | I2C SCL — strapping pin | od | floating | 4.7 kΩ to 3V3, **required** |
+//! | 0 | leak input | in | floating | pull-up per sensor |
+//! | 1 | tank input | in | floating | pull-up per sensor |
+//! | 4 | analogue soil probe, ADC1 ch4 | in | input, no pull | — |
+//! | 8 | on-board RGB LED, strapping pin | out | — | fitted on board |
+//! | 9 | BOOT button, strapping pin | in | weak pull-up | fitted on board |
+//! | 20, 21 | UART0 console via CP2102N | — | — | fitted on board |
+//!
+//! Hard rules this table encodes:
+//!
+//! - **The pump pin shares nothing.** GPIO5 has neither a reset pull-up nor a
+//!   power-up glitch (ESP32-C3 datasheet v2.4, Tables 2-1 and 2-2), and its
+//!   only analogue function is ADC2, which ESP-IDF refuses on the C3. GPIO18
+//!   (50 µs high glitch), GPIO19 (USB pull-up) and GPIO6 (JTAG pull-up) must
+//!   never drive a pump or any other active-high load whose accidental
+//!   assertion matters.
+//! - **SDA is never on a strapping pin**: a slave cut off mid-transfer can hold
+//!   SDA low through a reset. SCL on GPIO2 is safe because only the master
+//!   drives SCL, neither the INA260 nor the SH1106 stretches the clock, and the
+//!   required pull-up holds GPIO2 at the level the datasheet recommends.
+//! - **No pin is spare.** Further expansion goes on the I2C bus, never by
+//!   doubling up a pin. GPIO 11–17 are the in-package flash and are not on the
+//!   header; the micro-USB connector reaches GPIO18/19 only through unfitted
+//!   R2/R3, so on this board native USB is unused and the console is UART0.
 //!
 //! # THE HARDWARE REQUIREMENT SOFTWARE CANNOT SATISFY
 //!

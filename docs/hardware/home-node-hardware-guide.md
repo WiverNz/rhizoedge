@@ -50,31 +50,75 @@ Keep the antenna clear of wire bundles and metal. Record evidence for initial an
 
 Chip deep-sleep current is not USB board current: regulators, indicators, and USB circuitry contribute to complete board/system consumption. Every unmeasured power figure is **target/TBD**.
 
-### Optional SH1106 OLED: compatibility investigation
+### DEVKITM-1 pin allocation (2026-10-23)
 
-**Reviewed 2026-10-15; source/documentation inspection only, not hardware validation.** An optional 1.3-inch SH1106 128×64 I2C module specified for 3.3 V can provisionally use **SDA = GPIO0, SCL = GPIO1, VCC = 3V3, GND = GND** on the official ESP32-C3-DEVKITM-1-N4X. This is a bench wiring option, not an implemented feature or a reserved production pin map. Confirm the actual module's supply requirements, pin order, and pull-ups before connecting with power removed.
+**Status:** permanent allocation for the `devkitm1` board profile. Only GPIO5/6/7 are constructed by firmware today; every other row is a reservation that the M10/M11 adapters must use. Concrete numbers live in [`devkitm1.rs`](../../firmware/esp32-node/src/board/devkitm1.rs), which mirrors this table; ADR-007 keeps them there.
 
-Verified against the current repository:
+Sources, read rather than assumed: ESP32-C3 datasheet v2.4 (Table 2-1 pin settings at/after reset, Table 2-2 power-up glitches, §3 strapping), the [DEVKITM-1 V1 schematic](https://dl.espressif.com/dl/schematics/SCH_ESP32-C3-DEVKITM-1_V1_20200915A.pdf), ESP-IDF v5.5.1 `hal/esp32c3/include/hal/gpio_ll.h` and `esp_adc/Kconfig`, and the TI BQ25185, TPS63070 and INA260 datasheets.
 
-- The [board profile](../../firmware/esp32-node/src/board/devkitm1.rs) constructs GPIO5 as active-high pump control, GPIO6 as sensor supply enable, and GPIO7 as RS485 supply enable. GPIO0/1/3/4/10 are unused by the application. GPIO7 is a supply enable, not RS485 DE/RE.
-- The [console adapter](../../firmware/esp32-node/src/hal/console.rs) uses ESP-IDF's configured console. On this board, the CP210x bridge connects to UART0 GPIO20/21; native USB Serial/JTAG uses the separate GPIO18/19 pair. Preserve both interfaces when allocating optional pins.
-- The [dependency manifest](../../firmware/esp32-node/Cargo.toml) pins `esp-idf-hal` 0.46.2, which provides `I2cDriver` and embedded-hal I2C implementations; the [SDK configuration](../../firmware/esp32-node/.cargo/config.toml) pins ESP-IDF v5.5.1. No I2C bus or SH1106 display initialization is implemented. Connecting the display alone will not produce useful output. The pinned HAL uses the legacy ESP-IDF I2C API; do not mix it with the new I2C driver on a later implementation.
-- The [sleep adapter](../../firmware/esp32-node/src/hal/sleep.rs) enables timer wake, not GPIO wake, and has no OLED shutdown or power-control handling. [Battery ADC support](../../firmware/esp32-node/src/hal/battery.rs) is an uninstantiated adapter on this board.
+Board facts that decide the plan:
 
-Espressif's [board pinout](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32c3/hw-reference/esp32c3/user-guide-devkitm-1.html#header-block) exposes IO0 at J1 pin 9 and IO1 at J1 pin 10. Neither is a strapping pin: ESP32-C3 strapping pins are GPIO2/8/9. The [board schematic, sheet 2](https://dl.espressif.com/dl/schematics/SCH_ESP32-C3-DEVKITM-1_V1_20200915A.pdf) shows automatic programming through EN/GPIO9. Thus GPIO0/1 I2C pull-ups do not select boot/download mode or overlap UART0/flash. GPIO0/1 also serve ADC1 channels 0/1 and the external 32.768 kHz crystal pair; these functions cannot be used simultaneously with the OLED bus. The [GPIO reference](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32c3/api-reference/peripherals/gpio.html) confirms peripheral routing through the GPIO matrix and deep-sleep wake capability on GPIO0–5.
+- **Header:** J1 exposes IO2, IO3, IO0, IO1, IO10; J3 exposes TX/RX (UART0), IO9, IO8, IO7, IO6, IO5, IO4, IO18, IO19. GPIO11–17 (in-package flash, VDD_SPI) are not on the header.
+- **USB:** the micro-USB connector feeds the CP2102N, which is UART0 (GPIO20/21) with DTR/RTS auto-programming through EN/GPIO9. The direct path to GPIO18/19 goes through R2/R3, which are **not fitted**. Native USB Serial/JTAG is therefore unreachable on this board, and GPIO18/19 are ordinary header pins. ESP-IDF releases the USB pad and its D+ pull-up as soon as either pin is claimed (`gpio_ll_func_sel`).
+- **Strapping:** GPIO9 is the BOOT button (weak pull-up, low means download mode). GPIO8 drives the on-board RGB LED through R17 and must be high for download boot. GPIO2 "does not determine" the boot mode but is "recommended" high. No 32 kHz crystal is fitted, and the RTC clock is the internal RC.
+- **Reset behaviour:** GPIO6 (MTCK) has a weak (~45 kΩ) pull-up after reset while `EFUSE_DIS_PAD_JTAG` is unburnt. GPIO18 drives a 50 µs high glitch at power-up. GPIO19 carries the USB pull-up until it is claimed. GPIO6, GPIO7 and GPIO10 show only 5 ns low glitches. GPIO5 has neither a pull nor a glitch.
+- **ADC:** ADC1 is GPIO0–4. GPIO5 is ADC2, which ESP-IDF refuses on the C3 ("not stable") unless forced, so it is worthless as an analogue input.
 
-**Future allocation remains open.** [M10 Modbus](../issues/M10/002-implement-modbus-rtu-client.md) needs UART and direction control; [PRD-100](../prd/100-real-soil-sensor.md) also defines an analog soil alternative; [PRD-110](../prd/110-real-pump-and-safety-hardware.md) needs tank/leak inputs. Battery sensing and the later [PRD-160 reservoir load cell](../prd/160-verified-watering.md) add possible requirements. None assigns these final GPIOs. Preserving the current outputs, UART, native USB, and avoiding strapping pins leaves five spare pins (0/1/3/4/10); an OLED leaves three. Conventional RS485 TX/RX/direction plus separate tank/leak inputs already needs five. This pin-budget inference means the complete node needs an allocation/interface review regardless of the OLED pair.
+| GPIO | Current (before 2026-10-23) | Permanent | Dir | From reset until firmware configures it | External pull expected | Safety-critical | Why this pin |
+|---|---|---|---|---|---|---|---|
+| 5 | pump | **pump driver input**, active high | out | input, no pull, no glitch | **10 kΩ pull-down, mandatory** (SAFETY-011, F-110-03) | **yes** | The only boot-quiet pin whose sole analogue function (ADC2) is unusable anyway. It shares nothing. HIL-1 and the docs already name it. |
+| 6 | sensor rail EN | sensor rail EN (unchanged) | out | input **with weak pull-up** | 10 kΩ pull-down (beats ~45 kΩ, leaving ≈0.6 V) | no (power) | Already wired. The pull-down keeps the rail off through boot and sleep. |
+| 7 | RS485 rail EN | RS485 rail EN (unchanged) | out | input, no pull | 10 kΩ pull-down | no (power) | Already wired. |
+| 10 | free | **RS485 DE + /RE, tied together** | out | input, no pull, 5 ns low glitch | 10 kΩ pull-down: receive, driver off | no | Not ADC and not strapping, so it spends no analogue pin. Low at boot means the transceiver never drives the bus by accident. |
+| 18 | free (incorrectly "reserved for USB") | **UART1 TX → transceiver DI** | out | 50 µs **high** glitch | — | no | TX idles high, so the glitch is a legal idle level and is harmless with DE low. It is also why 18 must never be an enable. |
+| 19 | free | **UART1 RX ← transceiver RO** | in | USB D+ pull-up until claimed | — | no | RX idles high, so the pull-up is harmless. Not on 18, because its glitch would fight the transceiver's RO output. |
+| 3 | free | **I2C SDA** | open-drain | input, no pull | **4.7 kΩ to 3V3 on the node** | no | Not strapping, which SDA must not be. It costs ADC1 ch3, the price of an I2C bus. It is next to GPIO2 on J1 (pins 5 and 4), so the bus is one short adjacent pair. |
+| 2 | free | **I2C SCL** | open-drain | floating | **4.7 kΩ to 3V3 on the node, required** | no | Strapping pin by necessity: no other non-strapping pin remains. Only the master drives SCL, and neither the INA260 nor the SH1106 stretches the clock, so nothing can hold it low at reset. The pull-up raises GPIO2 from floating to the recommended high level. Verified on the board (see the OLED section). |
+| 0 | free | **leak input** | in | floating | pull-up/conditioning per the chosen sensor | **yes** (refusal input) | ADC1 ch0 and deep-sleep-wake-capable (GPIO0–5), so a sleeping node can later wake on a leak (F-110-31). Not strapping, so a wet sensor at reset cannot change the boot mode. |
+| 1 | free | **tank input** | in | floating | pull-up for a float switch | **yes** (refusal input) | ADC1 ch1, so a resistive tank sensor (F-110-20) needs no rewiring. Not strapping, so a closed float at reset cannot change the boot mode. |
+| 4 | free (OLED SDA on the bench 2026-10-23, before the move) | **analogue soil probe** (F-100-05) | in (ADC) | input, no pull | — | no | ADC1 ch4. PRD 100 requires that Modbus ↔ analogue be a configuration change rather than a rebuild, so this pin must exist in the same profile as RS485. |
+| 8 | on-board RGB LED | on-board RGB LED / status only | out | floating | fitted on board | no | Strapping pin wired to the LED by the board. Nothing external. |
+| 9 | BOOT button | BOOT button only | in | weak pull-up | fitted on board | no | A low level at reset selects download mode, so never connect a sensor here. |
+| 20 / 21 | UART0 console | UART0 console, provisioning, `espflash` | — | — | fitted on board | no | CP2102N. Do not reuse. |
+| 11–17 | flash | flash | — | — | — | — | Not exposed. |
 
-For a removable bench display, GPIO0/1 is reasonable. **GPIO3 SDA + GPIO10 SCL is a provisional alternative** that preserves the crystal pair and more ADC/deep-sleep-wake-capable pins. It is not a committed assignment and does not resolve the overall pin shortage. Future boards need their own map under [ADR-007](../adr/007-esp32-rust-framework-and-toolchain.md).
+**Kept intentionally free:** none. All 15 header GPIOs are allocated: 11 to peripherals, plus GPIO8 (LED), GPIO9 (BOOT) and 20/21 (console). That is only possible because SCL takes GPIO2. Without that step the profile is one pin short: pump, two rail enables, RS485 TX/RX/DE, I2C SDA/SCL, leak, tank and analogue soil make 11 signals, and only 10 pins are neither strapping, flash, console nor LED.
 
-Electrical and power conditions still requiring validation:
+**Expansion is on the I2C bus, not on pins.** Addresses in use or reserved:
 
-- Pull SDA/SCL up to **3.3 V only**. Inspect existing module resistors before adding more. For short wiring, about 4.7 kΩ is a starting point, subject to capacitance and measurement; see [ESP-IDF I2C guidance](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32c3/api-reference/peripherals/i2c.html). Start conservatively at 100 kHz when support is implemented.
-- Board 3V3 remains powered during deep sleep. A blank OLED is not evidence of negligible consumption; controller, charge pump, and module circuitry still matter. Firmware currently neither commands display-off nor switches OLED power.
-- Future power gating must prevent SDA/SCL from back-powering an unpowered OLED and coordinate pull-ups, GPIO state, and supply sequencing. Do not power the module from a GPIO. A line held low through 4.7 kΩ draws approximately 0.70 mA at 3.3 V (calculated, not measured).
-- Exact OLED active/standby current, pull-up arrangement, supply margin during Wi-Fi peaks, and complete-system sleep current remain unverified. Include the display in [M10-012 energy measurements](../issues/M10/012-measure-system-energy-budget.md) if fitted.
+| Address | Device | Role |
+|---|---|---|
+| 0x3C | SH1106 OLED | bench accessory only (below) |
+| 0x40 | INA260 with A1 = A0 = GND (0x40–0x4F selectable) | power telemetry, including battery voltage (0–36 V bus input), which replaces an ADC divider and its pin |
+| 0x2A | NAU7802 (proposal) | the M16 reservoir load cell. An HX711 needs two GPIOs this board does not have. |
+| 0x20–0x27 | TCA9534-class expander (proposal) | non-safety status lines, e.g. charger STAT1/STAT2 or regulator PG. Avoid PCF8574A, whose 0x38–0x3F range contains 0x3C. |
 
-**Conclusion:** GPIO0/1 has no identified current firmware conflict, conditional on correct 3.3 V wiring. Connection alone is expected to leave application logic unchanged, but changes electrical loading and sleep consumption. Display operation requires a separately authorized firmware change and hardware verification.
+Leak and tank stay on direct GPIOs and are never moved behind the expander. Their I2C failure mode (one stuck slave blinds every device on the bus) would still fail closed as `Unknown`, but a direct pin also keeps leak-during-dose within F-110-33's one second without depending on the bus.
+
+**Power and battery parts need no GPIO.** The BQ25185 (`CE` tied low enables charging; STAT1/STAT2 are open-drain and "can be left floating"), the TPS63070 (`EN` and `PS/SYNC` strapped; PG is open-drain and optional) and the INA260 (ALERT optional) all work with no MCU pin. Any status signal that is wanted goes through the expander as telemetry, because power is never a safety input (ADR-018 §7). The solar panel needs none. **Discrepancy:** the BQ25185 is a *1-cell* charger (it supports 1S LiFePO4 at 3.6 V), while this guide's battery node is a 12.8 V **4S** LiFePO4 pack. Neither part is selected in this repository, and choosing between those architectures is M14 work.
+
+**Limitations this plan records rather than hides:**
+
+- A two-pin ultrasonic tank sensor (trigger/echo) does not fit. Use an I2C or analogue-output variant, or the float/resistive options PRD 110 already lists.
+- RS485 assumes a MAX3485/SP3485-class transceiver with DE and /RE tied (F-100-06 needs controlled turnaround). An auto-direction module would free GPIO10, but that changes F-100-06.
+- While the RS485 rail is off, firmware must not leave TX high into the unpowered transceiver, or it back-powers it through its input clamp. This is an M10 adapter concern; the current sleep configuration isolates the pads.
+- ESP-IDF's secondary console on USB Serial/JTAG (`CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y`, the default) should be disabled when M10 claims GPIO18/19. It is harmless but writes to a pad that is no longer USB.
+- A different board (XIAO, Super Mini, custom) gets its own table. Nothing here transfers automatically.
+
+### SH1106 OLED: development accessory, verified 2026-10-23
+
+Verified on the official DEVKITM-1-N4X (chip rev v1.1) with `firmware/esp32-node/examples/oled_probe.rs`, a 1.3-inch white 128×64 SH1106 I2C module with pin order `VCC GND SCK SDA`:
+
+- **Address 0x3C**, the only ACK in a 0x08–0x77 scan at 100 kHz. The `sh1106` 0.5.0 driver (page addressing, 2-column offset for 132-column RAM) initialised it and drew a full border and text with no offset error. That is the SH1106 behaviour, not an SSD1306 assumption.
+- First bench wiring used SDA = GPIO4, SCL = GPIO5. **That wiring is withdrawn**: GPIO5 is the pump output, and the module's SCK pull-up would fight the pump's mandatory pull-down through every boot. Never run the OLED on GPIO5 with a pump driver connected.
+- **Permanent wiring:** OLED `SDA → GPIO3` (J1 pin 5), OLED `SCK → GPIO2` (J1 pin 4), `VCC → 3V3`, `GND → GND`. GPIO3 and GPIO4 are electrically equivalent for SDA; GPIO3 was chosen so the pair sits on adjacent header pins.
+- **Verified on the permanent pins:** ACK at 0x3C, init and flush OK, and the same screen confirmed by eye. Across five EN resets, the ROM reported `boot:0xf (SPI_FAST_FLASH_BOOT)` every time and the display re-initialised. The ROM strap byte was `0xc` with GPIO2/3 unconnected, `0xd` with SCK on GPIO2, and `0xf` with SDA also on GPIO3. ESP-IDF's `soc/esp32c3/include/soc/boot_mode.h` makes fast flash boot depend on bit 3 alone (GPIO9, `IS_1XXX`), so the bus lines move only don't-care bits. A true supply interruption and a reset during an I2C transfer were not tested. The node image (`devkitm1-VIRTUAL-ACTUATOR-BENCH`) also booted normally with the display attached.
+
+**Power-budget treatment.** The OLED is a bench and debug accessory and is **not part of the production battery hardware profile**:
+
+- Exclude it from battery-life estimates, deep-sleep budgets, solar sizing, average-current targets, ≥6-month autonomy calculations and low-power acceptance criteria, including [M10-012](../issues/M10/012-measure-system-energy-budget.md). Reserve no battery margin for it. A powered SH1106 draws non-trivial current, and breakout boards add pull-ups and regulators that keep drawing while it is blank.
+- Production firmware must not depend on it. Its absence or failure must never affect monitoring, safety logic, pump control, offline autonomy or recovery. No firmware in the image constructs it today.
+- If it is ever kept as a product option, it must be explicitly optional, its power must be measured separately on real hardware, battery and solar figures must be computed both with and without it, and power-gating it should be considered. Power-gating must prevent SDA/SCL from back-powering an unpowered module, and the module must never be powered from a GPIO.
 
 ## M10 — real soil sensor
 
