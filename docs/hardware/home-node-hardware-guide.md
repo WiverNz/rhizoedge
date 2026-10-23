@@ -111,8 +111,15 @@ Verified on the official DEVKITM-1-N4X (chip rev v1.1) with `firmware/esp32-node
 
 - **Address 0x3C**, the only ACK in a 0x08–0x77 scan at 100 kHz. The `sh1106` 0.5.0 driver (page addressing, 2-column offset for 132-column RAM) initialised it and drew a full border and text with no offset error. That is the SH1106 behaviour, not an SSD1306 assumption.
 - First bench wiring used SDA = GPIO4, SCL = GPIO5. **That wiring is withdrawn**: GPIO5 is the pump output, and the module's SCK pull-up would fight the pump's mandatory pull-down through every boot. Never run the OLED on GPIO5 with a pump driver connected.
-- **Permanent wiring:** OLED `SDA → GPIO3` (J1 pin 5), OLED `SCK → GPIO2` (J1 pin 4), `VCC → 3V3`, `GND → GND`. GPIO3 and GPIO4 are electrically equivalent for SDA; GPIO3 was chosen so the pair sits on adjacent header pins.
-- **Verified on the permanent pins:** ACK at 0x3C, init and flush OK, and the same screen confirmed by eye. Across five EN resets, the ROM reported `boot:0xf (SPI_FAST_FLASH_BOOT)` every time and the display re-initialised. The ROM strap byte was `0xc` with GPIO2/3 unconnected, `0xd` with SCK on GPIO2, and `0xf` with SDA also on GPIO3. ESP-IDF's `soc/esp32c3/include/soc/boot_mode.h` makes fast flash boot depend on bit 3 alone (GPIO9, `IS_1XXX`), so the bus lines move only don't-care bits. A true supply interruption and a reset during an I2C transfer were not tested. The node image (`devkitm1-VIRTUAL-ACTUATOR-BENCH`) also booted normally with the display attached.
+- **Current wiring:** OLED `SDA → GPIO3` (J1 pin 5), OLED `SCK → GPIO2` (J1 pin 4), `VCC → 3V3`, `GND → GND`. GPIO3 and GPIO4 are electrically equivalent for SDA; GPIO3 was chosen so the pair sits on adjacent header pins.
+- **Verified on the current pins:** ACK at 0x3C, init and flush OK, and the same screen confirmed by eye. Across five EN resets, the ROM reported `boot:0xf (SPI_FAST_FLASH_BOOT)` every time and the display re-initialised. The ROM strap byte was `0xc` with GPIO2/3 unconnected, `0xd` with SCK on GPIO2, and `0xf` with SDA also on GPIO3. ESP-IDF's `soc/esp32c3/include/soc/boot_mode.h` makes fast flash boot depend on bit 3 alone (GPIO9, `IS_1XXX`), so the bus lines move only don't-care bits. A true supply interruption and a reset during an I2C transfer were not tested. The node image (`devkitm1-VIRTUAL-ACTUATOR-BENCH`) also booted normally with the display attached.
+
+> **Note — status of the GPIO2/GPIO3 choice.** GPIO2/GPIO3 is the current verified I2C allocation on the real ESP32-C3 board. GPIO2 is a strapping pin, so this should not be described as an unconditionally ideal permanent choice. The current wiring has been verified to boot and operate correctly with the OLED attached. GPIO10 remains a possible alternative SCL pin if future expansion or production hardening requires avoiding a strapping pin.
+>
+> - Do not change the current OLED wiring now.
+> - GPIO10 is documented as a future alternative, not an immediate migration. The allocation table above currently plans GPIO10 for RS485 DE + /RE, so moving SCL there would mean re-planning that signal at the same time.
+> - This creates no requirement to reserve GPIO10 for I2C unless a future hardware need actually appears.
+> - The OLED remains a temporary bench/debug accessory, excluded from battery-life, deep-sleep and solar power budgets (below).
 
 **Power-budget treatment.** The OLED is a bench and debug accessory and is **not part of the production battery hardware profile**:
 
