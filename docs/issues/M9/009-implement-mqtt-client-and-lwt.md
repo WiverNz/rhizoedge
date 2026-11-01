@@ -70,10 +70,10 @@ above all not `synced_at_monotonic`.
 
 ## Acceptance criteria
 
-- [ ] The device connects with per-device credentials.
-- [ ] The LWT is set **before** connect, asserted by a host test.
-- [ ] `clean_session` is true.
-- [ ] Retained online status is published on connect.
+- [x] The device connects with per-device credentials.
+- [x] The LWT is set **before** connect, asserted by a host test.
+- [x] `clean_session` is true.
+- [x] Retained online status is published on connect.
 - [x] It subscribes to the eight exact topics of protocol §3 and to no
       wildcard, so no subscription can match a topic it publishes.
 - [x] It does **not** subscribe to `commands/result`.
@@ -83,7 +83,7 @@ above all not `synced_at_monotonic`.
 - [x] An `edge.time` **equal** to the last applied one is ignored and does not
       refresh `synced_at_monotonic`.
 - [x] `clock_synced` becomes false once the last sync exceeds `TIME_SYNC_MAX_AGE_SECONDS`.
-- [ ] Withholding `edge.time` leaves `clock_synced` false, reported as such, with
+- [x] Withholding `edge.time` leaves `clock_synced` false, reported as such, with
       telemetry unaffected.
 
 ## Verification
@@ -112,3 +112,22 @@ cd firmware/esp32-node && cargo test net::mqtt
 firmware/esp32-node/src/net/mqtt.rs
 firmware/esp32-node/src/net/time_sync.rs
 ```
+
+2026-11-01 evidence reconciliation: see the M9 report’s deferred-blocker and
+independent-work section. Existing October physical evidence is reused; the
+pre-network console and MQTT constructor have focused host regressions in
+`firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
+by the production startup log, not by a measured watchdog-reset GPIO trial.
+No transient/HIL criterion is closed by this reconciliation.
+
+2026-11-01: startup with Edge stopped produced three unsynchronized telemetry
+batches and a clock_unsynced refusal; fresh time restored synchronization while
+leak_unknown still refused actuation. Physical max-age expiry is separate and
+pending. See M9 report and local clock-wire.jsonl.
+
+Corrected-will physical retest (2026-11-01): unique will reached MQTT, SQLite
+and API offline/isolated after real USB power removal. Functional notification
+VERIFIED; whole timing checkbox stays open (42.29 s from host USB disappearance
+with the then-incorrect 30 s device keepalive). Protocol/simulator require 60 s;
+regression-backed correction built but physical timing retest pending. See M9
+report for the MQTT 1.5× timeout/acceptance-wording distinction.

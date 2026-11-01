@@ -331,3 +331,73 @@ fn the_application_crate_has_no_esp_idf_dependency() {
         );
     }
 }
+
+/// M9-008: status must query the live radio, not omit RSSI or reuse a boot snapshot.
+#[test]
+fn status_reads_current_radio_rssi() {
+    let run = std::fs::read_to_string(firmware_src().join("run.rs")).unwrap();
+    let status = run
+        .split("fn status_for")
+        .nth(1)
+        .unwrap()
+        .split("fn publish_online_status")
+        .next()
+        .unwrap();
+    assert!(status.contains("rssi_dbm: crate::net::wifi::rssi_dbm()"));
+    assert!(!status.contains("rssi_dbm: None"));
+}
+
+/// M9-006 permits a pre-network console instead of a runtime unlock mechanism.
+#[test]
+fn provisioning_console_has_only_a_pre_network_caller() {
+    let sources = firmware_sources();
+    let callers: Vec<_> = sources
+        .iter()
+        .filter(|(_, text)| {
+            code_lines(text).any(|(_, line)| line.contains("console::before_network("))
+        })
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(callers, vec!["main.rs"]);
+    let main = std::fs::read_to_string(firmware_src().join("main.rs")).unwrap();
+    assert_eq!(main.matches("console::before_network(").count(), 1);
+    assert!(
+        main.find("console::before_network(").unwrap()
+            < main.find("net::wifi::Station::new(").unwrap()
+    );
+    for (path, text) in sources {
+        if path != "hal/console.rs" {
+            assert!(
+                !code_lines(&text).any(|(_, line)| line.contains("STDIN_FILENO")),
+                "runtime console reader outside pre-network boundary: {path}"
+            );
+        }
+    }
+}
+
+/// M9-009: install the will and clean-session policy before constructing the client.
+#[test]
+fn mqtt_constructor_installs_will_before_connect() {
+    let text = std::fs::read_to_string(firmware_src().join("net/mqtt.rs")).unwrap();
+    let connect = text
+        .split("pub fn connect_cb")
+        .nth(1)
+        .unwrap()
+        .split("/// Subscribes")
+        .next()
+        .unwrap();
+    assert!(connect.contains("disable_clean_session: false"));
+    let keepalive = device_simulator::mqtt::DEVICE_KEEPALIVE.as_secs();
+    assert!(
+        connect.contains(&format!("Duration::from_secs({keepalive})")),
+        "firmware keepalive must match the protocol and simulator device interval"
+    );
+    assert!(connect.contains("lwt: Some(LwtConfiguration"));
+    assert!(connect.contains("retain: true"));
+    assert!(
+        connect.find("lwt: Some").unwrap()
+            < connect
+                .find("EspMqttClient::new_cb(settings.url, &config, callback)")
+                .unwrap()
+    );
+}

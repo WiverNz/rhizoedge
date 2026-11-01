@@ -642,3 +642,16 @@ window/resolution combination has been justified for the full next cold-boot
 criterion. A deeper memory instrument or another independently justified
 complete-window method is required; do not stitch gapped blocks or use an
 A-trigger timeout as a pass. Keep Channel A on GPIO5 and preserve all HIL counts.
+
+
+## Deferred M9 transient proof (2026-11-01)
+
+The user deferred full cold-boot/reset transient qualification. Keep all
+streaming failures and block diagnostics. Static GPIO5 LOW and scope
+scaling/block functionality are verified; streaming is not qualified for safety.
+Bounded block captures are reliable but no justified configuration covers full
+boot at the required temporal resolution. Do not continue alternative capture
+investigation in the independent M9 pass. This is a measurement blocker, not
+an observed firmware safety-invariant failure. See the dedicated deferred
+blocker and acceptance inventory in the M9 report. HIL-1 remains 0/20 normal
+resets, 0 watchdog, 0/10 mid-boot power cuts.

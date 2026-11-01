@@ -48,7 +48,7 @@ cannot satisfy it is not a supported board.
 
 - [x] `pump_off()` is the first statement in `main`.
 - [x] A host test asserts the call ordering.
-- [ ] The watchdog is enabled.
+- [x] The watchdog is enabled.
 - [x] A watchdog reset path leaves the pump off.
 - [x] The hardware pull-down requirement is documented in the board profile,
       beside the pump pin it constrains.
@@ -76,3 +76,10 @@ cargo test safety_011_boot_state_pump_off
 firmware/esp32-node/src/main.rs
 firmware/esp32-node/src/board/devkitm1.rs
 ```
+
+2026-11-01 evidence reconciliation: see the M9 report’s deferred-blocker and
+independent-work section. Existing October physical evidence is reused; the
+pre-network console and MQTT constructor have focused host regressions in
+`firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
+by the production startup log, not by a measured watchdog-reset GPIO trial.
+No transient/HIL criterion is closed by this reconciliation.

@@ -43,29 +43,7 @@ pub struct BrokerSettings<'a> {
     pub password: Option<&'a str>,
 }
 
-/// Builds the Last Will payload.
-///
-/// A Last Will declares neither a power mode nor a sleep: it is composed at
-/// connect and delivered whenever the session drops, so it is evidence of an
-/// absence and never a restatement of configuration. `reason:
-/// "connection_lost"` is what makes an unannounced disappearance `isolated`
-/// rather than `sleeping` (SAFETY-021).
-#[must_use]
-pub fn last_will_payload(device_id: &DeviceId, boot_generation: u64) -> String {
-    let status = serde_json::json!({
-        "v": 1,
-        "kind": "device.status",
-        "message_id": uuid::Uuid::nil(),
-        "device_id": device_id.as_ref(),
-        "data": {
-            "boot_generation": boot_generation,
-            "status": "offline",
-            "reason": "connection_lost",
-            "protocol_version": rhizo_mqtt_contract::PROTOCOL_VERSION,
-        }
-    });
-    status.to_string()
-}
+pub use super::will::last_will_payload;
 
 /// Connects with the Last Will already in place, delivering events to
 /// `callback`.
@@ -102,7 +80,7 @@ where
         }),
         // Normative. Not a performance choice.
         disable_clean_session: false,
-        keep_alive_interval: Some(core::time::Duration::from_secs(30)),
+        keep_alive_interval: Some(core::time::Duration::from_secs(60)),
         ..MqttClientConfiguration::default()
     };
     EspMqttClient::new_cb(settings.url, &config, callback)

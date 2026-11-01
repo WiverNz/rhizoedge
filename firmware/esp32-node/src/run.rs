@@ -531,7 +531,7 @@ fn status_for<N: NvsStore, P: Pump>(
         applied_config_version: context.state.config_version,
         uptime_ms: Some(now_mono),
         free_heap_bytes: Some(free_heap_bytes()),
-        rssi_dbm: None,
+        rssi_dbm: crate::net::wifi::rssi_dbm(),
         applied_policy_versions: policy::applied_versions(context.state),
         connectivity: None,
         power: Some(Box::new(PowerStatus {

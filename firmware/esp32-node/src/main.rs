@@ -233,7 +233,7 @@ fn main() {
                 }
                 Ok(()) => {
                     attempt = 0;
-                    log::info!("wifi up, rssi {:?}", station.rssi_dbm());
+                    log::info!("wifi up, rssi {:?}", net::wifi::rssi_dbm());
                     None
                 }
             }
@@ -264,7 +264,7 @@ fn main() {
         }
         let opened = {
             let settings = run::settings(context.state, &url, &device_id);
-            net::session::Session::open(&settings, identity.boot_generation)
+            net::session::Session::open(&settings, identity)
         };
         match opened {
             Ok(mut session) => {

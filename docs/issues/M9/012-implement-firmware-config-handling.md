@@ -39,7 +39,7 @@ rollback republishes an old retained config.
 ## Acceptance criteria
 
 - [x] A valid config is applied and persisted.
-- [ ] `applied_config_version` is echoed in status.
+- [x] `applied_config_version` is echoed in status.
 - [x] A config with a lower version is ignored.
 - [x] An invalid config is rejected and the previous retained.
 - [x] A config containing `max_ml_per_run` has no effect on the reported limits.
@@ -67,3 +67,10 @@ cd firmware/esp32-node && cargo test config::
 ```text
 firmware/esp32-node/src/app/config.rs
 ```
+
+2026-11-01 evidence reconciliation: see the M9 report’s deferred-blocker and
+independent-work section. Existing October physical evidence is reused; the
+pre-network console and MQTT constructor have focused host regressions in
+`firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
+by the production startup log, not by a measured watchdog-reset GPIO trial.
+No transient/HIL criterion is closed by this reconciliation.

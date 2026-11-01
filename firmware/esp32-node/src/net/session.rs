@@ -58,10 +58,11 @@ impl Session {
     /// If the client cannot be created or a subscription is refused.
     pub fn open(
         settings: &BrokerSettings<'_>,
-        boot_generation: u64,
+        identity: rhizo_node_app::persist::BootIdentity,
     ) -> Result<Self, esp_idf_sys::EspError> {
         let will_topic = Topic::Status(settings.device_id.clone()).as_string();
-        let will_payload = last_will_payload(settings.device_id, boot_generation);
+        let will_payload =
+            last_will_payload(settings.device_id, identity, &mut crate::hal::rng::EspRng);
 
         let (tx, events) = channel();
         let own = settings.device_id.clone();

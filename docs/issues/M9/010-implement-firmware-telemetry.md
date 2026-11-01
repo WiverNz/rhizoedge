@@ -40,7 +40,7 @@ what makes staleness and stuck detection work upstream.
 
 ## Acceptance criteria
 
-- [ ] All configured telemetry kinds publish with valid envelopes.
+- [x] All configured telemetry kinds publish with valid envelopes.
 - [x] `retain` is false on every telemetry publish.
 - [ ] `sequence` is monotonic within a boot.
 - [x] UUIDv7 when synced, v4 with `clock_synced: false` otherwise.
@@ -72,3 +72,10 @@ firmware/esp32-node/src/app/telemetry.rs
 ```
 
 October 15–16: explicit bench-sensors image publishes advisory fake measurements through physical MQTT, Edge ingestion, SQLite and API. Default image retains the empty-sensor behavior. Physical sensor accuracy, global sequence and health-heartbeat criteria are not established by this test. See [M9 physical report](../../reports/M9.md).
+
+2026-11-01 evidence reconciliation: see the M9 report’s deferred-blocker and
+independent-work section. Existing October physical evidence is reused; the
+pre-network console and MQTT constructor have focused host regressions in
+`firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
+by the production startup log, not by a measured watchdog-reset GPIO trial.
+No transient/HIL criterion is closed by this reconciliation.

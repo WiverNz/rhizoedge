@@ -45,12 +45,12 @@ mode this project exists to avoid.
 
 ## Acceptance criteria
 
-- [ ] The device connects with NVS credentials.
+- [x] The device connects with NVS credentials.
 - [ ] Reconnect uses the documented backoff, with jitter, capped at 300 s.
 - [ ] Retry is unlimited — the device never stops trying.
 - [ ] Sampling continues while Wi-Fi is down.
 - [ ] The pump stays off while disconnected.
-- [ ] RSSI is reported in status.
+- [x] RSSI is reported in status.
 
 ## Verification
 
@@ -74,3 +74,14 @@ cd firmware/esp32-node && cargo test net::wifi
 ```text
 firmware/esp32-node/src/net/wifi.rs
 ```
+
+2026-11-01 evidence reconciliation: see the M9 report’s deferred-blocker and
+independent-work section. Existing October physical evidence is reused; the
+pre-network console and MQTT constructor have focused host regressions in
+`firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
+by the production startup log, not by a measured watchdog-reset GPIO trial.
+No transient/HIL criterion is closed by this reconciliation.
+
+2026-11-01 physical protocol evidence: see M9 report LAN/RSSI/clock section;
+startup without time verified, physical 1800 s expiry remains pending. No GPIO
+or HIL-1 acceptance is implied.

@@ -41,7 +41,7 @@ never appear in a binary or a log.
 - [x] All provisioning commands work and persist to NVS.
 - [x] `show` redacts secrets.
 - [x] Settings take effect after reboot.
-- [ ] Provisioning is unavailable at runtime without an explicit unlock.
+- [x] Provisioning is unavailable at runtime without an explicit unlock.
 - [x] One firmware image works for multiple devices.
 - [x] The procedure is documented.
 
@@ -69,3 +69,10 @@ firmware/esp32-node/src/provision.rs
 October physical evidence: UART device-id/Wi-Fi/MQTT/show/commit, automatic
 reboot and one USB power cycle retained the settings; see [M9 report](../../reports/M9.md).
 Runtime-unlock criterion remains unchecked: only the pre-network console is wired.
+
+2026-11-01 evidence reconciliation: see the M9 report’s deferred-blocker and
+independent-work section. Existing October physical evidence is reused; the
+pre-network console and MQTT constructor have focused host regressions in
+`firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
+by the production startup log, not by a measured watchdog-reset GPIO trial.
+No transient/HIL criterion is closed by this reconciliation.

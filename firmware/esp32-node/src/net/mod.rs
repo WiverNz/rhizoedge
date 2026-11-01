@@ -8,3 +8,5 @@
 pub mod mqtt;
 pub mod session;
 pub mod wifi;
+
+pub mod will;

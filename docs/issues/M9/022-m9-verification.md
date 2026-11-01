@@ -99,7 +99,7 @@ Host tests complement, but do not replace, the physical criteria below.
 - [x] **With a board:** a duplicate `command_id` across a power cycle is deduplicated. (Real ESP32-C3 NVS and virtual execution, October 16–17; report §13. No GPIO/pump claim.)
 - [ ] **With a board:** an oversized command is clamped or rejected.
 - [ ] **With a board:** HIL-1 passes with transient capture (DMM alone is insufficient).
-- [ ] **With a board:** blocking the `time` topic (or disconnecting the edge) refuses commands with `clock_unsynced` while telemetry continues.
+- [x] **With a board:** blocking the `time` topic (or disconnecting the edge) refuses commands with `clock_unsynced` while telemetry continues.
 - [ ] Documentation updated; report recorded.
 
 ## Verification
@@ -135,3 +135,7 @@ docs/testing/hil-runs/
 ```
 
 October 14–15 physical bring-up is recorded in [M9 report §10](../../reports/M9.md). The October 15–16 follow-up in report §11 completes the grouped online/config/telemetry criterion using explicit advisory fake sensors on the real board. No HIL waveform or power-cut criterion is complete.
+
+2026-11-01 physical protocol evidence: see M9 report LAN/RSSI/clock section;
+startup without time verified, physical 1800 s expiry remains pending. No GPIO
+or HIL-1 acceptance is implied.
