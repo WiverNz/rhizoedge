@@ -15,7 +15,7 @@ Do not request actions for VERIFIED items without a recorded invalidation.
 | Pump / MOSFET / actuator load | All disconnected |
 | Actuator wiring | GPIO5 → 10 kΩ → GND |
 | PicoScope A | Tip on GPIO5, ground clip on board GND, physical x10, DC |
-| PicoScope USB/backend | Windows-owned / validated windows-ps2000 |
+| PicoScope USB/backend | Windows-owned / windows-ps2000; timer-adjusted stationary stress 8/9 clean at 1 MS/s |
 | Generator | Returned to DC zero; leads disconnected from board/probe |
 | ESP serial | USB reconnected; WSL attachment not yet checked; last port /dev/ttyUSB0 |
 | Latest steady LOW | -22.736..+22.889 mV, 0 pulses >0.8 V, 3 valid blocks |
@@ -41,6 +41,10 @@ identification is needed to repeat already-verified setup facts. Reuse evidence
 unless relevant wiring/firmware changed, it did not prove the criterion,
 contradictory evidence appeared, or the criterion requires more trials.
 Batch software work and all applicable tests for the current probe position.
-The next physical criterion remains GPIO5 cold-boot safety. Investigate the long-
-stream overrun before requesting another power removal/reconnection. No HIL count is earned
+The next physical criterion remains GPIO5 cold-boot safety. NOT qualified for another cold-boot attempt; acquisition failures remain.
+No physical action is requested during this qualification phase. No HIL count is earned
 by a setup reset, static baseline, or scope functional-validation capture.
+
+Stationary diagnostics after the user’s USB replug do not change bench wiring
+or HIL counts. The old cold-boot capture remains INVALID (1,927 missing samples).
+See the M9 report for the full baseline/timer comparison and sensitivity limits.

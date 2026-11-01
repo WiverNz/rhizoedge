@@ -85,6 +85,7 @@ These are observed versions, not claims about the latest available release.
 |---|---|
 | Manual GUI | PicoScope 7 T&M **7.2.30.10560 x64** |
 | Windows API driver | **3.0.152.6217**, real open/query/close verified |
+| Windows USB kernel driver | **2.0.11.2**, Pico Technology Ltd; queried 2026-11-01 |
 | API | **ps2000**, NOT ps2000a (similarly named models can use different APIs) |
 | Windows runtime | x64 Windows PowerShell **5.1.22621.6133**, C# compiled by `Add-Type` |
 | USB ownership tooling | usbipd-win **5.3.0**; discovery/detach only for normal operation |
@@ -451,5 +452,73 @@ samples with no loss or overrun; largest observed polling gap 46.3374 ms,
 1,966 callbacks, extrema ±68.514 mV and no >0.8 V pulses. Evidence:
 `local/evidence/picoscope/m9-stream-loss-investigation-01/`.
 This is a diagnostic, not a repeated boot test or proof of a permanent fix.
-The original scheduling/driver loss cause remains unresolved; do not rerun
-physical safety trials until green or silently discard the failed acquisition.
+At that checkpoint the scheduling/driver loss cause remained unresolved. The
+qualification below supersedes acquisition readiness, but never the failed
+capture assessment. Do not retry safety trials until green or discard failures.
+
+### Stationary streaming stress results (2026-11-01)
+
+NOT qualified for another cold-boot attempt; acquisition failures remain. The timer-adjusted matrix passed 8/9 runs,
+three each at 10/30/90 s at 1 MS/s, totaling 390,000,000 samples.
+Independent driver-store copies and callback files were byte-identical in
+8/9 runs. Evidence and the failed baseline matrix are
+indexed in the [M9 report](../reports/M9.md#stationary-streaming-qualification-after-usb-replug--2026-11-01).
+The original 1,927-sample cold-boot loss is still INVALID, never a HIL pass.
+
+The 1M-sample overview buffer and direct preallocated native copies alone were
+insufficient: two in-spec baseline runs still lost data. A scoped
+`timeBeginPeriod(1)`/`timeEndPeriod(1)` request reduced measured mean polling
+cadence from 15.299 ms to 1.963 ms. It is paired on failure paths too.
+See [Microsoft's timer-resolution contract](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod).
+This changes worker scheduling, not ADC rate; it does not make Windows real-time.
+
+```sh
+# New, unused output directory each time; retains all runs, including failures.
+python3 scripts/picoscope-stress.py --profile hil --diagnostic-readback --output local/evidence/picoscope/<new-name>
+# Single long capture with independent readback:
+./scripts/picoscope-capture.sh --mode stream --duration-ms 90000 --stream-interval-ns 1000 --timeout-s 105 --diagnostic-readback --json
+```
+
+`--diagnostic-default-timer` exists only for controlled comparisons of streaming
+capture; it is not a qualified HIL setting. `--diagnostic-readback` retrieves the
+retained driver sequence **after successful stop**, saves `driver-readback.i16le`,
+and invalidates disagreement; neither copy repairs the other. Timing fields
+separate acquisition, stop, analysis, readback and callback-file writing. WSL
+only launches the Windows worker and consumes its completed report. The native
+callback copies to a bounded preallocated array; it does not write files or
+perform pulse analysis. Callbacks outside the synchronous polling owner are
+rejected. Capture data cannot be finalized successfully after a stop failure.
+
+Before treating a stream as usable safety evidence, inspect the top-level exit
+status, `requested_sample_count`, `sample_count`, `sample_shortfall`,
+`callback_count`, `callback_samples_min/max`, `buffer_overrun`,
+`driver_overflow_flags`, `lost_sample_count`, `max_poll_gap_s`,
+`max_callback_gap_s`, `stop_succeeded`, `contiguous`, `invalid_reasons` and
+`safety_evidence_valid`. Counts alone are insufficient: the failed original
+capture returned all requested positions, some containing missing-data markers.
+The quality flag means valid acquisition, not that the GPIO safety criterion
+passed. The independent raw audit rejects disagreement/truncation. No filling,
+interpolation, repeated samples or ignored overrun flags are permitted.
+
+ps2000 exposes no sequence numbers/per-sample timestamps; continuity assessment
+uses the documented counts, auto-stop, overrun and sentinel checks, supplemented
+by retained-data equality. This cannot detect arbitrary unreported driver errors.
+Every capture remains individually gated despite the clean stress matrix.
+
+[Pico's model-specific streaming specifications](https://www.picotech.com/library/knowledge-bases/oscilloscopes/streaming-mode)
+list 1 MS/s for 2205A. The two 2 MS/s baseline diagnostics failed and are not a
+supported operating point. The integrity gate now explicitly rejects streaming
+intervals below 1 µs, even without detected loss. Keep 1 MS/s for planned long captures; 500 kS/s was a
+comparison only. Voltage amplitude does not establish a shortest unsafe pulse;
+none is specified in the current actuator/HIL documentation. Do not lower the
+rate to obtain clean results. 1 µs intervals cannot rule out sub-microsecond
+pulses; functional AWG validation is not a minimum-pulse sensitivity calibration.
+The corrected long-run failure remains a blocker: 592 callback loss markers,
+191 retained-driver markers, one fewer retained sample and 402 disagreements.
+The timer request improves cadence but does not fix all loss. The remaining
+investigation needs native driver/USB timing evidence; poll maxima alone cannot
+identify a kernel/USB/device stall. No additional installed ps2000 DLL was found.
+Do not begin new physical trials or substitute the clean 500 kS/s results.
+
+Full HIL needs explicitly bounded sensitivity and complementary faster transient
+coverage as appropriate. No hardware HIL count was earned by this qualification.

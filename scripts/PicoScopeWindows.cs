@@ -71,6 +71,7 @@ namespace Rhizo.Pico {
    lost_sample_count=analysis==null?0:analysis.lost_sample_count;
    sample_shortfall=Math.Max(0,requested_sample_count-sample_count);
    invalid_reasons.Clear();
+   if(sample_interval_s<1e-6)invalid_reasons.Add("Above the published 2205A 1 MS/s streaming limit");
    if(timedOut)invalid_reasons.Add("capture timeout");
    if(!complete || sample_count!=requested_sample_count)invalid_reasons.Add("incomplete or excess sample sequence / missing auto-stop");
    if(collector_error!=null)invalid_reasons.Add(collector_error);

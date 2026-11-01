@@ -57,7 +57,7 @@ Assert-True ($missingOnly.lost_sample_count -eq 2 -and $null -eq $missingOnly.mi
 $gap=[Rhizo.Pico.MathUtil]::Analyze([int16[]]@(0,$adc,-32768,$adc,0),5,0.000001,0.8)
 Assert-True ($gap.lost_sample_count -eq 1 -and $gap.pulse_count -eq 2 -and $null -eq $gap.max_pulse_width_s) 'Never bridge a missing sample or report a precise width across loss'
 function Clean-Capture {
- $c=[Rhizo.Pico.Capture]::new();$c.requested_sample_count=3;$c.sample_count=3;$c.stop_succeeded=$true
+ $c=[Rhizo.Pico.Capture]::new();$c.requested_sample_count=3;$c.sample_count=3;$c.sample_interval_s=0.000001;$c.stop_succeeded=$true
  $c.analysis=[Rhizo.Pico.MathUtil]::Analyze([int16[]]@(0,1,0),5,0.000001,0.8)
  return $c
 }
@@ -82,4 +82,6 @@ Assert-True (-not $c.valid -and $c.exit_code -eq 22) 'Timeout invalid even with 
 $parts=[Rhizo.Pico.StreamCollector]::new(6)
 $parts.Append([int16[]]@(11,22),$false,$false);$parts.Append([int16[]]@(),$false,$false);$parts.Append([int16[]]@(33,44,55,66),$false,$true)
 Assert-True ($parts.Complete -and ($parts.samples -join ',') -eq '11,22,33,44,55,66') 'Variable and empty callbacks preserve exact ordering'
+$c=Clean-Capture;$c.sample_interval_s=0.0000005;$c.AssessStream($true,$false)
+Assert-True (-not $c.safety_evidence_valid) 'Out-of-spec streaming rate cannot qualify even with clean data'
 Write-Output "$count Windows math/JSON/discovery assertions passed; no hardware API calls."
