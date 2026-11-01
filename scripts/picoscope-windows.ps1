@@ -68,7 +68,7 @@ try {
         $records=New-Object 'Collections.Generic.List[object]'
         for($i=1;$i -le $r.count;$i++) {
             if ($r.mode -eq 'stream') {
-                $capture=$device.Stream([double]$r.duration_s,[uint32]$r.stream_interval_ns,[double]$r.range_v,[double]$r.pulse_v,[double]$r.timeout_s,[string]$r.output_dir)
+                $capture=$device.Stream([double]$r.duration_s,[uint32]$r.stream_interval_ns,[double]$r.range_v,[double]$r.pulse_v,[double]$r.timeout_s,[string]$r.output_dir,($r.high_resolution_timer -ne $false),[bool]$r.diagnostic_readback)
             } else {
             $capture=$device.Acquire($i,[double]$r.duration_s,[int]$r.samples,[double]$r.range_v,[string]$r.trigger,[double]$r.trigger_v,[double]$r.pulse_v,[double]$r.pre_s,[double]$r.timeout_s,[string]$r.output_dir)
             }

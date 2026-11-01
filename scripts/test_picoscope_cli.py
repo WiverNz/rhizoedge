@@ -20,6 +20,14 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.parse(['status','--test-signal','square-1khz'])
 
+    def test_diagnostic_options_require_stream_capture(self):
+        a=cli.parse(['capture','--mode','stream','--diagnostic-readback','--diagnostic-default-timer'])
+        self.assertTrue(a.diagnostic_readback)
+        self.assertTrue(a.diagnostic_default_timer)
+        for args in (['status','--diagnostic-readback'], ['capture','--diagnostic-default-timer']):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                cli.parse(args)
+
     def test_streaming_constraints(self):
         a=cli.parse(['capture','--mode','stream','--duration-ms','2000','--timeout-s','5'])
         self.assertEqual(a.stream_interval_ns,1000)

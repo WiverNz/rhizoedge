@@ -39,6 +39,8 @@ def parse(argv=None):
     p.add_argument('--json', action='store_true')
     p.add_argument('--mode', choices=['block', 'stream'], default='block')
     p.add_argument('--stream-interval-ns', type=int, default=1000, help='Streaming interval accepted by ps2000; no independent readback')
+    p.add_argument('--diagnostic-default-timer', action='store_true', help='Diagnostic comparison only: omit the process-scoped 1 ms timer request')
+    p.add_argument('--diagnostic-readback', action='store_true', help='After stop, compare and preserve the driver retained raw sequence; never fills missing callback samples')
     p.add_argument('--test-signal', choices=['square-1khz', 'dc-zero'], help='ISOLATED probe-to-AWG loop only; restores DC zero on normal close')
     p.add_argument('--dll', help='Optional installed Windows x64 ps2000.dll path')
     p.add_argument('--range-v', type=float, default=5, help='Probe-tip +/- range; physical x10 probe required')
@@ -54,6 +56,8 @@ def parse(argv=None):
     p.add_argument('--open-timeout-s', type=float, default=20, help='Additional total budget for compilation/open/close')
     p.add_argument('--output', type=Path, help='New evidence directory; default local/evidence/picoscope/<unique run>')
     a = p.parse_args(argv)
+    if (a.diagnostic_default_timer or a.diagnostic_readback) and (a.action != 'capture' or a.mode != 'stream'):
+        p.error('Streaming diagnostics require capture --mode stream')
     if a.test_signal and a.action != 'capture':
         p.error('--test-signal requires capture, never status')
     if a.post_ms is not None:
@@ -109,7 +113,7 @@ def main(argv=None):
             directory.mkdir(parents=True, exist_ok=False)
         else:
             directory = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-'), dir=base))
-        request = dict(action=a.action, mode=a.mode, stream_interval_ns=a.stream_interval_ns, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
+        request = dict(high_resolution_timer=not a.diagnostic_default_timer, diagnostic_readback=a.diagnostic_readback, action=a.action, mode=a.mode, stream_interval_ns=a.stream_interval_ns, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
                        dll=a.dll, range_v=a.range_v, duration_s=a.duration_ms/1000, samples=a.samples,
                        count=a.count, trigger=a.trigger, trigger_v=a.trigger_v, pulse_v=a.pulse_v,
                        pre_s=a.pre_ms/1000, timeout_s=a.timeout_s,

@@ -1,6 +1,6 @@
 # M9 current bench state
 
-Last confirmed: 2026-11-01, user replied “connected” during the cold-boot capture attempt.
+Last confirmed: 2026-11-01, user reports unplug/replug of both ESP32 and PicoScope; current wiring unchanged.
 Update this record immediately after **every confirmed physical change**;
 do not infer a requested action was performed. Before requesting an action,
 read this file, the PicoScope runbook, relevant current M9 report section and

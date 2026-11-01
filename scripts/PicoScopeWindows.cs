@@ -20,6 +20,8 @@ namespace Rhizo.Pico {
   public int pulse_count;
   public List<Pulse> pulses = new List<Pulse>();
   public bool clipped, lost_data;
+  public int lost_sample_count, valid_sample_count;
+  public int? first_lost_sample, last_lost_sample;
  }
  public sealed class StreamCollector {
   public readonly short[] samples;
@@ -55,6 +57,34 @@ namespace Rhizo.Pico {
   public bool overflow, valid;
   public string trigger_direction, armed_utc, completed_utc, raw_csv, status;
   public Analysis analysis;
+  public int requested_sample_count, lost_sample_count, sample_shortfall, callback_samples_min, callback_samples_max;
+  public bool timer_resolution_released, diagnostic_readback;
+  public int timer_resolution_requested_ms, readback_sample_count, readback_lost_count, readback_mismatch_count;
+  public double readback_s;
+  public int polling_count, empty_poll_count, gc0_collections, gc1_collections, gc2_collections;
+  public short driver_overflow_flags;
+  public double max_callback_gap_s, max_copy_s, total_copy_s, max_poll_call_s, max_status_call_s, stop_s, analysis_s, writer_s;
+  public bool stop_succeeded, safety_evidence_valid;
+  public string collector_error, continuity_basis="ps2000 count/auto-stop/overrun/sentinel checks; no device sequence numbers or per-sample timestamps exposed";
+  public List<string> invalid_reasons=new List<string>();
+  public void AssessStream(bool complete,bool timedOut) {
+   lost_sample_count=analysis==null?0:analysis.lost_sample_count;
+   sample_shortfall=Math.Max(0,requested_sample_count-sample_count);
+   invalid_reasons.Clear();
+   if(timedOut)invalid_reasons.Add("capture timeout");
+   if(!complete || sample_count!=requested_sample_count)invalid_reasons.Add("incomplete or excess sample sequence / missing auto-stop");
+   if(collector_error!=null)invalid_reasons.Add(collector_error);
+   if(buffer_overrun)invalid_reasons.Add("driver overview buffer overrun");
+   if(lost_sample_count>0)invalid_reasons.Add("driver missing-sample markers");
+   if(analysis==null)invalid_reasons.Add("no samples");
+   if(overflow)invalid_reasons.Add("driver channel overflow");
+   if(analysis!=null && analysis.clipped)invalid_reasons.Add("ADC clipping");
+   if(!stop_succeeded)invalid_reasons.Add("stop failed / finalization not synchronized");
+   contiguous=complete && sample_count==requested_sample_count && collector_error==null && !buffer_overrun && analysis!=null && lost_sample_count==0 && stop_succeeded;
+   safety_evidence_valid=valid=invalid_reasons.Count==0;
+   exit_code=timedOut?22:valid?0:23;
+   status=valid?"CAPTURED":"INVALID CAPTURE";
+  }
  }
  public static class MathUtil {
   public static readonly double[] InputRanges = { .01,.02,.05,.1,.2,.5,1,2,5,10,20,50 };
@@ -72,13 +102,21 @@ namespace Rhizo.Pico {
    Analysis a=new Analysis(); double min=Double.PositiveInfinity,max=Double.NegativeInfinity;
    int start=-1;
    for(int i=0;i<samples.Length;i++) {
+    if(samples[i]==-32768) {
+     a.lost_data=true;a.lost_sample_count++;if(a.first_lost_sample==null)a.first_lost_sample=i;a.last_lost_sample=i;
+     if(start>=0){AddPulse(a,start,i,samples.Length,interval,true);start=-1;}
+     continue;
+    }
+    a.valid_sample_count++;
     double v=Volts(samples[i],tipRange); min=Math.Min(min,v); max=Math.Max(max,v);
-    a.clipped |= Math.Abs((int)samples[i])>=32767; a.lost_data |= samples[i]==-32768;
+    a.clipped |= Math.Abs((int)samples[i])>=32767;
     if(v>threshold && start<0) start=i;
     if(v<=threshold && start>=0) { AddPulse(a,start,i,samples.Length,interval,false); start=-1; }
    }
    if(start>=0) AddPulse(a,start,samples.Length-1,samples.Length,interval,true);
-   a.min_v=min; a.max_v=max; a.peak_to_peak_v=max-min; a.pulse_count=a.pulses.Count;
+   if(a.valid_sample_count>0){a.min_v=min;a.max_v=max;a.peak_to_peak_v=max-min;}
+   if(a.lost_data){foreach(Pulse p in a.pulses)p.width_s=null;a.max_pulse_width_s=null;}
+   a.pulse_count=a.pulses.Count;
    return a;
   }
   static void AddPulse(Analysis a,int start,int end,int count,double dt,bool right) {
@@ -89,6 +127,9 @@ namespace Rhizo.Pico {
   }
  }
  public sealed class Device : IDisposable {
+  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);
+  [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate uint StreamReadback(short h,ref double start,[Out] short[] a,IntPtr b,IntPtr c,IntPtr d,out short overflow,out uint triggerAt,out short triggered,uint count);
   [DllImport("kernel32",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr LoadLibraryEx(string path,IntPtr reserved,uint flags);
   [DllImport("kernel32",CharSet=CharSet.Ansi,ExactSpelling=true)] static extern IntPtr GetProcAddress(IntPtr module,string name);
   [DllImport("kernel32")] static extern bool FreeLibrary(IntPtr module);
@@ -192,7 +233,20 @@ namespace Rhizo.Pico {
     c.completed_utc=DateTime.UtcNow.ToString("o");return c;
    } finally { Check(stop(handle),"stop"); }
   }
-  public Capture Stream(double duration,uint intervalNs,double tipRange,double pulseThreshold,double timeout,string directory) {
+  public Capture Stream(double duration,uint intervalNs,double tipRange,double pulseThreshold,double timeout,string directory,bool highResolutionTimer=true,bool diagnosticReadback=false) {
+   Capture capture=null;
+   if(highResolutionTimer && timeBeginPeriod(1)!=0)throw new InvalidOperationException("Cannot request 1 ms timer resolution");
+   try {
+    capture=StreamCore(duration,intervalNs,tipRange,pulseThreshold,timeout,directory,diagnosticReadback);
+    capture.timer_resolution_requested_ms=highResolutionTimer?1:0;
+    return capture;
+   } finally {
+    bool released=!highResolutionTimer || timeEndPeriod(1)==0;
+    if(capture!=null)capture.timer_resolution_released=released;
+    if(!released)throw new InvalidOperationException("Cannot release timer resolution request");
+   }
+  }
+  Capture StreamCore(double duration,uint intervalNs,double tipRange,double pulseThreshold,double timeout,string directory,bool diagnosticReadback) {
    double requested=Math.Ceiling(duration/(intervalNs*1e-9));
    if(duration<=0 || intervalNs<100 || intervalNs>1000000 || requested<2 || requested>100000000 || timeout<=duration)
     throw new ArgumentException("Invalid streaming duration/interval/count/deadline");
@@ -201,50 +255,96 @@ namespace Rhizo.Pico {
    StreamRun start=Bind<StreamRun>("run_streaming_ns");
    StreamPoll poll=Bind<StreamPoll>("get_streaming_last_values");
    StreamStatus bufferStatus=Bind<StreamStatus>("overview_buffer_status");
-   StreamCollector collector=new StreamCollector(wanted);int callbackCount=0;
+   StreamCollector collector=new StreamCollector(wanted);
+   Capture c=new Capture {acquisition=1,sampling_mode="stream",timebase=-1,requested_duration_s=duration,
+    requested_sample_target=wanted,requested_sample_count=wanted,sample_interval_s=dt,sample_rate_hz=1/dt,range_v=tipRange,input_range_v=tipRange/10,
+    pulse_threshold_v=pulseThreshold,trigger_direction="none",interval_source="ps2000_run_streaming_ns accepted interval; API has no separate interval readback"};
+   Stopwatch clock=new Stopwatch();double lastCallback=0;int owner=Thread.CurrentThread.ManagedThreadId;bool insidePoll=false;
    StreamCallback callback=delegate(IntPtr buffers,short overflow,uint at,short triggered,short autoStop,uint n) {
     try {
+     if(Thread.CurrentThread.ManagedThreadId!=owner || !insidePoll){collector.error="Asynchronous/reentrant callback outside polling owner";return;}
+     double now=clock.Elapsed.TotalSeconds;c.max_callback_gap_s=Math.Max(c.max_callback_gap_s,now-lastCallback);lastCallback=now;
+     c.driver_overflow_flags |= overflow;
      if(n>1000000) {collector.error="Invalid streaming callback size";return;}
      IntPtr a=n>0?Marshal.ReadIntPtr(buffers,0):IntPtr.Zero;
+     double copyStart=clock.Elapsed.TotalSeconds;
      collector.AppendNative(a,(int)n,(overflow&1)!=0,autoStop!=0);
-     callbackCount++;
+     double copy=clock.Elapsed.TotalSeconds-copyStart;c.max_copy_s=Math.Max(c.max_copy_s,copy);c.total_copy_s+=copy;
+     if(c.callback_count==0)c.callback_samples_min=(int)n;
+     c.callback_samples_min=Math.Min(c.callback_samples_min,(int)n);c.callback_samples_max=Math.Max(c.callback_samples_max,(int)n);c.callback_count++;
     } catch(Exception e) {collector.error="Streaming callback failed: "+e.Message;}
    };
-   Capture c=new Capture {acquisition=1,sampling_mode="stream",timebase=-1,requested_duration_s=duration,
-    requested_sample_target=wanted,sample_interval_s=dt,sample_rate_hz=1/dt,range_v=tipRange,input_range_v=tipRange/10,
-    pulse_threshold_v=pulseThreshold,trigger_direction="none",interval_source="ps2000_run_streaming_ns accepted interval; API has no separate interval readback"};
    Check(trigger(handle,5,0,0,0,0),"disable streaming trigger");
+   int gc0=GC.CollectionCount(0),gc1=GC.CollectionCount(1),gc2=GC.CollectionCount(2);
    Check(start(handle,intervalNs,2,(uint)wanted,1,1,(uint)c.overview_buffer_samples),"run_streaming_ns");
-   c.started_utc=DateTime.UtcNow.ToString("o");Stopwatch clock=Stopwatch.StartNew();bool timedOut=false;double lastPoll=0;
+   c.started_utc=DateTime.UtcNow.ToString("o");clock.Start();bool timedOut=false;double lastPoll=0;
    try {
     while(!collector.autoStopped && collector.error==null) {
      double pollTime=clock.Elapsed.TotalSeconds;c.max_poll_gap_s=Math.Max(c.max_poll_gap_s,pollTime-lastPoll);lastPoll=pollTime;
-     short rc=poll(handle,callback);if(rc<0)throw new InvalidOperationException("stream poll failed");
+     short rc;
+     insidePoll=true;
+     try {rc=poll(handle,callback);} finally {insidePoll=false;}
+     c.polling_count++;if(rc==0)c.empty_poll_count++;
+     c.max_poll_call_s=Math.Max(c.max_poll_call_s,clock.Elapsed.TotalSeconds-pollTime);
+     if(rc<0){collector.error="stream poll failed";break;}
+     double statusStart=clock.Elapsed.TotalSeconds;
      // Vendor acknowledged reversed return-value documentation: support topic 31221.
-     short overrun;Check(bufferStatus(handle,out overrun),"overview buffer status");
+     short overrun;short status=bufferStatus(handle,out overrun);
+     c.max_status_call_s=Math.Max(c.max_status_call_s,clock.Elapsed.TotalSeconds-statusStart);
+     if(status<=0){collector.error="overview buffer status failed";break;}
      if(overrun!=0 && c.first_overrun_wall_s==null)c.first_overrun_wall_s=clock.Elapsed.TotalSeconds;
      c.buffer_overrun |= overrun!=0;
      if(c.armed_utc==null && collector.count>0) {
       c.armed_utc=DateTime.UtcNow.ToString("o");File.WriteAllText(Path.Combine(directory,"armed.txt"),"1 "+c.armed_utc);
      }
      if(clock.Elapsed.TotalSeconds>=timeout){timedOut=true;break;}
-     Thread.Sleep(1);
+     if(!collector.autoStopped)Thread.Sleep(1);
     }
-   } finally {Check(stop(handle),"stop streaming");GC.KeepAlive(callback);}
-   c.callback_count=callbackCount;c.stream_wall_s=clock.Elapsed.TotalSeconds;c.completed_utc=DateTime.UtcNow.ToString("o");
-   c.sample_count=collector.count;c.auto_stopped=collector.autoStopped;c.overflow=collector.overflow;
+   } catch(Exception e) {collector.error="Acquisition exception: "+e.Message;}
+   finally {
+    double stopStart=clock.Elapsed.TotalSeconds;
+    try {c.stop_succeeded=stop(handle)>0;} finally {c.stop_s=clock.Elapsed.TotalSeconds-stopStart;GC.KeepAlive(callback);}
+   }
+   c.gc0_collections=GC.CollectionCount(0)-gc0;c.gc1_collections=GC.CollectionCount(1)-gc1;c.gc2_collections=GC.CollectionCount(2)-gc2;
+   c.stream_wall_s=clock.Elapsed.TotalSeconds;c.completed_utc=DateTime.UtcNow.ToString("o");
+   c.sample_count=collector.count;c.auto_stopped=collector.autoStopped;c.overflow=collector.overflow;c.collector_error=collector.error;
    c.duration_s=collector.count*dt;c.sample_span_s=Math.Max(0,collector.count-1)*dt;
    short[] raw=collector.samples;if(collector.count!=raw.Length)Array.Resize(ref raw,collector.count);
+   Stopwatch phase=Stopwatch.StartNew();
    if(raw.Length>0)c.analysis=MathUtil.Analyze(raw,tipRange,dt,pulseThreshold);
-   c.contiguous=collector.Complete&&!c.buffer_overrun && c.analysis!=null && !c.analysis.lost_data;
-   c.valid=c.contiguous&&!c.overflow&&!c.analysis.clipped;
-   c.exit_code=timedOut?22:c.valid?0:23;c.status=timedOut?"CAPTURE TIMEOUT":c.valid?"CAPTURED":"INVALID CAPTURE";
-   c.raw_i16="capture-0001.i16le";c.raw_format="signed int16 little-endian, no header; ADC scaling max 32767; no aggregation";
+   c.analysis_s=phase.Elapsed.TotalSeconds;
+   c.diagnostic_readback=diagnosticReadback;
+   if(diagnosticReadback && c.stop_succeeded) {
+    phase.Restart();
+    short[] stored=new short[wanted];double first=0;short storedOverflow,storedTriggered;uint triggerAt;
+    uint got=Bind<StreamReadback>("get_streaming_values_no_aggregation")(handle,ref first,stored,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,out storedOverflow,out triggerAt,out storedTriggered,(uint)wanted);
+    c.readback_sample_count=(int)got;
+    if(got>wanted)throw new InvalidOperationException("Invalid driver readback count");
+    for(int i=0;i<(int)got;i++) {
+     if(stored[i]==-32768)c.readback_lost_count++;
+     if(i>=raw.Length || stored[i]!=raw[i])c.readback_mismatch_count++;
+    }
+    c.readback_s=phase.Elapsed.TotalSeconds;
+    if(got!=c.sample_count || c.readback_mismatch_count>0 || (storedOverflow&1)!=0)c.collector_error="Driver retained readback disagrees with callback sequence";
+    // Preserve the independent driver copy; never use it to fill callback gaps.
+    WriteRaw(Path.Combine(directory,"driver-readback.i16le"),stored,(int)got);
+   }
+   c.AssessStream(collector.Complete,timedOut);
+   c.raw_i16="capture-0001.i16le";c.raw_format="signed int16 little-endian, no header; ADC scaling max 32767; no aggregation; -32768 means missing data";
    if(!BitConverter.IsLittleEndian)throw new InvalidOperationException("Little-endian host required");
-   byte[] bytes=new byte[raw.Length*2];Buffer.BlockCopy(raw,0,bytes,0,bytes.Length);
-   using(FileStream file=new FileStream(Path.Combine(directory,c.raw_i16),FileMode.CreateNew,FileAccess.Write))file.Write(bytes,0,bytes.Length);
-   if(collector.error!=null)throw new InvalidOperationException(collector.error);
+   phase.Restart();
+   WriteRaw(Path.Combine(directory,c.raw_i16),raw,raw.Length);
+   c.writer_s=phase.Elapsed.TotalSeconds;
    return c;
+  }
+  static void WriteRaw(string path,short[] raw,int length) {
+   byte[] bytes=new byte[1048576];
+   using(FileStream file=new FileStream(path,FileMode.CreateNew,FileAccess.Write)) {
+    for(int offset=0;offset<length;) {
+     int count=Math.Min(bytes.Length/2,length-offset);Buffer.BlockCopy(raw,offset*2,bytes,0,count*2);file.Write(bytes,0,count*2);offset+=count;
+    }
+    file.Flush(true);
+   }
   }
   public void Dispose() {
    short rc=1;

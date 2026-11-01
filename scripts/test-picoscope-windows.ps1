@@ -52,4 +52,34 @@ try {
  $excess.AppendNative($native,4,$false,$true)
  Assert-True (-not $excess.Complete -and $excess.count -eq 0) 'Oversized native copy refused before copying'
 } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($native) }
+$missingOnly=[Rhizo.Pico.MathUtil]::Analyze([int16[]]@(-32768,-32768),5,0.000001,0.8)
+Assert-True ($missingOnly.lost_sample_count -eq 2 -and $null -eq $missingOnly.min_v -and -not $missingOnly.clipped) 'Missing markers are not measured voltages'
+$gap=[Rhizo.Pico.MathUtil]::Analyze([int16[]]@(0,$adc,-32768,$adc,0),5,0.000001,0.8)
+Assert-True ($gap.lost_sample_count -eq 1 -and $gap.pulse_count -eq 2 -and $null -eq $gap.max_pulse_width_s) 'Never bridge a missing sample or report a precise width across loss'
+function Clean-Capture {
+ $c=[Rhizo.Pico.Capture]::new();$c.requested_sample_count=3;$c.sample_count=3;$c.stop_succeeded=$true
+ $c.analysis=[Rhizo.Pico.MathUtil]::Analyze([int16[]]@(0,1,0),5,0.000001,0.8)
+ return $c
+}
+$c=Clean-Capture;$c.AssessStream($true,$false)
+Assert-True ($c.safety_evidence_valid -and $c.contiguous) 'Complete clean sequence passes integrity checks'
+$c=Clean-Capture;$c.buffer_overrun=$true;$c.AssessStream($true,$false)
+Assert-True (-not $c.safety_evidence_valid -and -not $c.contiguous) 'Overrun invalid even if count matches'
+$c=Clean-Capture;$c.analysis=$gap;$c.AssessStream($true,$false)
+Assert-True (-not $c.valid -and $c.lost_sample_count -eq 1) 'Missing marker invalid even without overrun flag'
+$c=Clean-Capture;$c.sample_count=2;$c.AssessStream($false,$false)
+Assert-True (-not $c.valid -and $c.sample_shortfall -eq 1) 'Shortfall invalid, never pad'
+$c=Clean-Capture;$c.sample_count=4;$c.AssessStream($true,$false)
+Assert-True (-not $c.valid) 'Excess sequence invalid'
+$c=Clean-Capture;$c.stop_succeeded=$false;$c.AssessStream($true,$false)
+Assert-True (-not $c.valid) 'Stop/finalize failure invalid'
+$c=Clean-Capture;$c.overflow=$true;$c.AssessStream($true,$false)
+Assert-True (-not $c.valid) 'Driver channel overflow invalid'
+$c=Clean-Capture;$c.collector_error='unexpected callback';$c.AssessStream($true,$false)
+Assert-True (-not $c.valid) 'Callback lifecycle error invalid'
+$c=Clean-Capture;$c.AssessStream($true,$true)
+Assert-True (-not $c.valid -and $c.exit_code -eq 22) 'Timeout invalid even with complete array'
+$parts=[Rhizo.Pico.StreamCollector]::new(6)
+$parts.Append([int16[]]@(11,22),$false,$false);$parts.Append([int16[]]@(),$false,$false);$parts.Append([int16[]]@(33,44,55,66),$false,$true)
+Assert-True ($parts.Complete -and ($parts.samples -join ',') -eq '11,22,33,44,55,66') 'Variable and empty callbacks preserve exact ordering'
 Write-Output "$count Windows math/JSON/discovery assertions passed; no hardware API calls."
