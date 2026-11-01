@@ -9,6 +9,18 @@ using System.Text;
 using System.Threading;
 
 namespace Rhizo.Pico {
+ public static class EvidenceSignal {
+  public static void Publish(string directory,int acquisition,string timestamp) {
+   string target=Path.Combine(directory,"armed.txt"),pending=Path.Combine(directory,"armed.next");
+   File.WriteAllText(pending,acquisition+" "+timestamp);
+   if(File.Exists(target))File.Replace(pending,target,null);else File.Move(pending,target);
+  }
+ }
+ public sealed class BlockLimit {
+  public int enabled_channels,timebase,interval_ns,max_samples,units_hint;
+  public short return_code,full_count_return_code;
+  public int full_count_interval_ns,full_count_max_samples;
+ }
  public sealed class Pulse {
   public int start_sample, end_sample;
   public double start_offset_s, end_offset_s, observed_width_s;
@@ -65,8 +77,31 @@ namespace Rhizo.Pico {
   public short driver_overflow_flags;
   public double max_callback_gap_s, max_copy_s, total_copy_s, max_poll_call_s, max_status_call_s, stop_s, analysis_s, writer_s;
   public bool stop_succeeded, safety_evidence_valid;
+  public bool block_ready, timestamp_sequence_valid, readbacks_equal;
+  public int block_capacity_samples, timestamps_sample_count, timestamp_unit_code;
+  public double timestamp_quantum_s;
+  public string channels="A", trigger_source="A", selection_mode, raw_b_csv, safety_evidence_policy;
+  public Analysis analysis_b;
   public string collector_error, continuity_basis="ps2000 count/auto-stop/overrun/sentinel checks; no device sequence numbers or per-sample timestamps exposed";
   public List<string> invalid_reasons=new List<string>();
+  public void AssessBlock(bool timedOut) {
+   invalid_reasons.Clear();lost_sample_count=analysis==null?0:analysis.lost_sample_count;
+   if(analysis_b!=null)lost_sample_count+=analysis_b.lost_sample_count;
+   sample_shortfall=Math.Max(0,requested_sample_count-sample_count);
+   if(timedOut || !block_ready)invalid_reasons.Add("block did not complete; no absence evidence");
+   if(sample_count!=requested_sample_count || timestamps_sample_count!=requested_sample_count)invalid_reasons.Add("incomplete block readback");
+   if(!timestamp_sequence_valid)invalid_reasons.Add("driver timestamps disagree with selected interval");
+   if(!readbacks_equal)invalid_reasons.Add("get_values and get_times_and_values disagree");
+   if(overflow)invalid_reasons.Add("enabled channel ADC overflow");
+   if(analysis==null || lost_sample_count>0)invalid_reasons.Add("missing block data");
+   if((analysis!=null && analysis.clipped) || (analysis_b!=null && analysis_b.clipped))invalid_reasons.Add("ADC clipping");
+   if(collector_error!=null)invalid_reasons.Add(collector_error);
+   if(!stop_succeeded)invalid_reasons.Add("stop failed");
+   valid=invalid_reasons.Count==0;contiguous=valid;
+   safety_evidence_valid=valid;
+   safety_evidence_policy="Bounded block only; event/reference coverage and pulse sensitivity must be established separately; never implies HIL PASS";
+   exit_code=timedOut?22:valid?0:23;status=valid?"CAPTURED":"INVALID CAPTURE";
+  }
   public void AssessStream(bool complete,bool timedOut) {
    lost_sample_count=analysis==null?0:analysis.lost_sample_count;
    sample_shortfall=Math.Max(0,requested_sample_count-sample_count);
@@ -82,7 +117,9 @@ namespace Rhizo.Pico {
    if(analysis!=null && analysis.clipped)invalid_reasons.Add("ADC clipping");
    if(!stop_succeeded)invalid_reasons.Add("stop failed / finalization not synchronized");
    contiguous=complete && sample_count==requested_sample_count && collector_error==null && !buffer_overrun && analysis!=null && lost_sample_count==0 && stop_succeeded;
-   safety_evidence_valid=valid=invalid_reasons.Count==0;
+   valid=invalid_reasons.Count==0;
+   safety_evidence_valid=false;
+   safety_evidence_policy="Streaming is NOT QUALIFIED for M9 safety evidence on this bench; diagnostics only";
    exit_code=timedOut?22:valid?0:23;
    status=valid?"CAPTURED":"INVALID CAPTURE";
   }
@@ -97,6 +134,15 @@ namespace Rhizo.Pico {
   public static short Threshold(double volts, double tipRange) {
    if (Double.IsNaN(volts) || Double.IsInfinity(volts) || Math.Abs(volts)>=tipRange) throw new ArgumentException("Threshold must be inside probe-tip range.");
    return checked((short)Math.Round(volts / tipRange * 32767.0));
+  }
+  public static bool TimestampsValid(int[] times,double interval,double quantum) {
+   if(times==null || times.Length<2 || interval<=0 || quantum<=0)return false;
+   // Each integer timestamp can lose up to one time-unit on conversion.
+   // Subtracting two independently quantized timestamps permits two units,
+   // including a negative pretrigger origin and positive later samples.
+   for(int i=1;i<times.Length;i++)
+    if(times[i]<=times[i-1] || Math.Abs(((long)times[i]-times[0])*quantum-i*interval)>quantum*2.01)return false;
+   return true;
   }
   public static Analysis Analyze(short[] samples, double tipRange, double interval, double threshold) {
    if (samples.Length==0 || interval<=0) throw new ArgumentException("Nonempty samples and positive interval required.");
@@ -141,7 +187,8 @@ namespace Rhizo.Pico {
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Timebase(short h,short tb,int n,out int interval,out short units,short oversample,out int max);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Trigger(short h,short source,short threshold,short direction,float delay,short autoMs);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Run(short h,int n,short tb,short oversample,out int ms);
-  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Values(short h,[Out] short[] a,IntPtr b,IntPtr c,IntPtr d,out short overflow,int n);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Values(short h,[Out] short[] a,[Out] short[] b,IntPtr c,IntPtr d,out short overflow,int n);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int TimesValues(short h,[Out] int[] times,[Out] short[] a,[Out] short[] b,IntPtr c,IntPtr d,out short overflow,short units,int n);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Signal(short h,int offset,uint peakToPeak,int wave,float start,float end,float increment,float dwell,int sweep,uint sweeps);
   Signal signal; bool generatorConfigured;
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short StreamRun(short h,uint interval,int units,uint max,short autoStop,uint aggregate,uint overview);
@@ -183,56 +230,112 @@ namespace Rhizo.Pico {
    if(kind=="square-1khz") Check(signal(handle,1000000,2000000,1,1000,1000,0,1,0,0),"test signal 0..2 V, 1 kHz");
    else Check(signal(handle,0,0,5,1,1,0,1,0,0),"test signal DC zero");
   }
-  public Capture Acquire(int acquisition,double duration,int target,double tipRange,string direction,double threshold,double pulseThreshold,double pre,double timeout,string directory) {
-   if(duration<=0 || target<2 || target>1000000 || timeout<=duration || pre<0 || pre>=duration) throw new ArgumentException("Invalid duration, target, pretrigger or timeout.");
+  public List<BlockLimit> ProbeBlockLimits() {
+   List<BlockLimit> limits=new List<BlockLimit>();
+   try {
+    for(short enabled=0;enabled<=1;enabled++) {
+     Check(channel(handle,1,enabled,1,5),"Channel B for block capability query");
+     for(short tb=0;tb<=23;tb++) {
+      int dt,max;short units;short rc=timebase(handle,tb,2,out dt,out units,1,out max);
+      BlockLimit row=new BlockLimit {enabled_channels=enabled+1,timebase=tb,interval_ns=dt,max_samples=max,units_hint=units,return_code=rc};
+      if(rc>0 && max>=2) {
+       int fullDt,fullMax;short fullUnits;
+       row.full_count_return_code=timebase(handle,tb,max,out fullDt,out fullUnits,1,out fullMax);
+       row.full_count_interval_ns=fullDt;row.full_count_max_samples=fullMax;
+      }
+      limits.Add(row);
+     }
+    }
+   } finally {Check(channel(handle,1,0,1,5),"Restore Channel B off");}
+   return limits;
+  }
+  public Capture Acquire(int acquisition,double duration,int target,double tipRange,string direction,double threshold,double pulseThreshold,double pre,double timeout,string directory,int fixedTimebase=-1,int fixedCount=0,bool enableB=false,string triggerSource="A") {
+   if(duration<=0 || target<2 || target>1000000 || pre<0 || timeout<=0 || fixedTimebase < -1 || fixedTimebase>23)
+    throw new ArgumentException("Invalid block settings");
+   if((fixedTimebase<0)!=(fixedCount==0) || (fixedCount!=0 && (fixedCount<2 || fixedCount>1000000)))throw new ArgumentException("Fixed timebase/count must be supplied together");
+   if(triggerSource!="A" && triggerSource!="B")throw new ArgumentException("Invalid trigger source");
+   if(triggerSource=="B" && !enableB)throw new ArgumentException("B trigger requires B enabled");
    MathUtil.Threshold(pulseThreshold,tipRange);
-   short selected=-1; int interval=0,n=0;
-   for(short tb=0;tb<=23;tb++) {
-    int dt,max; short units;
-    // time_interval is always nanoseconds; units is only a get_times hint.
-    if(timebase(handle,tb,2,out dt,out units,1,out max)<=0 || dt<=0) continue;
-    double needed=Math.Ceiling(duration/(dt*1e-9));
-    if(needed>=2 && needed<=Math.Min(target,max)) { selected=tb;interval=dt;n=(int)needed;break; }
+   Check(channel(handle,1,enableB?(short)1:(short)0,1,(short)MathUtil.RangeIndex(tipRange)),"Channel B block configuration");
+   short selected=-1;int interval=0,n=0,capacity=0;
+   if(fixedTimebase>=0) {
+    int dt,max;short units;
+    Check(timebase(handle,(short)fixedTimebase,fixedCount,out dt,out units,1,out max),"fixed get_timebase");
+    if(dt<=0 || fixedCount>max)throw new InvalidOperationException("Fixed block exceeds real device capacity; refusing slower timebase fallback");
+    selected=(short)fixedTimebase;interval=dt;n=fixedCount;capacity=max;duration=n*dt*1e-9;
+   } else {
+    for(short tb=0;tb<=23;tb++) {
+     int dt,max;short units;
+     if(timebase(handle,tb,2,out dt,out units,1,out max)<=0 || dt<=0)continue;
+     double needed=Math.Ceiling(duration/(dt*1e-9));
+     if(needed>=2 && needed<=Math.Min(target,max)){selected=tb;interval=dt;n=(int)needed;capacity=max;break;}
+    }
    }
-   if(selected<0) throw new InvalidOperationException("No timebase meets duration/sample target; shorten duration or increase target.");
+   if(selected<0)throw new InvalidOperationException("No timebase meets duration/sample target");
    double seconds=interval*1e-9;
-   bool triggeredMode=direction!="none";
-   float delay=triggeredMode ? (float)(-100.0*pre/(n*seconds)) : 0;
-   Check(trigger(handle,triggeredMode?(short)0:(short)5,triggeredMode?MathUtil.Threshold(threshold,tipRange):(short)0,direction=="falling"?(short)1:(short)0,delay,0),"set_trigger2");
-   Capture c=new Capture { acquisition=acquisition,requested_duration_s=duration,requested_sample_target=target,
+   if(pre>=n*seconds || timeout<=n*seconds)throw new ArgumentException("Require pretrigger < block duration < timeout");
+   bool triggeredMode=direction!="none";float delay=triggeredMode?(float)(-100*pre/(n*seconds)):0;
+   short source=triggeredMode?(triggerSource=="B"?(short)1:(short)0):(short)5;
+   Check(trigger(handle,source,triggeredMode?MathUtil.Threshold(threshold,tipRange):(short)0,direction=="falling"?(short)1:(short)0,delay,0),"set_trigger2");
+   Capture c=new Capture {acquisition=acquisition,requested_duration_s=duration,requested_sample_target=target,requested_sample_count=n,
+    block_capacity_samples=capacity,selection_mode=fixedTimebase>=0?"fixed timebase and count; no fallback":"automatic duration fit; inspect actual rate",channels=enableB?"AB":"A",trigger_source=triggeredMode?triggerSource:"none",
     timebase=selected,sample_interval_s=seconds,sample_rate_hz=1/seconds,range_v=tipRange,input_range_v=tipRange/10,
+    interval_source="ps2000_get_timebase nanoseconds; verified against get_times_and_values",
     trigger_direction=direction,trigger_threshold_v=triggeredMode?(double?)threshold:null,pulse_threshold_v=pulseThreshold,
     trigger_threshold_adc=triggeredMode?(short?)MathUtil.Threshold(threshold,tipRange):null,
     trigger_threshold_actual_v=triggeredMode?(double?)MathUtil.Volts(MathUtil.Threshold(threshold,tipRange),tipRange):null,
-    requested_pretrigger_s=pre,nominal_pretrigger_samples=triggeredMode?-delay*n/100.0:0 };
-   int ms; Check(run(handle,n,selected,1,out ms),"run_block");
-   c.armed_utc=DateTime.UtcNow.ToString("o");
-   File.WriteAllText(Path.Combine(directory,"armed.txt"),acquisition+" "+c.armed_utc);
-   Stopwatch clock=Stopwatch.StartNew();
+    requested_pretrigger_s=pre,nominal_pretrigger_samples=triggeredMode?-delay*n/100.0:0,
+    continuity_basis="Internal block complete before transfer; exact counts, driver timestamp spacing, two readbacks, overflow/loss flags; gaps between blocks are not covered"};
+   TimesValues getTimes=Bind<TimesValues>("get_times_and_values");
+   int ms;Check(run(handle,n,selected,1,out ms),"run_block");
+   c.started_utc=c.armed_utc=DateTime.UtcNow.ToString("o");
+   Stopwatch clock=Stopwatch.StartNew();bool timedOut=false;
+   short[] raw=null,rawB=null;int[] times=null;
    try {
+    EvidenceSignal.Publish(directory,acquisition,c.armed_utc);
     while(true) {
-     short r=ready(handle); if(r<0) throw new InvalidOperationException("ps2000_ready failed"); if(r>0) break;
-     if(clock.Elapsed.TotalSeconds>=timeout) {
-      c.triggered=triggeredMode?(bool?)false:null; c.status="CAPTURE TIMEOUT";c.exit_code=22;c.valid=false;
-      c.completed_utc=DateTime.UtcNow.ToString("o");return c;
-     }
-     Thread.Sleep(2);
+     short r=ready(handle);if(r<0)throw new InvalidOperationException("ps2000_ready failed");if(r>0){c.block_ready=true;break;}
+     if(clock.Elapsed.TotalSeconds>=timeout){timedOut=true;break;}Thread.Sleep(2);
     }
-    short[] raw=new short[n]; short overflow;
-    int got=values(handle,raw,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,out overflow,n);
-    if(got!=n) throw new InvalidOperationException("Incomplete data: "+got+" of "+n);
-    c.sample_count=n;c.duration_s=n*seconds;c.sample_span_s=(n-1)*seconds;c.overflow=(overflow&1)!=0;
-    c.triggered=triggeredMode?(bool?)true:null;c.analysis=MathUtil.Analyze(raw,tipRange,seconds,pulseThreshold);
-    c.valid=!c.overflow&&!c.analysis.clipped&&!c.analysis.lost_data;c.status=c.valid?"CAPTURED":"INVALID CAPTURE";c.exit_code=c.valid?0:23;
+    if(c.block_ready) {
+     raw=new short[n];rawB=enableB?new short[n]:null;short overflow;
+     int got=values(handle,raw,rawB,IntPtr.Zero,IntPtr.Zero,out overflow,n);
+     if(got<0 || got>n)throw new InvalidOperationException("Invalid get_values count");
+     c.sample_count=got;c.driver_overflow_flags=overflow;
+     short[] timedRaw=new short[n],timedB=enableB?new short[n]:null;times=new int[n];short timedOverflow;
+     short unit=2;double quantum=1e-9;
+     while(n*seconds/quantum>int.MaxValue/1.01 && unit<5){unit++;quantum*=1000;}
+     c.timestamp_unit_code=unit;c.timestamp_quantum_s=quantum;
+     int timedGot=getTimes(handle,times,timedRaw,timedB,IntPtr.Zero,IntPtr.Zero,out timedOverflow,unit,n);
+     if(timedGot<0 || timedGot>n)throw new InvalidOperationException("Invalid get_times_and_values count");
+     c.timestamps_sample_count=timedGot;c.driver_overflow_flags|=timedOverflow;
+     c.readbacks_equal=got==timedGot;
+     for(int i=0;i<Math.Min(got,timedGot);i++)if(raw[i]!=timedRaw[i] || (enableB && rawB[i]!=timedB[i]))c.readbacks_equal=false;
+     int[] observedTimes=new int[timedGot];Array.Copy(times,observedTimes,timedGot);
+     c.timestamp_sequence_valid=MathUtil.TimestampsValid(observedTimes,seconds,quantum);
+     c.overflow=(c.driver_overflow_flags&(enableB?3:1))!=0;
+     Array.Resize(ref raw,got);if(enableB)Array.Resize(ref rawB,got);Array.Resize(ref times,timedGot);
+     c.duration_s=got*seconds;c.sample_span_s=Math.Max(0,got-1)*seconds;
+     if(got>0){c.analysis=MathUtil.Analyze(raw,tipRange,seconds,pulseThreshold);if(enableB)c.analysis_b=MathUtil.Analyze(rawB,tipRange,seconds,pulseThreshold);}
+    }
+   } catch(Exception e){c.collector_error=e.Message;}
+   finally {c.stop_succeeded=stop(handle)>0;}
+   c.triggered=triggeredMode?(bool?)c.block_ready:null;c.AssessBlock(timedOut);
+   // Files only after completion/readback/stop. Never pad a short returned block.
+   if(raw!=null && raw.Length==c.sample_count && times!=null) {
     c.raw_csv=String.Format(CultureInfo.InvariantCulture,"capture-{0:D4}.csv",acquisition);
-    string path=Path.Combine(directory,c.raw_csv);
-    using(StreamWriter writer=new StreamWriter(new FileStream(path,FileMode.CreateNew,FileAccess.Write),new UTF8Encoding(false))) {
-     writer.NewLine="\n";writer.WriteLine("sample_index,offset_s,nominal_trigger_offset_s,adc,probe_tip_v");
-     for(int i=0;i<n;i++) writer.WriteLine(String.Format(CultureInfo.InvariantCulture,"{0},{1:R},{2},{3},{4:R}",i,i*seconds,
-      triggeredMode?((i-c.nominal_pretrigger_samples)*seconds).ToString("R",CultureInfo.InvariantCulture):"",raw[i],MathUtil.Volts(raw[i],tipRange)));
-    }
-    c.completed_utc=DateTime.UtcNow.ToString("o");return c;
-   } finally { Check(stop(handle),"stop"); }
+    WriteBlockCsv(Path.Combine(directory,c.raw_csv),raw,times,c,tipRange);
+    if(enableB && rawB!=null){c.raw_b_csv=String.Format(CultureInfo.InvariantCulture,"capture-{0:D4}-B.csv",acquisition);WriteBlockCsv(Path.Combine(directory,c.raw_b_csv),rawB,times,c,tipRange);}
+   }
+   c.completed_utc=DateTime.UtcNow.ToString("o");return c;
+  }
+  static void WriteBlockCsv(string path,short[] raw,int[] times,Capture c,double range) {
+   using(StreamWriter writer=new StreamWriter(new FileStream(path,FileMode.CreateNew,FileAccess.Write),new UTF8Encoding(false))) {
+    writer.NewLine="\n";writer.WriteLine("sample_index,offset_s,nominal_trigger_offset_s,adc,probe_tip_v,driver_time_s");
+    for(int i=0;i<raw.Length;i++)writer.WriteLine(String.Format(CultureInfo.InvariantCulture,"{0},{1:R},{2},{3},{4:R},{5}",i,i*c.sample_interval_s,
+     c.trigger_direction!="none"?((i-c.nominal_pretrigger_samples)*c.sample_interval_s).ToString("R",CultureInfo.InvariantCulture):"",raw[i],MathUtil.Volts(raw[i],range),
+     i<times.Length?(times[i]*c.timestamp_quantum_s).ToString("R",CultureInfo.InvariantCulture):""));
+   }
   }
   public Capture Stream(double duration,uint intervalNs,double tipRange,double pulseThreshold,double timeout,string directory,bool highResolutionTimer=true,bool diagnosticReadback=false) {
    Capture capture=null;
@@ -296,7 +399,7 @@ namespace Rhizo.Pico {
      if(overrun!=0 && c.first_overrun_wall_s==null)c.first_overrun_wall_s=clock.Elapsed.TotalSeconds;
      c.buffer_overrun |= overrun!=0;
      if(c.armed_utc==null && collector.count>0) {
-      c.armed_utc=DateTime.UtcNow.ToString("o");File.WriteAllText(Path.Combine(directory,"armed.txt"),"1 "+c.armed_utc);
+      c.armed_utc=DateTime.UtcNow.ToString("o");EvidenceSignal.Publish(directory,1,c.armed_utc);
      }
      if(clock.Elapsed.TotalSeconds>=timeout){timedOut=true;break;}
      if(!collector.autoStopped)Thread.Sleep(1);

@@ -28,6 +28,16 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 cli.parse(args)
 
+    def test_fixed_block_settings(self):
+        a=cli.parse(['capture','--timebase','7','--block-samples','16256'])
+        self.assertEqual(a.timebase,7)
+        self.assertEqual(a.block_samples,16256)
+        a=cli.parse(['capture','--channels','AB','--trigger','rising','--trigger-source','B'])
+        self.assertEqual(a.trigger_source,'B')
+        for args in (['capture','--timebase','7'],['capture','--block-samples','2'],['capture','--mode','stream','--timebase','7','--block-samples','20'],['capture','--trigger','rising','--trigger-source','B'],['capture','--block-limits']):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                cli.parse(args)
+
     def test_streaming_constraints(self):
         a=cli.parse(['capture','--mode','stream','--duration-ms','2000','--timeout-s','5'])
         self.assertEqual(a.stream_interval_ns,1000)

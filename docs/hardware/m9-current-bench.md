@@ -15,7 +15,7 @@ Do not request actions for VERIFIED items without a recorded invalidation.
 | Pump / MOSFET / actuator load | All disconnected |
 | Actuator wiring | GPIO5 → 10 kΩ → GND |
 | PicoScope A | Tip on GPIO5, ground clip on board GND, physical x10, DC |
-| PicoScope USB/backend | Windows-owned / windows-ps2000; timer-adjusted stationary stress 8/9 clean at 1 MS/s |
+| PicoScope USB/backend | Windows-owned / windows-ps2000; block validation 70/70; streaming NOT QUALIFIED for M9 safety |
 | Generator | Returned to DC zero; leads disconnected from board/probe |
 | ESP serial | USB reconnected; WSL attachment not yet checked; last port /dev/ttyUSB0 |
 | Latest steady LOW | -22.736..+22.889 mV, 0 pulses >0.8 V, 3 valid blocks |
@@ -41,10 +41,17 @@ identification is needed to repeat already-verified setup facts. Reuse evidence
 unless relevant wiring/firmware changed, it did not prove the criterion,
 contradictory evidence appeared, or the criterion requires more trials.
 Batch software work and all applicable tests for the current probe position.
-The next physical criterion remains GPIO5 cold-boot safety. NOT qualified for another cold-boot attempt; acquisition failures remain.
+The next physical criterion remains GPIO5 cold-boot safety. Block capture is
+functional but lacks full-boot depth at microsecond-scale sensitivity: 16,256 A
+samples or 8,064/ch with B reference, versus roughly 0.6 s startup coverage.
+Streaming remains disqualified. No current block parameters prove full boot.
 No physical action is requested during this qualification phase. No HIL count is earned
 by a setup reset, static baseline, or scope functional-validation capture.
 
 Stationary diagnostics after the user’s USB replug do not change bench wiring
 or HIL counts. The old cold-boot capture remains INVALID (1,927 missing samples).
 See the M9 report for the full baseline/timer comparison and sensitivity limits.
+
+No physical changes during block investigation. B remained unwired; dual-channel
+software captures were capacity/structure diagnostics only. Existing block AWG
+evidence is reused. See the runbook block-window table before any probe request.

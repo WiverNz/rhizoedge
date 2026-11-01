@@ -62,7 +62,7 @@ function Clean-Capture {
  return $c
 }
 $c=Clean-Capture;$c.AssessStream($true,$false)
-Assert-True ($c.safety_evidence_valid -and $c.contiguous) 'Complete clean sequence passes integrity checks'
+Assert-True ($c.valid -and $c.contiguous -and -not $c.safety_evidence_valid) 'Clean stream is diagnostic only, never safety-qualified'
 $c=Clean-Capture;$c.buffer_overrun=$true;$c.AssessStream($true,$false)
 Assert-True (-not $c.safety_evidence_valid -and -not $c.contiguous) 'Overrun invalid even if count matches'
 $c=Clean-Capture;$c.analysis=$gap;$c.AssessStream($true,$false)
@@ -84,4 +84,42 @@ $parts.Append([int16[]]@(11,22),$false,$false);$parts.Append([int16[]]@(),$false
 Assert-True ($parts.Complete -and ($parts.samples -join ',') -eq '11,22,33,44,55,66') 'Variable and empty callbacks preserve exact ordering'
 $c=Clean-Capture;$c.sample_interval_s=0.0000005;$c.AssessStream($true,$false)
 Assert-True (-not $c.safety_evidence_valid) 'Out-of-spec streaming rate cannot qualify even with clean data'
+function Clean-Block {
+ $c=Clean-Capture;$c.sampling_mode='block';$c.block_ready=$true;$c.timestamps_sample_count=3;$c.timestamp_sequence_valid=$true;$c.readbacks_equal=$true
+ return $c
+}
+$c=Clean-Block;$c.AssessBlock($false)
+Assert-True ($c.valid -and $c.safety_evidence_valid) 'Complete bounded block is eligible evidence, not HIL pass'
+$c=Clean-Block;$c.sample_count=2;$c.AssessBlock($false)
+Assert-True (-not $c.valid -and $c.sample_shortfall -eq 1) 'Short block read fails closed'
+$c=Clean-Block;$c.timestamps_sample_count=2;$c.AssessBlock($false)
+Assert-True (-not $c.valid) 'Incomplete timestamp read fails closed'
+$c=Clean-Block;$c.timestamp_sequence_valid=$false;$c.AssessBlock($false)
+Assert-True (-not $c.valid) 'Wrong driver interval invalid'
+$c=Clean-Block;$c.readbacks_equal=$false;$c.AssessBlock($false)
+Assert-True (-not $c.valid) 'Independent readback disagreement invalid'
+$c=Clean-Block;$c.AssessBlock($true)
+Assert-True (-not $c.safety_evidence_valid -and $c.exit_code -eq 22) 'No trigger timeout is not absence evidence'
+$c=Clean-Block;$c.overflow=$true;$c.AssessBlock($false)
+Assert-True (-not $c.valid) 'Block overflow invalid'
+$c=Clean-Block;$c.analysis=$gap;$c.AssessBlock($false)
+Assert-True (-not $c.valid -and $c.lost_sample_count -eq 1) 'Block loss invalid'
+$c=Clean-Block;$c.stop_succeeded=$false;$c.AssessBlock($false)
+Assert-True (-not $c.valid) 'Failed stop invalid'
+Assert-True ([Rhizo.Pico.MathUtil]::TimestampsValid([int[]]@(-80,1,83,165,247,329,411,492),0.00008192,0.000001)) 'Signed integer timestamp quantization permits two endpoint units'
+Assert-True (-not [Rhizo.Pico.MathUtil]::TimestampsValid([int[]]@(0,640,1920),0.000000640,0.000000001)) 'Skipped timestamp sample invalid'
+Assert-True (-not [Rhizo.Pico.MathUtil]::TimestampsValid([int[]]@(0,640,640),0.000000640,0.000000001)) 'Repeated timestamp sample invalid'
+Assert-True (-not [Rhizo.Pico.MathUtil]::TimestampsValid([int[]]@(0,1280,2560),0.000000640,0.000000001)) 'Wrong scale invalid'
+$temp=Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+[IO.Directory]::CreateDirectory($temp) | Out-Null
+try {
+ [Rhizo.Pico.EvidenceSignal]::Publish($temp,1,'first')
+ $held=[IO.FileStream]::new((Join-Path $temp 'armed.txt'),[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+ try {
+  for($i=2;$i -le 100;$i++) { [Rhizo.Pico.EvidenceSignal]::Publish($temp,$i,'complete') }
+  Assert-True ([IO.File]::ReadAllText((Join-Path $temp 'armed.txt')) -eq '100 complete') 'Atomic arm notifications survive a held supervisor read handle'
+  $reader=[IO.StreamReader]::new($held)
+  try { Assert-True ($reader.ReadToEnd() -eq '1 first') 'Reader sees complete original message, never torn content' } finally { $reader.Dispose() }
+ } finally { $held.Dispose() }
+} finally { try { [IO.Directory]::Delete($temp,$true) } catch { Write-Warning ('Temporary cleanup failed: '+$_.Exception.Message) } }
 Write-Output "$count Windows math/JSON/discovery assertions passed; no hardware API calls."

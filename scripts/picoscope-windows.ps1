@@ -20,7 +20,11 @@ if (-not $Worker) {
     while (-not $p.WaitForExit(100)) {
         $arm=Join-Path $r.output_dir 'armed.txt'
         if (Test-Path -LiteralPath $arm) {
-            $current=[IO.File]::ReadAllText($arm)
+            # The worker atomically replaces this notification. Allow replacement
+            # while reading the previous complete message; never lock out capture.
+            $stream=[IO.FileStream]::new($arm,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            $reader=[IO.StreamReader]::new($stream)
+            try { $current=$reader.ReadToEnd() } finally { $reader.Dispose() }
             if ($current -ne $lastArm) { [Console]::Error.WriteLine('ARMED '+$current); $lastArm=$current }
         }
         if ($watch.Elapsed.TotalSeconds -ge $r.process_timeout_s) {
@@ -61,6 +65,7 @@ try {
     $result.channel='A';$result.coupling='DC';$result.probe_attenuation=10;$result.range_v=$r.range_v;$result.input_range_v=$r.range_v/10
     $result.requested=$r
     if ($r.action -eq 'capture') {
+        $result.status='CAPTURE FAILED' # The device has opened; later errors are not open failures.
         if ($r.test_signal) {
             $device.TestSignal([string]$r.test_signal)
             $result.test_signal=[ordered]@{kind=$r.test_signal;isolated_loop_only=$true;cleanup='DC zero before normal close; forced termination cannot guarantee cleanup'}
@@ -70,7 +75,7 @@ try {
             if ($r.mode -eq 'stream') {
                 $capture=$device.Stream([double]$r.duration_s,[uint32]$r.stream_interval_ns,[double]$r.range_v,[double]$r.pulse_v,[double]$r.timeout_s,[string]$r.output_dir,($r.high_resolution_timer -ne $false),[bool]$r.diagnostic_readback)
             } else {
-            $capture=$device.Acquire($i,[double]$r.duration_s,[int]$r.samples,[double]$r.range_v,[string]$r.trigger,[double]$r.trigger_v,[double]$r.pulse_v,[double]$r.pre_s,[double]$r.timeout_s,[string]$r.output_dir)
+            $capture=$device.Acquire($i,[double]$r.duration_s,[int]$r.samples,[double]$r.range_v,[string]$r.trigger,[double]$r.trigger_v,[double]$r.pulse_v,[double]$r.pre_s,[double]$r.timeout_s,[string]$r.output_dir,[int]$r.fixed_timebase,[int]$r.fixed_count,($r.channels -eq "AB"),[string]$r.trigger_source)
             }
             $records.Add($capture)
             [IO.File]::WriteAllText((Join-Path $r.output_dir ('capture-{0:D4}.json' -f $i)),($capture | ConvertTo-Json -Depth 10)+"`n",$utf8)
@@ -81,9 +86,10 @@ try {
         $result.exit_code=$records[$records.Count-1].exit_code
         $result.status=$records[$records.Count-1].status
         $result.captured=$result.exit_code -eq 0 -and $records.Count -eq $r.count
-        $result.measurement_validation='UNVALIDATED: requires real LOW, HIGH, trigger and width checks before HIL'
+        $result.measurement_validation='Acquisition integrity is separate from event coverage and sensitivity. Streaming is NOT QUALIFIED for M9 safety evidence.'
         $result.inter_capture_gaps=if ($r.mode -eq 'stream') {'Single stream; contiguous is true only with complete data and no detected overrun/loss.'} else {'Block acquisitions have dead time; count does not imply continuous coverage.'}
     } elseif ($r.action -eq 'status') {
+        if ($r.block_limits) { $result.block_limits=@($device.ProbeBlockLimits().ToArray()) }
         $result.status='READY';$result.exit_code=0
     } else { throw 'Unknown action' }
     # READY/success is emitted only after successful close.

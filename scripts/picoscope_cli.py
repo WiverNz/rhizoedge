@@ -37,7 +37,12 @@ def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('action', choices=['status', 'capture'])
     p.add_argument('--json', action='store_true')
+    p.add_argument('--block-limits', action='store_true', help='Status only: query real single/dual-channel ps2000 timebases and maximum counts; restores B off')
     p.add_argument('--mode', choices=['block', 'stream'], default='block')
+    p.add_argument('--timebase', type=int, help='Fixed block timebase index; requires --block-samples, never falls back to slower sampling')
+    p.add_argument('--block-samples', type=int, help='Exact block count at --timebase; duration derives from the real driver interval')
+    p.add_argument('--channels', choices=['A','AB'], default='A')
+    p.add_argument('--trigger-source', choices=['A','B'], default='A')
     p.add_argument('--stream-interval-ns', type=int, default=1000, help='Streaming interval accepted by ps2000; no independent readback')
     p.add_argument('--diagnostic-default-timer', action='store_true', help='Diagnostic comparison only: omit the process-scoped 1 ms timer request')
     p.add_argument('--diagnostic-readback', action='store_true', help='After stop, compare and preserve the driver retained raw sequence; never fills missing callback samples')
@@ -56,6 +61,16 @@ def parse(argv=None):
     p.add_argument('--open-timeout-s', type=float, default=20, help='Additional total budget for compilation/open/close')
     p.add_argument('--output', type=Path, help='New evidence directory; default local/evidence/picoscope/<unique run>')
     a = p.parse_args(argv)
+    if (a.timebase is None) != (a.block_samples is None):
+        p.error('--timebase and --block-samples are required together')
+    if a.timebase is not None and (a.action != 'capture' or a.mode != 'block' or not 0 <= a.timebase <= 23 or not 2 <= a.block_samples <= 1000000):
+        p.error('Invalid fixed block configuration')
+    if a.trigger_source == 'B' and (a.channels != 'AB' or a.trigger == 'none'):
+        p.error('B trigger requires --channels AB and rising/falling edge')
+    if a.channels != 'A' and (a.action != 'capture' or a.mode != 'block'):
+        p.error('Dual channel capture is supported only in block mode')
+    if a.block_limits and a.action != 'status':
+        p.error('--block-limits requires status')
     if (a.diagnostic_default_timer or a.diagnostic_readback) and (a.action != 'capture' or a.mode != 'stream'):
         p.error('Streaming diagnostics require capture --mode stream')
     if a.test_signal and a.action != 'capture':
@@ -71,10 +86,14 @@ def parse(argv=None):
         p.error('Unsupported x10 probe-tip range')
     if not 2 <= a.samples <= 1000000 or not 1 <= a.count <= 1000:
         p.error('Require 2..1000000 samples and 1..1000 acquisitions')
-    if not 0 < a.duration_ms < a.timeout_s*1000 or not 0 <= a.pre_ms < a.duration_ms:
+    if a.timebase is None and (not 0 < a.duration_ms < a.timeout_s*1000 or not 0 <= a.pre_ms < a.duration_ms):
         p.error('Require 0 <= pre < duration < capture timeout')
     if not 1 <= a.open_timeout_s <= 60 or not 0 < a.timeout_s <= 3600:
         p.error('Invalid timeout')
+    if a.pre_ms < 0:
+        p.error('Pretrigger must be nonnegative')
+    if a.timebase is not None and a.post_ms is not None:
+        p.error('Fixed block count cannot be combined with --post-ms')
     if a.trigger == 'none' and a.pre_ms != 0:
         p.error('Pretrigger requires a rising/falling trigger')
     if abs(a.trigger_v) >= a.range_v or abs(a.pulse_v) >= a.range_v:
@@ -113,7 +132,7 @@ def main(argv=None):
             directory.mkdir(parents=True, exist_ok=False)
         else:
             directory = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-'), dir=base))
-        request = dict(high_resolution_timer=not a.diagnostic_default_timer, diagnostic_readback=a.diagnostic_readback, action=a.action, mode=a.mode, stream_interval_ns=a.stream_interval_ns, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
+        request = dict(fixed_timebase=a.timebase if a.timebase is not None else -1, fixed_count=a.block_samples or 0, channels=a.channels, trigger_source=a.trigger_source, block_limits=a.block_limits, high_resolution_timer=not a.diagnostic_default_timer, diagnostic_readback=a.diagnostic_readback, action=a.action, mode=a.mode, stream_interval_ns=a.stream_interval_ns, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
                        dll=a.dll, range_v=a.range_v, duration_s=a.duration_ms/1000, samples=a.samples,
                        count=a.count, trigger=a.trigger, trigger_v=a.trigger_v, pulse_v=a.pulse_v,
                        pre_s=a.pre_ms/1000, timeout_s=a.timeout_s,

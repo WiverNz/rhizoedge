@@ -74,7 +74,7 @@ def main():
             row['capture'] = {k: v for k, v in capture.items() if k != 'analysis'}
             row['analysis'] = {k: v for k, v in capture['analysis'].items() if k != 'pulses'}
             row['raw_audit'] = audit_raw(run, capture)
-            row['clean'] = proc.returncode == 0 and capture['safety_evidence_valid'] and row['raw_audit']['agrees_with_metadata'] and row['raw_audit']['missing_markers'] == 0
+            row['clean'] = proc.returncode == 0 and capture['valid'] and row['raw_audit']['agrees_with_metadata'] and row['raw_audit']['missing_markers'] == 0
             row['observed_pulses'] = capture['analysis']['pulse_count']
         except (KeyError, ValueError, OSError, TypeError) as error:
             row.update(clean=False, report_error=str(error))

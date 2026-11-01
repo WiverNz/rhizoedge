@@ -9,6 +9,11 @@ assumption into a verified capability. Keep milestone-specific results and
 acceptance status in the [M9 report](../reports/M9.md), and retain the required
 counts/criteria in [HIL procedures](../testing/hardware-in-the-loop.md).
 
+**Current acquisition policy:** block mode for bounded safety events only.
+Windows ps2000 streaming is **NOT QUALIFIED for M9 safety evidence**; diagnostic
+use only. The block buffer also cannot cover full boot at microsecond-scale
+sensitivity. See [block limits and strategy](#block-mode-operation-and-coverage-limits).
+
 ## Evidence reuse before physical actions
 
 Read the [current M9 bench state](m9-current-bench.md), this runbook, relevant
@@ -489,7 +494,7 @@ callback copies to a bounded preallocated array; it does not write files or
 perform pulse analysis. Callbacks outside the synchronous polling owner are
 rejected. Capture data cannot be finalized successfully after a stop failure.
 
-Before treating a stream as usable safety evidence, inspect the top-level exit
+For non-safety streaming diagnostics only, inspect the top-level exit
 status, `requested_sample_count`, `sample_count`, `sample_shortfall`,
 `callback_count`, `callback_samples_min/max`, `buffer_overrun`,
 `driver_overflow_flags`, `lost_sample_count`, `max_poll_gap_s`,
@@ -503,22 +508,137 @@ interpolation, repeated samples or ignored overrun flags are permitted.
 ps2000 exposes no sequence numbers/per-sample timestamps; continuity assessment
 uses the documented counts, auto-stop, overrun and sentinel checks, supplemented
 by retained-data equality. This cannot detect arbitrary unreported driver errors.
-Every capture remains individually gated despite the clean stress matrix.
+Streaming is not qualified for safety evidence, even when an individual diagnostic is clean.
 
 [Pico's model-specific streaming specifications](https://www.picotech.com/library/knowledge-bases/oscilloscopes/streaming-mode)
 list 1 MS/s for 2205A. The two 2 MS/s baseline diagnostics failed and are not a
 supported operating point. The integrity gate now explicitly rejects streaming
-intervals below 1 µs, even without detected loss. Keep 1 MS/s for planned long captures; 500 kS/s was a
+intervals below 1 µs, even without detected loss. The 1 MS/s long-capture plan has been rejected for M9 safety; 500 kS/s was a
 comparison only. Voltage amplitude does not establish a shortest unsafe pulse;
 none is specified in the current actuator/HIL documentation. Do not lower the
 rate to obtain clean results. 1 µs intervals cannot rule out sub-microsecond
 pulses; functional AWG validation is not a minimum-pulse sensitivity calibration.
 The corrected long-run failure remains a blocker: 592 callback loss markers,
 191 retained-driver markers, one fewer retained sample and 402 disagreements.
-The timer request improves cadence but does not fix all loss. The remaining
-investigation needs native driver/USB timing evidence; poll maxima alone cannot
-identify a kernel/USB/device stall. No additional installed ps2000 DLL was found.
+The timer request improves cadence but does not fix all loss. The lower-level cause remains unresolved; poll maxima cannot identify a kernel/
+USB/device stall. No additional installed ps2000 DLL was found. Further streaming
+qualification is out of the current M9 plan; preserve the failed diagnostics.
 Do not begin new physical trials or substitute the clean 500 kS/s results.
 
 Full HIL needs explicitly bounded sensitivity and complementary faster transient
 coverage as appropriate. No hardware HIL count was earned by this qualification.
+
+## Block-mode operation and coverage limits
+
+**Architecture decision (2026-11-01):** use ps2000 internal-buffer block capture
+for bounded events; transfer the completed block afterward. Streaming at 1 MS/s
+failed qualification (16/20 baseline clean; 8/9 timer/readback clean; last run
+592 callback loss markers, 191 retained-driver markers, 402 disagreements and
+one fewer retained sample). The old cold-boot capture lost 1,927 samples and
+remains INVALID. Streaming `safety_evidence_valid` is always false; diagnostic
+integrity remains available as `valid`. Never reinterpret old successful stream
+metadata as a current M9 HIL qualification.
+
+```sh
+# Query this actual unit; B is temporarily enabled internally, then restored off.
+./scripts/picoscope-status.sh --block-limits --json
+# Fixed bounded A-only LOW capture, no automatic rate fallback:
+./scripts/picoscope-capture.sh --mode block --timebase 7 --block-samples 16256 --count 10 --json
+```
+
+Measured usable memory: **16,256 samples A-only**, or **8,064 per channel A+B**.
+A-only supports timebase 0 (5 ns); A+B starts at timebase 1 (10 ns). Indices
+through 23 were queried, with doubling intervals. The returned capacity, not
+advertised nominal memory or another model's specification, governs requests.
+Oversized fixed requests are refused before `run_block`. Legacy duration fitting
+remains available for exploratory captures; use explicit timebase/count for
+reviewable bounded safety windows. `--block-samples` derives duration from the
+actual API interval; `--pre-ms` must fit that duration.
+
+The ps2000 block path configures channels, queries `get_timebase`, uses documented
+`set_trigger2` for fractional pretrigger position, runs `run_block`, waits for
+`ready`, then compares `get_values` with `get_times_and_values` before `stop`.
+No ps2000a API is used. Both read counts must equal the requested count. Returned
+sample times must be monotonic and agree with the queried interval. Timestamp
+units are as fine as signed 32-bit range permits; relative comparison allows
+at most two units of endpoint conversion uncertainty, never a missing sample.
+Raw CSV preserves exact ADC integers, calculated voltage and returned times.
+ADC conversion remains `adc * tip_range / 32767`, with x10 applied once.
+
+`--channels AB --trigger-source B --trigger rising` supports a future independent
+reference. Both channels use the specified tip range and configured x10 scaling;
+confirm a physical B probe's attenuation before using it. B CSV is separate.
+B is currently **unconnected**: software capability is not physical reference
+validation. `auto_trigger_ms=0`; a host timeout produces INVALID evidence, no
+completed waveform and no absence claim. A HIGH trigger can characterize an
+observed pulse, but cannot alone prove that no A pulse occurred during boot.
+
+Metadata includes requested/retrieved counts, capacity, exact timebase/interval,
+channels/trigger source, returned timestamp count/units/validation, independent
+readback equality, overflow/loss/clipping, stop completion, and rejection reasons.
+`valid` / `safety_evidence_valid` on a block mean acquisition integrity **within
+that block**, not complete event coverage or HIL PASS. Dead time between blocks
+is not recorded. Atomic arm notifications and a sharing-safe supervisor avoid
+file-reader/writer races during repeated captures.
+
+The corrected stationary matrix passed 70/70 at full capacity: A timebases
+0/6/7/14 and A+B 1/7/14, ten each. No overflow, missing samples or timestamp/data
+readback discrepancies; A extrema ±68.514 mV and zero >0.8 V crossings. B remained
+unwired. Evidence: `local/evidence/picoscope/m9-block-validation-20261101-03/`,
+including a reproducible harness and independently audited CSVs. Earlier aborted
+matrices `...-01/` and `...-02/` preserve timestamp-check and arm-file race defects
+and are not silently replaced. The [M9 report](../reports/M9.md) records fixes.
+
+Reuse the existing AWG qualification: it was already block mode, timebase 6,
+320 ns, 15,625 samples. Voltage/x10, rising/falling triggers, pulse count and
+~500 µs widths were validated. No AWG rewiring is needed for those properties.
+B-reference triggering and minimum-pulse sensitivity remain unverified.
+
+| Interval | Rate | A-only window (16,256) | A+B window (8,064/ch) | Two-sample width* |
+|---|---|---|---|---|
+| 5 ns | 200000 kS/s | 0.081280 ms | unsupported | 0.01 µs |
+| 10 ns | 100000 kS/s | 0.162560 ms | 0.080640 ms | 0.02 µs |
+| 320 ns | 3125 kS/s | 5.201920 ms | 2.580480 ms | 0.64 µs |
+| 640 ns | 1562.5 kS/s | 10.403840 ms | 5.160960 ms | 1.28 µs |
+| 1280 ns | 781.25 kS/s | 20.807680 ms | 10.321920 ms | 2.56 µs |
+| 5120 ns | 195.312 kS/s | 83.230720 ms | 41.287680 ms | 10.24 µs |
+| 20480 ns | 48.8281 kS/s | 332.922880 ms | 165.150720 ms | 40.96 µs |
+| 40960 ns | 24.4141 kS/s | 665.845760 ms | 330.301440 ms | 81.92 µs |
+| 81920 ns | 12.207 kS/s | 1331.691520 ms | 660.602880 ms | 163.84 µs |
+| 163840 ns | 6.10352 kS/s | 2663.383040 ms | 1321.205760 ms | 327.68 µs |
+
+*Window values are nominal N×interval; the first-to-last span is (N−1)×interval.
+Use actual driver timestamp endpoints plus event guard time for coverage.
+Two-sample widths are sampling-only guides. Pulses shorter than one sample
+interval can fall between samples; actual minimum detectable width also depends
+on analog bandwidth/probe/threshold and has not been calibrated. No minimum
+unsafe GPIO pulse is defined by M9, so slowing acquisition until a desired
+window fits is not justified.
+
+The production startup log reaches pump initialization at ~575–585 ms. Plan
+at least ~0.6 s plus ramp/pretrigger/guard; the worst-case power-to-safe duration
+is not established. That requires ≥600,001 samples/ch at ≤1 µs, or 937,501/ch
+at the available 640 ns step. A+B has only 8,064/ch.
+
+A hypothetical B=3V3 rising reference, 1 V threshold, timebase 7 / 8,064 samples,
+1 ms pretrigger gives only 4.16096 ms after trigger: **edge-only, not full boot**.
+Timebase 14 stretches dual coverage to 660.603 ms but 81.92 µs intervals can miss
+a 50 µs glitch and still do not establish worst-case coverage. Do not request
+that probe move as if it would prove cold-boot safety.
+
+| Criterion | Candidate independent reference | Required coverage / current limitation |
+|---|---|---|
+| Cold power-on | B on board 3V3, rising edge, with pretrigger covering the supply rise before the threshold | Entire rise + ROM/bootloader + startup to established safe operation. Existing log reaches GPIO initialization at ~575–585 ms; a worst-case power-to-safe bound is not yet measured. Fast 5.161 ms dual block is insufficient. |
+| Normal reset, 20 trials | B on EN/reset, falling edge for assertion and rising for release | Entire assertion/hold/release + reboot. A manual hold has no established maximum; release-only triggering misses assertion. No bounded fast block covers the whole event yet. |
+| Software restart | A dedicated independent reset marker, or UART boot traffic with a separately established pretrigger bound | 3V3/EN may not transition during an internal restart. A late UART message alone cannot locate the start of reset or prove pre-reset coverage. No validated reference/window yet. |
+| Watchdog reset | Independently observable reset marker or carefully bounded UART reference | EN/3V3 are not reliable internal-reset references. Task watchdog is configured for 30 s; wait + reset + boot cannot fit a fast block. Triggering at reset still needs a proven reference and full reboot coverage. |
+| Mid-boot power cut/restoration, 10 trials | B on 3V3 falling/rising | Capture the interruption and the complete restoration boot. Separate edge records are bounded observations, not continuous coverage of the gaps. Full post-restoration boot remains too long. |
+| Flash/boot transitions | Independently logged flash-start/end plus reset/power reference | Entire flash operation and subsequent reboot; multi-second operation, no measured worst-case bound. Short blocks separated by transfer/rearm gaps cannot establish absence throughout flashing. |
+| Accepted dose / hard-limit / duplicate-no-pulse | Independent command/execution reference, not A HIGH alone for refusal/absence | Whole authorized/refused operation and result/reboot interval, with adequate pulse resolution. Duration/safe-input fixture not established here; no actuation requested. |
+
+
+**Stop before physical changes:** block mode is functional, but no current
+window/resolution combination has been justified for the full next cold-boot
+criterion. A deeper memory instrument or another independently justified
+complete-window method is required; do not stitch gapped blocks or use an
+A-trigger timeout as a pass. Keep Channel A on GPIO5 and preserve all HIL counts.
