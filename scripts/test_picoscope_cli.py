@@ -14,6 +14,12 @@ class CliTests(unittest.TestCase):
         a=cli.parse(['capture'])
         self.assertEqual((a.range_v,a.duration_ms,a.samples,a.trigger),(5,10,16000,'none'))
 
+    def test_signal_is_explicit_capture_only(self):
+        self.assertIsNone(cli.parse(['capture']).test_signal)
+        self.assertEqual(cli.parse(['capture','--test-signal','square-1khz']).test_signal,'square-1khz')
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.parse(['status','--test-signal','square-1khz'])
+
     def test_pre_post_and_falling(self):
         a=cli.parse(['capture','--trigger','falling','--pre-ms','2','--post-ms','8'])
         self.assertEqual(a.duration_ms,10)

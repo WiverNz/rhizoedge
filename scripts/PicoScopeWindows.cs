@@ -77,6 +77,8 @@ namespace Rhizo.Pico {
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Trigger(short h,short source,short threshold,short direction,float delay,short autoMs);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Run(short h,int n,short tb,short oversample,out int ms);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Values(short h,[Out] short[] a,IntPtr b,IntPtr c,IntPtr d,out short overflow,int n);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Signal(short h,int offset,uint peakToPeak,int wave,float start,float end,float increment,float dwell,int sweep,uint sweeps);
+  Signal signal; bool generatorConfigured;
   IntPtr module; short handle; Mutex mutex; bool owns;
   Open open; Handle close,stop,ready; Info info; Channel channel; Timebase timebase; Trigger trigger; Run run; Values values;
   public string model,driver_version; public bool serial_queried;
@@ -105,6 +107,13 @@ namespace Rhizo.Pico {
   }
   string GetInfo(short index) { StringBuilder b=new StringBuilder(256); Check(info(handle,b,256,index),"get_unit_info"); return b.ToString(); }
   static void Check(short rc,string op) { if(rc<=0) throw new InvalidOperationException(op+" failed: "+rc); }
+  // Explicit isolated probe-loop check only. Normal status/capture never enables output.
+  public void TestSignal(string kind) {
+   if(kind!="square-1khz" && kind!="dc-zero") throw new ArgumentException("Unknown test signal");
+   signal=Bind<Signal>("set_sig_gen_built_in"); generatorConfigured=true;
+   if(kind=="square-1khz") Check(signal(handle,1000000,2000000,1,1000,1000,0,1,0,0),"test signal 0..2 V, 1 kHz");
+   else Check(signal(handle,0,0,5,1,1,0,1,0,0),"test signal DC zero");
+  }
   public Capture Acquire(int acquisition,double duration,int target,double tipRange,string direction,double threshold,double pulseThreshold,double pre,double timeout,string directory) {
    if(duration<=0 || target<2 || target>1000000 || timeout<=duration || pre<0 || pre>=duration) throw new ArgumentException("Invalid duration, target, pretrigger or timeout.");
    MathUtil.Threshold(pulseThreshold,tipRange);
@@ -158,7 +167,13 @@ namespace Rhizo.Pico {
   }
   public void Dispose() {
    short rc=1;
-   try { if(handle>0) { short h=handle;handle=0;rc=close(h); } }
+   try {
+    if(handle>0) {
+     short h=handle;handle=0;
+     try { if(generatorConfigured) Check(signal(h,0,0,5,1,1,0,1,0,0),"signal generator return to DC zero"); }
+     finally { rc=close(h); }
+    }
+   }
    finally { if(module!=IntPtr.Zero) {FreeLibrary(module);module=IntPtr.Zero;} if(owns){mutex.ReleaseMutex();owns=false;} if(mutex!=null){mutex.Dispose();mutex=null;} }
    if(rc<=0) throw new InvalidOperationException("ps2000_close_unit failed");
   }

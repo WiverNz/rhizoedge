@@ -37,6 +37,7 @@ def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('action', choices=['status', 'capture'])
     p.add_argument('--json', action='store_true')
+    p.add_argument('--test-signal', choices=['square-1khz', 'dc-zero'], help='ISOLATED probe-to-AWG loop only; restores DC zero on normal close')
     p.add_argument('--dll', help='Optional installed Windows x64 ps2000.dll path')
     p.add_argument('--range-v', type=float, default=5, help='Probe-tip +/- range; physical x10 probe required')
     p.add_argument('--duration-ms', type=float, default=10)
@@ -51,6 +52,8 @@ def parse(argv=None):
     p.add_argument('--open-timeout-s', type=float, default=20, help='Additional total budget for compilation/open/close')
     p.add_argument('--output', type=Path, help='New evidence directory; default local/evidence/picoscope/<unique run>')
     a = p.parse_args(argv)
+    if a.test_signal and a.action != 'capture':
+        p.error('--test-signal requires capture, never status')
     if a.post_ms is not None:
         if a.post_ms <= 0:
             p.error('--post-ms must be positive')
@@ -96,7 +99,7 @@ def main(argv=None):
             directory.mkdir(parents=True, exist_ok=False)
         else:
             directory = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-'), dir=base))
-        request = dict(action=a.action, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
+        request = dict(action=a.action, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
                        dll=a.dll, range_v=a.range_v, duration_s=a.duration_ms/1000, samples=a.samples,
                        count=a.count, trigger=a.trigger, trigger_v=a.trigger_v, pulse_v=a.pulse_v,
                        pre_s=a.pre_ms/1000, timeout_s=a.timeout_s,

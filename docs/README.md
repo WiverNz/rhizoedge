@@ -157,9 +157,10 @@ One PRD per milestone.
 | Document | Contents |
 |---|---|
 | [home-node-hardware-guide.md](hardware/home-node-hardware-guide.md) | Milestone-organized BOM, wiring, measurement, and installation guide — bench bring-up on the official Espressif ESP32-C3-DEVKITM-1-N4X through battery and optional solar deployment |
+| [picoscope-2205a.md](hardware/picoscope-2205a.md) | Living PicoScope 2205A setup/operation runbook: Windows ps2000 from WSL, wiring, capture, evidence and verified limits |
 
-Practical procurement and assembly guidance, and the only document here that
-quotes prices. **It is not normative**: parts, ratings, and values are starting
+The home-node hardware guide provides practical procurement and assembly guidance
+and is the only document here that quotes prices. **It is not normative**: parts, ratings, and values are starting
 points to be measured, while required behaviour stays in the ADRs, PRDs,
 [safety invariants](architecture/safety-invariants.md), and
 [MQTT v1](protocol/mqtt-v1.md). Where it names a board, the binding rule is

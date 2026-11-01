@@ -61,6 +61,10 @@ try {
     $result.channel='A';$result.coupling='DC';$result.probe_attenuation=10;$result.range_v=$r.range_v;$result.input_range_v=$r.range_v/10
     $result.requested=$r
     if ($r.action -eq 'capture') {
+        if ($r.test_signal) {
+            $device.TestSignal([string]$r.test_signal)
+            $result.test_signal=[ordered]@{kind=$r.test_signal;isolated_loop_only=$true;cleanup='DC zero before normal close; forced termination cannot guarantee cleanup'}
+        }
         $records=New-Object 'Collections.Generic.List[object]'
         for($i=1;$i -le $r.count;$i++) {
             $capture=$device.Acquire($i,[double]$r.duration_s,[int]$r.samples,[double]$r.range_v,[string]$r.trigger,[double]$r.trigger_v,[double]$r.pulse_v,[double]$r.pre_s,[double]$r.timeout_s,[string]$r.output_dir)

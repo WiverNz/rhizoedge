@@ -8,6 +8,9 @@
 
 This guide follows the milestones in which hardware becomes necessary and separates shared bench equipment from final-node parts.
 
+For the installed scope, see the living [PicoScope 2205A runbook](picoscope-2205a.md):
+GPIO/AWG wiring, Windows ps2000 capture from WSL, recovery and measurement limits.
+
 The MCU remains ESP32-C3. The primary M9 board is the **official Espressif ESP32-C3-DEVKITM-1-N4X**. The older **ESP32-C3-DevKitC-02 is obsolete for this project and is not a recommended new purchase**. Generic boards with similar names are not official Espressif boards unless their manufacturer and exact revision are traceable. ESP32-C3 Super Mini and Seeed Studio XIAO ESP32-C3 boards are compact secondary/production candidates, not the M9 reference board.
 
 All concrete GPIO assignments, polarity, and peripheral construction stay in `board.rs` (or files wholly owned by that board layer). Application, safety, MQTT, sensor, and pump logic must not depend on the board.

@@ -3,6 +3,10 @@
 Applies from M9 onward. These tests are manual, checklist-driven, and performed
 in a fixed order. Each stage gates the next.
 
+For reproducible scope setup and capture tooling, use the
+[PicoScope 2205A runbook](../hardware/picoscope-2205a.md). Instrument validation
+does not replace any stage count or safety acceptance criterion below.
+
 **The governing rule:**
 
 > The first automatic watering test targets a measuring cup, never a plant.
