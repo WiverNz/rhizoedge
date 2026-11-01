@@ -9,6 +9,23 @@ assumption into a verified capability. Keep milestone-specific results and
 acceptance status in the [M9 report](../reports/M9.md), and retain the required
 counts/criteria in [HIL procedures](../testing/hardware-in-the-loop.md).
 
+## Evidence reuse before physical actions
+
+Read the [current M9 bench state](m9-current-bench.md), this runbook, relevant
+current M9 report section and saved local evidence before requesting a probe
+move, USB cycle, reset or wiring change. The current-state record must be
+updated after every confirmed physical change. Reuse VERIFIED evidence unless
+relevant wiring/firmware changed, the measurement did not prove the criterion,
+contradictory evidence appeared, or required repetition counts remain.
+
+Classify work as **VERIFIED**, **NEEDS REPEAT COUNT**, or **PENDING**. Only the
+latter two justify another physical verification. Existing AWG evidence already
+proves functional voltage scaling/x10, both triggers, pulse detection and width
+analysis; a 3V3 scope measurement solely to reconfirm scaling is redundant.
+Keep the probe on GPIO5 unless a specific unsatisfied criterion needs a move.
+Batch applicable software/captures in each confirmed configuration. The clean-
+machine procedure below is for initial setup, not a checklist to repeat per turn.
+
 ## Hardware and connections
 
 | Item | Verified setup |
@@ -40,6 +57,11 @@ include board paths. Never use resistance/continuity mode on a powered board.
 During early electrical validation, **pump, MOSFET controller and other loads
 remain disconnected**. The probe and pull-down are the only GPIO5 connections.
 The DMM can establish static LOW/HIGH; it cannot prove absence of short pulses.
+Confirm accessory wiring explicitly: an inactive/blank display still loads the
+board. The verified display allocation is 3V3/GND, SDA GPIO3 (J1 pin 5),
+SCL GPIO2 (J1 pin 4), address 0x3C; earlier GPIO5/GPIO4 wiring is obsolete.
+Remove all four display wires with board power off for the isolated early
+GPIO bench. Record whether accessories were connected for each measurement.
 Do not infer actuator safety from a virtual-actuator firmware image.
 
 For the generator loop, first disconnect **both** probe tip and ground clip
@@ -258,6 +280,17 @@ Local evidence under `local/evidence/picoscope/`:
 Directory names use UTC; these captures occurred on 2026-11-01 local bench time.
 Exact assertions and subsequent powered measurements belong in the M9 report.
 
+An independent powered static check used the PeakTech 4390 in DC voltage mode
+(red on GPIO5, black on board GND): approximately -0.3 mV, as reported by the
+operator. This agrees with steady LOW scope captures on the production image.
+It validates static OFF only; a DMM reading never replaces transient capture.
+The operator subsequently clarified that the display was still connected for
+that DMM reading and the 3V3 rail measurement of 3.297 V. After powered-down
+display removal and USB reconnection, three new steady GPIO5 blocks measured
+-22.736..+22.889 mV with no >0.8 V pulses. Do not retroactively describe the
+earlier powered DMM readings as display-free or attribute the noise difference
+to the display without a controlled test. Detailed setup/evidence is in M9.
+
 Default evidence is ignored `local/evidence/picoscope/<unique-run>/`: request
 JSON, metadata JSON, per-block metadata/pulses, and lossless ADC CSV with
 sample/time offsets. `--output` requires a new directory. Keep large raw files
@@ -353,3 +386,70 @@ physical checks when a change affects scaling, timing, triggering or cleanup.
 Update this runbook whenever verified setup/behavior/limits change. Keep raw
 waveforms local, summarize reusable facts here, and record the acceptance
 implications in the milestone report. No runbook edit alone closes a criterion.
+
+## Continuous capture for boot/reset coverage (2026-11-01)
+
+Short block acquisitions have gaps and cannot demonstrate the whole boot window.
+The Windows backend now supports non-aggregated fast streaming, leaving the
+probe on GPIO5 and the generator disabled:
+
+```sh
+./scripts/picoscope-capture.sh --mode stream --duration-ms 2000 \
+  --stream-interval-ns 1000 --timeout-s 5 --json
+```
+
+Streaming requires one acquisition, no trigger, no pre-trigger and no test
+signal. Duration and interval determine the sample count (maximum 100 million).
+It saves `capture-0001.i16le`: headerless signed little-endian int16 ADC samples.
+Reconstruct volts as `adc * range_v / 32767`; `range_v` is already probe-tip
+range, so do not multiply by ten again. Metadata contains interval, count,
+analysis, overrun, auto-stop and contiguous-completion checks. The accepted
+stream interval is supplied to the driver; ps2000 provides no independent
+interval readback. Callback buffers use aggregation 1. A timeout, missing or
+excess samples, overrun, clipping or missing-data marker cannot pass.
+
+The CLI announces ARMED only after samples arrive. For an event capture, start
+acquisition before requesting the event; verify that the event and complete
+recovery fit within the saved waveform. A successful steady capture alone does
+not establish boot/reset safety. Streaming at 1 µs intervals cannot exclude
+sub-microsecond pulses; pulse widths are sample-quantized. Record this limit
+with each HIL observation, and do not claim unlimited transient sensitivity.
+
+Implementation correction: ps2000pg.en-12 §5.14 reverses the return convention
+for `ps2000_overview_buffer_status`. [Pico acknowledged this documentation
+error](https://www.picotech.com/support/viewtopic.php?t=31221). The Windows
+backend checks positive success, while separately rejecting the overrun flag;
+it does not ignore failed status calls. The original PDF remains unmodified.
+
+Focused real-device validation saved 2,000,000 samples over 2 s at accepted
+1 µs intervals, auto-stopped, with no overrun, missing samples or clipping.
+GPIO5 extrema were ±68.514 mV, zero crossings above 0.8 V. Evidence:
+`local/evidence/picoscope/20261101T104251Z-_d4igc3c/`. This validates streaming
+transport on the unchanged setup; it is **not a HIL trial**. The failed initial
+status interpretation remains recorded in `20261101T102405Z-m5hyd0d9/`.
+
+### Long-stream overrun investigation (2026-11-01)
+
+The first 90 s cold-boot stream is **invalid**, not HIL evidence:
+`local/evidence/picoscope/m9-cold-boot-20261101-01/`. All 90 million sample
+positions were returned, but the driver reported overview-buffer overrun and
+inserted 1,927 missing-data markers (`-32768`), starting at sample 86,544,674.
+The apparent -5.00015 V minimum is that sentinel converted by the generic
+analysis; it is **not an observed negative GPIO transient**. The invalid flag
+must take precedence over voltage summaries and zero pulse counts. Raw data,
+loss intervals, confirmation time and assessment are preserved together.
+
+The streaming callback now copies native samples directly into the preallocated
+array rather than allocating/copying an intermediate array for every callback.
+The overview buffer is increased from 250,000 to 1,000,000 samples. Metadata
+adds maximum polling gap, first overrun time, buffer size and callback count.
+These changes reduce allocation pressure and increase buffering tolerance;
+they do not establish what originally delayed data handling.
+
+One stationary 90 s diagnostic with those changes completed all 90 million
+samples with no loss or overrun; largest observed polling gap 46.3374 ms,
+1,966 callbacks, extrema ±68.514 mV and no >0.8 V pulses. Evidence:
+`local/evidence/picoscope/m9-stream-loss-investigation-01/`.
+This is a diagnostic, not a repeated boot test or proof of a permanent fix.
+The original scheduling/driver loss cause remains unresolved; do not rerun
+physical safety trials until green or silently discard the failed acquisition.

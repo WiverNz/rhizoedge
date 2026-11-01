@@ -20,6 +20,13 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.parse(['status','--test-signal','square-1khz'])
 
+    def test_streaming_constraints(self):
+        a=cli.parse(['capture','--mode','stream','--duration-ms','2000','--timeout-s','5'])
+        self.assertEqual(a.stream_interval_ns,1000)
+        for args in [['--count','2'],['--trigger','rising'],['--test-signal','dc-zero'],['--stream-interval-ns','0'],['--stream-interval-ns','1000001']]:
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                cli.parse(['capture','--mode','stream']+args)
+
     def test_pre_post_and_falling(self):
         a=cli.parse(['capture','--trigger','falling','--pre-ms','2','--post-ms','8'])
         self.assertEqual(a.duration_ms,10)

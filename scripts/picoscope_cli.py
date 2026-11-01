@@ -37,6 +37,8 @@ def parse(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('action', choices=['status', 'capture'])
     p.add_argument('--json', action='store_true')
+    p.add_argument('--mode', choices=['block', 'stream'], default='block')
+    p.add_argument('--stream-interval-ns', type=int, default=1000, help='Streaming interval accepted by ps2000; no independent readback')
     p.add_argument('--test-signal', choices=['square-1khz', 'dc-zero'], help='ISOLATED probe-to-AWG loop only; restores DC zero on normal close')
     p.add_argument('--dll', help='Optional installed Windows x64 ps2000.dll path')
     p.add_argument('--range-v', type=float, default=5, help='Probe-tip +/- range; physical x10 probe required')
@@ -73,6 +75,14 @@ def parse(argv=None):
         p.error('Pretrigger requires a rising/falling trigger')
     if abs(a.trigger_v) >= a.range_v or abs(a.pulse_v) >= a.range_v:
         p.error('Thresholds must lie inside the probe-tip range')
+    if a.mode == 'stream':
+        if a.action != 'capture' or a.count != 1 or a.trigger != 'none' or a.pre_ms != 0 or a.test_signal:
+            p.error('Streaming requires one untriggered capture, no test signal, no pretrigger')
+        if not 100 <= a.stream_interval_ns <= 1000000:
+            p.error('Streaming interval must be 100..1000000 ns')
+        n = math.ceil(a.duration_ms * 1e6 / a.stream_interval_ns)
+        if not 2 <= n <= 100000000:
+            p.error('Streaming count must be 2..100000000 samples')
     return a
 
 
@@ -99,7 +109,7 @@ def main(argv=None):
             directory.mkdir(parents=True, exist_ok=False)
         else:
             directory = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-'), dir=base))
-        request = dict(action=a.action, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
+        request = dict(action=a.action, mode=a.mode, stream_interval_ns=a.stream_interval_ns, test_signal=a.test_signal, output_dir=winpath(directory), result_file=winpath(directory/'metadata.json'),
                        dll=a.dll, range_v=a.range_v, duration_s=a.duration_ms/1000, samples=a.samples,
                        count=a.count, trigger=a.trigger, trigger_v=a.trigger_v, pulse_v=a.pulse_v,
                        pre_s=a.pre_ms/1000, timeout_s=a.timeout_s,

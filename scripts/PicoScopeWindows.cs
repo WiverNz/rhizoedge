@@ -21,8 +21,31 @@ namespace Rhizo.Pico {
   public List<Pulse> pulses = new List<Pulse>();
   public bool clipped, lost_data;
  }
+ public sealed class StreamCollector {
+  public readonly short[] samples;
+  public int count; public bool overflow, autoStopped; public string error;
+  public StreamCollector(int size) { samples=new short[size]; }
+  public void Append(short[] chunk,bool clipped,bool stopped) {
+   overflow |= clipped; autoStopped |= stopped;
+   if(chunk.Length>samples.Length-count) { error="Streaming exceeded requested sample count";return; }
+   Array.Copy(chunk,0,samples,count,chunk.Length);count+=chunk.Length;
+  }
+  public void AppendNative(IntPtr buffer,int length,bool clipped,bool stopped) {
+   overflow |= clipped; autoStopped |= stopped;
+   if(length<0 || length>samples.Length-count) {error="Streaming exceeded requested sample count";return;}
+   if(length>0 && buffer==IntPtr.Zero) {error="Missing channel A buffer";return;}
+   if(length>0)Marshal.Copy(buffer,samples,count,length);
+   count+=length;
+  }
+  public bool Complete { get {return error==null && autoStopped && count==samples.Length;} }
+ }
  public sealed class Capture {
   public int acquisition, sample_count, requested_sample_target, timebase, exit_code;
+  public string sampling_mode="block", raw_i16, raw_format, interval_source, started_utc;
+  public bool buffer_overrun, auto_stopped, contiguous;
+  public double stream_wall_s, max_poll_gap_s;
+  public double? first_overrun_wall_s;
+  public int overview_buffer_samples=1000000, callback_count;
   public double requested_duration_s, sample_interval_s, sample_rate_hz, duration_s, sample_span_s;
   public double requested_pretrigger_s, nominal_pretrigger_samples;
   public double range_v, input_range_v, pulse_threshold_v;
@@ -79,6 +102,10 @@ namespace Rhizo.Pico {
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int Values(short h,[Out] short[] a,IntPtr b,IntPtr c,IntPtr d,out short overflow,int n);
   [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short Signal(short h,int offset,uint peakToPeak,int wave,float start,float end,float increment,float dwell,int sweep,uint sweeps);
   Signal signal; bool generatorConfigured;
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short StreamRun(short h,uint interval,int units,uint max,short autoStop,uint aggregate,uint overview);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void StreamCallback(IntPtr buffers,short overflow,uint triggeredAt,short triggered,short autoStop,uint count);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short StreamPoll(short h,StreamCallback callback);
+  [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate short StreamStatus(short h,out short overrun);
   IntPtr module; short handle; Mutex mutex; bool owns;
   Open open; Handle close,stop,ready; Info info; Channel channel; Timebase timebase; Trigger trigger; Run run; Values values;
   public string model,driver_version; public bool serial_queried;
@@ -164,6 +191,60 @@ namespace Rhizo.Pico {
     }
     c.completed_utc=DateTime.UtcNow.ToString("o");return c;
    } finally { Check(stop(handle),"stop"); }
+  }
+  public Capture Stream(double duration,uint intervalNs,double tipRange,double pulseThreshold,double timeout,string directory) {
+   double requested=Math.Ceiling(duration/(intervalNs*1e-9));
+   if(duration<=0 || intervalNs<100 || intervalNs>1000000 || requested<2 || requested>100000000 || timeout<=duration)
+    throw new ArgumentException("Invalid streaming duration/interval/count/deadline");
+   MathUtil.Threshold(pulseThreshold,tipRange);
+   int wanted=(int)requested;double dt=intervalNs*1e-9;
+   StreamRun start=Bind<StreamRun>("run_streaming_ns");
+   StreamPoll poll=Bind<StreamPoll>("get_streaming_last_values");
+   StreamStatus bufferStatus=Bind<StreamStatus>("overview_buffer_status");
+   StreamCollector collector=new StreamCollector(wanted);int callbackCount=0;
+   StreamCallback callback=delegate(IntPtr buffers,short overflow,uint at,short triggered,short autoStop,uint n) {
+    try {
+     if(n>1000000) {collector.error="Invalid streaming callback size";return;}
+     IntPtr a=n>0?Marshal.ReadIntPtr(buffers,0):IntPtr.Zero;
+     collector.AppendNative(a,(int)n,(overflow&1)!=0,autoStop!=0);
+     callbackCount++;
+    } catch(Exception e) {collector.error="Streaming callback failed: "+e.Message;}
+   };
+   Capture c=new Capture {acquisition=1,sampling_mode="stream",timebase=-1,requested_duration_s=duration,
+    requested_sample_target=wanted,sample_interval_s=dt,sample_rate_hz=1/dt,range_v=tipRange,input_range_v=tipRange/10,
+    pulse_threshold_v=pulseThreshold,trigger_direction="none",interval_source="ps2000_run_streaming_ns accepted interval; API has no separate interval readback"};
+   Check(trigger(handle,5,0,0,0,0),"disable streaming trigger");
+   Check(start(handle,intervalNs,2,(uint)wanted,1,1,(uint)c.overview_buffer_samples),"run_streaming_ns");
+   c.started_utc=DateTime.UtcNow.ToString("o");Stopwatch clock=Stopwatch.StartNew();bool timedOut=false;double lastPoll=0;
+   try {
+    while(!collector.autoStopped && collector.error==null) {
+     double pollTime=clock.Elapsed.TotalSeconds;c.max_poll_gap_s=Math.Max(c.max_poll_gap_s,pollTime-lastPoll);lastPoll=pollTime;
+     short rc=poll(handle,callback);if(rc<0)throw new InvalidOperationException("stream poll failed");
+     // Vendor acknowledged reversed return-value documentation: support topic 31221.
+     short overrun;Check(bufferStatus(handle,out overrun),"overview buffer status");
+     if(overrun!=0 && c.first_overrun_wall_s==null)c.first_overrun_wall_s=clock.Elapsed.TotalSeconds;
+     c.buffer_overrun |= overrun!=0;
+     if(c.armed_utc==null && collector.count>0) {
+      c.armed_utc=DateTime.UtcNow.ToString("o");File.WriteAllText(Path.Combine(directory,"armed.txt"),"1 "+c.armed_utc);
+     }
+     if(clock.Elapsed.TotalSeconds>=timeout){timedOut=true;break;}
+     Thread.Sleep(1);
+    }
+   } finally {Check(stop(handle),"stop streaming");GC.KeepAlive(callback);}
+   c.callback_count=callbackCount;c.stream_wall_s=clock.Elapsed.TotalSeconds;c.completed_utc=DateTime.UtcNow.ToString("o");
+   c.sample_count=collector.count;c.auto_stopped=collector.autoStopped;c.overflow=collector.overflow;
+   c.duration_s=collector.count*dt;c.sample_span_s=Math.Max(0,collector.count-1)*dt;
+   short[] raw=collector.samples;if(collector.count!=raw.Length)Array.Resize(ref raw,collector.count);
+   if(raw.Length>0)c.analysis=MathUtil.Analyze(raw,tipRange,dt,pulseThreshold);
+   c.contiguous=collector.Complete&&!c.buffer_overrun && c.analysis!=null && !c.analysis.lost_data;
+   c.valid=c.contiguous&&!c.overflow&&!c.analysis.clipped;
+   c.exit_code=timedOut?22:c.valid?0:23;c.status=timedOut?"CAPTURE TIMEOUT":c.valid?"CAPTURED":"INVALID CAPTURE";
+   c.raw_i16="capture-0001.i16le";c.raw_format="signed int16 little-endian, no header; ADC scaling max 32767; no aggregation";
+   if(!BitConverter.IsLittleEndian)throw new InvalidOperationException("Little-endian host required");
+   byte[] bytes=new byte[raw.Length*2];Buffer.BlockCopy(raw,0,bytes,0,bytes.Length);
+   using(FileStream file=new FileStream(Path.Combine(directory,c.raw_i16),FileMode.CreateNew,FileAccess.Write))file.Write(bytes,0,bytes.Length);
+   if(collector.error!=null)throw new InvalidOperationException(collector.error);
+   return c;
   }
   public void Dispose() {
    short rc=1;

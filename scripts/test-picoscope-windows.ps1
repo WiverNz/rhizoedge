@@ -29,4 +29,27 @@ Assert-True ($found.Count -eq 1 -and $found[0].BusId -eq '5-7' -and $found[0].St
 $rows=@('Connected:','5-7    0ce9:1007  PicoScope 2000 series PC Oscilloscope  Shared','5-9    0ce9:1007  PicoScope 2000 series PC Oscilloscope  Attached')
 $found=ConvertFrom-UsbipdList $rows
 Assert-True ($found.Count -eq 2) 'Keep multiple matches for refusal'
+$collector=[Rhizo.Pico.StreamCollector]::new(4)
+$collector.Append([int16[]]@(1,2),$false,$false)
+Assert-True (-not $collector.Complete) 'Partial stream must not pass'
+$collector.Append([int16[]]@(3,4),$false,$true)
+Assert-True ($collector.Complete -and $collector.samples[2] -eq 3) 'Contiguous callback concatenation'
+$collector.Append([int16[]]@(5),$false,$false)
+Assert-True (-not $collector.Complete -and $null -ne $collector.error) 'Excess data must not silently truncate'
+$shortStream=[Rhizo.Pico.StreamCollector]::new(4)
+$shortStream.Append([int16[]]@(1,2),$true,$true)
+Assert-True (-not $shortStream.Complete -and $shortStream.overflow) 'Early stop/overflow cannot pass'
+$native=[Runtime.InteropServices.Marshal]::AllocHGlobal(8)
+try {
+ [Runtime.InteropServices.Marshal]::Copy([int16[]]@(11,22,33,44),0,$native,4)
+ $direct=[Rhizo.Pico.StreamCollector]::new(4)
+ $direct.AppendNative($native,4,$false,$true)
+ Assert-True ($direct.Complete -and $direct.samples[3] -eq 44) 'Direct native callback copies exact samples'
+ $missing=[Rhizo.Pico.StreamCollector]::new(4)
+ $missing.AppendNative([IntPtr]::Zero,4,$false,$true)
+ Assert-True (-not $missing.Complete -and $missing.count -eq 0) 'Null native buffer cannot pass'
+ $excess=[Rhizo.Pico.StreamCollector]::new(2)
+ $excess.AppendNative($native,4,$false,$true)
+ Assert-True (-not $excess.Complete -and $excess.count -eq 0) 'Oversized native copy refused before copying'
+} finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($native) }
 Write-Output "$count Windows math/JSON/discovery assertions passed; no hardware API calls."

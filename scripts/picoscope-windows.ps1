@@ -67,7 +67,11 @@ try {
         }
         $records=New-Object 'Collections.Generic.List[object]'
         for($i=1;$i -le $r.count;$i++) {
+            if ($r.mode -eq 'stream') {
+                $capture=$device.Stream([double]$r.duration_s,[uint32]$r.stream_interval_ns,[double]$r.range_v,[double]$r.pulse_v,[double]$r.timeout_s,[string]$r.output_dir)
+            } else {
             $capture=$device.Acquire($i,[double]$r.duration_s,[int]$r.samples,[double]$r.range_v,[string]$r.trigger,[double]$r.trigger_v,[double]$r.pulse_v,[double]$r.pre_s,[double]$r.timeout_s,[string]$r.output_dir)
+            }
             $records.Add($capture)
             [IO.File]::WriteAllText((Join-Path $r.output_dir ('capture-{0:D4}.json' -f $i)),($capture | ConvertTo-Json -Depth 10)+"`n",$utf8)
             if ($capture.exit_code -ne 0) { break }
@@ -78,7 +82,7 @@ try {
         $result.status=$records[$records.Count-1].status
         $result.captured=$result.exit_code -eq 0 -and $records.Count -eq $r.count
         $result.measurement_validation='UNVALIDATED: requires real LOW, HIGH, trigger and width checks before HIL'
-        $result.inter_capture_gaps='Block acquisitions have dead time; count does not imply continuous coverage.'
+        $result.inter_capture_gaps=if ($r.mode -eq 'stream') {'Single stream; contiguous is true only with complete data and no detected overrun/loss.'} else {'Block acquisitions have dead time; count does not imply continuous coverage.'}
     } elseif ($r.action -eq 'status') {
         $result.status='READY';$result.exit_code=0
     } else { throw 'Unknown action' }
