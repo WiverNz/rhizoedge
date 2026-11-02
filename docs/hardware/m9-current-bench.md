@@ -1,6 +1,6 @@
 # M9 current bench state
 
-Last confirmed: 2026-11-01, user reports unplug/replug of both ESP32 and PicoScope; current wiring unchanged.
+Last confirmed: 2026-11-02, user reports overnight restart; no wiring changes reported.
 Update this record immediately after **every confirmed physical change**;
 do not infer a requested action was performed. Before requesting an action,
 read this file, the PicoScope runbook, relevant current M9 report section and
@@ -9,7 +9,7 @@ Do not request actions for VERIFIED items without a recorded invalidation.
 
 | Item | Current state |
 |---|---|
-| ESP32 | Powered over USB; user confirmed reconnect after corrected-LWT retest; `devkitm1` + advisory `bench-sensors` / production GpioPump |
+| ESP32 | Powered over USB after overnight restart; `devkitm1` + advisory `bench-sensors` / production GpioPump |
 | Firmware | ELF SHA-256 63f0fbd28da3ca0f22b8646801a136deb57ed51e6dcb7de90aade8990ab7fe4c |
 | Display | DISCONNECTED; former connections 3V3/GND/SDA GPIO3/SCL GPIO2 |
 | Pump / MOSFET / actuator load | All disconnected |
@@ -86,3 +86,13 @@ not yet flashed. Functional LWT fix verified; timing criterion remains open.
 Latest: user reconnected; discovery helper restored WSL attachment. Canonical
 60-second keepalive image flashed; broker confirms k60, Edge online/synced.
 Serial monitor closed, lwt60 capture armed; board currently powered.
+
+2026-11-02: WSL reattached using discovery helper; board publishing telemetry.
+No flash or wiring/probe changes. Sleep PUBACK fix built and host-verified but
+not flashed. lwt60 overnight capture incomplete, no timing pass. External API
+port 8080 routing discrepancy pending privileged read-only diagnosis.
+
+2026-11-02 routing recovery: unrelated CNI hostPort 8080 collision identified;
+Rhizo Edge now published on local 127.0.0.1:18080 via ignored Compose override.
+Local readiness verified from WSL and Windows; Administrator update of existing
+LAN 8080 forward pending. Board, firmware and probe wiring unchanged.

@@ -465,17 +465,30 @@ fn publish<T: serde::Serialize>(
     topic: &Topic,
     envelope: &Envelope<T>,
 ) {
+    let _ = publish_with_id(client, topic, envelope);
+}
+
+/// Returns the actual broker packet ID, or refuses the handshake on failure.
+fn publish_with_id<T: serde::Serialize>(
+    client: &mut EspMqttClient<'static>,
+    topic: &Topic,
+    envelope: &Envelope<T>,
+) -> Option<u32> {
     let Ok(payload) = envelope.to_json() else {
         log::error!("failed to encode a {:?} payload", envelope.kind);
-        return;
+        return None;
     };
-    if let Err(error) = client.publish(
+    match client.publish(
         &topic.as_string(),
         QOS,
         retain_for(topic),
         payload.as_bytes(),
     ) {
-        log::warn!("publish to {topic:?} failed: {error}");
+        Ok(id) => Some(id),
+        Err(error) => {
+            log::warn!("publish to {topic:?} failed: {error}");
+            None
+        }
     }
 }
 
@@ -716,24 +729,38 @@ fn announce_and_sleep<N: NvsStore, P: Pump>(
     }
     let envelope = envelope_for(context, clock, MessageKind::DeviceStatus, now_mono, status);
     let topic = Topic::Status(context.device_id.clone());
-    publish(session.client(), &topic, &envelope);
+    let Some(packet_id) = publish_with_id(session.client(), &topic, &envelope) else {
+        return;
+    };
+    log::info!("sleep announcement published packet_id={packet_id}");
 
     // F-090-52: the PUBACK is observed before sleep is entered. The broker's
     // acknowledgement is enough *here* — unlike a `command.result`, a sleep
     // announcement is a retained message the broker will serve to the edge
     // whenever it asks, so the broker having it is the guarantee that matters.
-    let deadline = now_mono.saturating_add(5_000);
+    let deadline = monotonic_ms().saturating_add(5_000);
+    let mut acknowledged = false;
     while monotonic_ms() < deadline {
-        if session
-            .drain()
-            .iter()
-            .any(|event| matches!(event, Inbound::PublishAcknowledged(_)))
-        {
-            cycle.announcement_acknowledged();
+        let batch = crate::net::sleep_ack::classify(packet_id, session.drain());
+        if !batch.pending.is_empty() {
+            // Dispatch commands, result/event ACKs, time/config and connection
+            // changes normally before considering another sleep announcement.
+            session.defer(batch.pending);
+            log::info!("sleep postponed: inbound work pending");
+            return;
+        }
+        if batch.acknowledged {
+            acknowledged = true;
             break;
         }
         FreeRtos::delay_ms(50);
     }
+    if !acknowledged {
+        log::warn!("sleep refused: no PUBACK for packet_id={packet_id}");
+        return;
+    }
+    log::info!("sleep announcement PUBACK packet_id={packet_id}");
+    cycle.announcement_acknowledged();
 
     // Persist before sleeping: RTC memory does not survive a power cut, and the
     // budget floor must.

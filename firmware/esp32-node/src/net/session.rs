@@ -18,32 +18,13 @@ use rhizo_mqtt_contract::{DeviceId, Topic};
 
 use crate::net::mqtt::{connect_cb, last_will_payload, subscribe, BrokerSettings};
 
-/// One thing that happened on the connection.
-#[derive(Debug)]
-pub enum Inbound {
-    /// The broker accepted the connection.
-    Connected,
-    /// The session dropped.
-    Disconnected,
-    /// A publish arrived on a topic the device subscribed to.
-    Message {
-        /// The parsed topic, or `None` when it is not a v1 topic at all.
-        topic: Option<Topic>,
-        /// The payload, owned.
-        payload: Vec<u8>,
-    },
-    /// The broker acknowledged one of our publishes.
-    ///
-    /// **Not delivery.** QoS 1 is hop by hop; this says the broker has the
-    /// message, not that the edge committed it. Only `command.result.ack`
-    /// retires a result, and only `event.ack` retires buffered history.
-    PublishAcknowledged(u32),
-}
+pub use super::inbound::Inbound;
 
 /// A connected session.
 pub struct Session {
     client: EspMqttClient<'static>,
     events: Receiver<Inbound>,
+    pending: Vec<Inbound>,
     device_id: DeviceId,
 }
 
@@ -82,6 +63,7 @@ impl Session {
         Ok(Self {
             client,
             events,
+            pending: Vec::new(),
             device_id: settings.device_id.clone(),
         })
     }
@@ -99,12 +81,17 @@ impl Session {
         &mut self.client
     }
 
+    /// Return unprocessed input to the next ordinary dispatch, in arrival order.
+    pub fn defer(&mut self, events: Vec<Inbound>) {
+        self.pending.extend(events);
+    }
+
     /// Everything that has happened since the last call.
     ///
     /// Non-blocking: the wake loop has telemetry to sample and a watchdog to
     /// feed, and must not park on the broker.
-    pub fn drain(&self) -> Vec<Inbound> {
-        let mut out = Vec::new();
+    pub fn drain(&mut self) -> Vec<Inbound> {
+        let mut out = core::mem::take(&mut self.pending);
         loop {
             match self.events.try_recv() {
                 Ok(event) => out.push(event),
