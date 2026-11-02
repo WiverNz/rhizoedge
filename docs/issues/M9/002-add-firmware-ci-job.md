@@ -52,7 +52,7 @@ toolchain download.
 - [x] It builds every declared board profile, from the same application code.
 - [x] Adding a board profile is a one-line matrix change.
 - [x] It triggers on the specified paths.
-- [ ] Caching keeps warm builds under 5 minutes.
+- [x] Caching keeps warm builds under 5 minutes.
 - [ ] A contract change that breaks the firmware fails it.
 - [x] The Linux-container fallback is documented.
 
@@ -75,3 +75,7 @@ toolchain download.
 ```text
 .github/workflows/ci.yml
 ```
+
+Warm-cache evidence: CI run 41410668212, image job 125162737430, 4m39s
+including setup, restored cache and actual release build. See the 2026-11-02
+CI checkpoint in [M9 report](../../reports/M9.md).

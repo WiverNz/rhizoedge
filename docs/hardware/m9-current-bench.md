@@ -1,6 +1,6 @@
 # M9 current bench state
 
-Last confirmed: 2026-11-02, user reports overnight restart; no wiring changes reported.
+Last confirmed: 2026-11-02, cleanup verified config 16 always-on; wiring unchanged.
 Update this record immediately after **every confirmed physical change**;
 do not infer a requested action was performed. Before requesting an action,
 read this file, the PicoScope runbook, relevant current M9 report section and
@@ -10,7 +10,8 @@ Do not request actions for VERIFIED items without a recorded invalidation.
 | Item | Current state |
 |---|---|
 | ESP32 | Powered over USB after overnight restart; `devkitm1` + advisory `bench-sensors` / production GpioPump |
-| Firmware | ELF SHA-256 63f0fbd28da3ca0f22b8646801a136deb57ed51e6dcb7de90aade8990ab7fe4c |
+| Runtime config | Config 16 always_on, pump disabled, observed generation 441 |
+| Firmware | ELF SHA-256 5e43b8b7f32b709de1eefab6716a4d6382c8d3a1d73cb720fabe21a69ff160fe |
 | Display | DISCONNECTED; former connections 3V3/GND/SDA GPIO3/SCL GPIO2 |
 | Pump / MOSFET / actuator load | All disconnected |
 | Actuator wiring | GPIO5 → 10 kΩ → GND |
@@ -96,3 +97,25 @@ port 8080 routing discrepancy pending privileged read-only diagnosis.
 Rhizo Edge now published on local 127.0.0.1:18080 via ignored Compose override.
 Local readiness verified from WSL and Windows; Administrator update of existing
 LAN 8080 forward pending. Board, firmware and probe wiring unchanged.
+
+2026-11-02: Administrator LAN forward update confirmed; API READY over LAN.
+Sleep-ACK fix flashed; config 13 selects battery mode (60 s timer, 15 s awake
+budget), pump disabled, advisory sensors only. First matched PUBACK and real
+sleep observed. 20-wake campaign running; restoration config 14 planned.
+No wiring/probe/load changes, no GPIO/HIL capture.
+
+STOPPED at explicit user request for PC restart. Campaign interrupted; see
+sleep-campaign-01/summary.json. Always-on/pump-disabled config 14 retained and
+broker save requested, but physical application is not verified. All campaign
+workers and serial monitor stopped. On resume verify current power mode first;
+do not assume the interrupted 20-cycle criterion passed.
+
+
+Latest checkpoint supersedes STOPPED above: config 14 verified on resume.
+Sleep-campaign-02 then failed its observation deadline after ten qualifying
+wakes. The next timer wake occurred, but Wi-Fi recovery delayed online status
+to 150.429 seconds after sleep announcement. Cause unresolved; no rerun.
+Cleanup verified config 16 always-on, online, pump disabled, generation 441.
+Campaign and serial monitor exited. Same production GpioPump/advisory-sensors
+image, unchanged probe/pull-down and disconnected display/pump/MOSFET/load.
+No HIL count change. See report for complete evidence and limitations.

@@ -189,7 +189,9 @@ jobs:
       - name: Every script is executable
         run: |
           set -euo pipefail
-          not_executable="$(git ls-files -s scripts/ |
+          # C# support source is compiled by PowerShell, not executed directly.
+          script_modes="$(git ls-files -s -- 'scripts/*.sh' 'scripts/*.py' 'scripts/*.ps1')"
+          not_executable="$(printf '%s\n' "$script_modes" |
             awk '$1 != "100755" { print $4 }')"
           if [ -n "$not_executable" ]; then
             echo "these scripts are committed without the executable bit:" >&2
@@ -198,7 +200,7 @@ jobs:
             echo "fix with:  git update-index --chmod=+x <path>" >&2
             exit 1
           fi
-          echo "all $(git ls-files scripts/ | wc -l) scripts are executable"
+          echo "all shell, Python and PowerShell scripts are executable"
 
   # The firmware application logic, on the host toolchain.
   #
