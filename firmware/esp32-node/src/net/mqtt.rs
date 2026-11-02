@@ -98,7 +98,11 @@ pub fn subscribe(
     device_id: &DeviceId,
 ) -> Result<(), esp_idf_sys::EspError> {
     for topic in Topic::device_subscriptions(device_id) {
-        client.subscribe(&topic, QOS)?;
+        let packet_id = client.subscribe(&topic, QOS)?;
+        log::info!(
+            "NET_SUBSCRIBE at_ms={} packet_id={packet_id}",
+            crate::hal::clock::monotonic_ms()
+        );
         log::info!("subscribed {topic}");
     }
     Ok(())

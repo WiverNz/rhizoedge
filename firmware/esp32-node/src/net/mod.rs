@@ -13,3 +13,5 @@ pub mod will;
 
 pub mod inbound;
 pub mod sleep_ack;
+
+pub mod diagnostic;

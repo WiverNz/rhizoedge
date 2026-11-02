@@ -1,6 +1,6 @@
 # M9 current bench state
 
-Last confirmed: 2026-11-02, cleanup verified config 16 always-on; wiring unchanged.
+Last confirmed: 2026-11-02, diagnostic cleanup verified config 18 always-on; wiring unchanged.
 Update this record immediately after **every confirmed physical change**;
 do not infer a requested action was performed. Before requesting an action,
 read this file, the PicoScope runbook, relevant current M9 report section and
@@ -10,8 +10,8 @@ Do not request actions for VERIFIED items without a recorded invalidation.
 | Item | Current state |
 |---|---|
 | ESP32 | Powered over USB after overnight restart; `devkitm1` + advisory `bench-sensors` / production GpioPump |
-| Runtime config | Config 16 always_on, pump disabled, observed generation 441 |
-| Firmware | ELF SHA-256 5e43b8b7f32b709de1eefab6716a4d6382c8d3a1d73cb720fabe21a69ff160fe |
+| Runtime config | Config 18 always_on, pump disabled; cleanup verified after three timer wakes |
+| Firmware | ELF SHA-256 091d3744d1dbc78e1427315bf7d8999aa087871883d648655a884f9c9cf0f9b5 |
 | Display | DISCONNECTED; former connections 3V3/GND/SDA GPIO3/SCL GPIO2 |
 | Pump / MOSFET / actuator load | All disconnected |
 | Actuator wiring | GPIO5 → 10 kΩ → GND |
@@ -119,3 +119,17 @@ Cleanup verified config 16 always-on, online, pump disabled, generation 441.
 Campaign and serial monitor exited. Same production GpioPump/advisory-sensors
 image, unchanged probe/pull-down and disconnected display/pump/MOSFET/load.
 No HIL count change. See report for complete evidence and limitations.
+
+
+Wi-Fi investigation checkpoint: offline reconstruction only; no hardware access,
+reset, flash, probe or wiring changes. Last verified state remains config 16
+always-on/pump-disabled, production GpioPump with advisory bench sensors.
+Generation 440 delayed before link establishment; DHCP/MQTT were normal once
+connected. Public disconnect reason timestamps are missing, so AP versus radio/
+driver cause is unresolved. No full sleep rerun justified yet. Historical
+sleep-campaign-02 retained unchanged; new analysis under wifi-investigation-01.
+HIL counts remain unchanged and transient work remains deferred.
+
+Diagnostic image flashed with established bootloader/partition table; current NVS verified (generation 444, used_ml=40, window_ms=1151137). Three-wake sample now running from generation 445, config 17. Earlier flash omitted custom layout, selected legacy NVS and failed preflight; corrected before sample. Wiring unchanged; no HIL counts.
+
+Latest: three-wake Wi-Fi diagnostic sample completed within ADR-018 windows; config 18 always-on/pump-disabled restoration verified. Diagnostic image SHA above remains flashed, production GpioPump/advisory sensors. No wiring change, no GPIO/HIL evidence or counts. Full 20-cycle test not started. Wi-Fi root cause remains insufficiently evidenced; previous 100-second harness cutoff was not canonical.

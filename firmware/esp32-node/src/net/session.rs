@@ -41,6 +41,7 @@ impl Session {
         settings: &BrokerSettings<'_>,
         identity: rhizo_node_app::persist::BootIdentity,
     ) -> Result<Self, esp_idf_sys::EspError> {
+        super::wifi::trace(0, "mqtt_open_begin", None);
         let will_topic = Topic::Status(settings.device_id.clone()).as_string();
         let will_payload =
             last_will_payload(settings.device_id, identity, &mut crate::hal::rng::EspRng);
@@ -55,6 +56,15 @@ impl Session {
                 // The least possible work on the MQTT task: decode, copy, send.
                 // `EventPayload::Received` borrows a buffer the task reuses the
                 // moment this returns, so anything kept is owned first.
+                if matches!(event.payload(), EventPayload::Connected(_)) {
+                    super::wifi::trace(0, "mqtt_connected", None);
+                }
+                if let EventPayload::Subscribed(id) = event.payload() {
+                    log::info!(
+                        "NET_SUBACK at_ms={} packet_id={id}",
+                        crate::hal::clock::monotonic_ms()
+                    );
+                }
                 if let Some(inbound) = to_inbound(&event.payload(), &own) {
                     let _ = tx.send(inbound);
                 }
@@ -73,7 +83,11 @@ impl Session {
     /// # Errors
     /// Returns the transport error if any subscription cannot be sent.
     pub fn subscribe(&mut self) -> Result<(), esp_idf_sys::EspError> {
-        subscribe(&mut self.client, &self.device_id)
+        let result = subscribe(&mut self.client, &self.device_id);
+        if result.is_ok() {
+            super::wifi::trace(0, "mqtt_subscriptions_queued", None);
+        }
+        result
     }
 
     /// The client, for publishing.
