@@ -9,8 +9,10 @@ Working notes for Claude Code sessions on this repository.
 **Planning is complete. M0 through M8 are implemented and green. M9 is IN
 PROGRESS: its board-free work is substantially complete and its hardware
 verification is underway on the connected ESP32-C3. Bare-board provisioning,
-Wi-Fi, MQTT, config and explicit fake-sensor telemetry have physical evidence; selected RTC/accounting sleep, cold-reset and corrupt-retention cases pass. HIL safety measurements remain
-blocked on the external pull-down and pulse-capture equipment.**
+Wi-Fi, MQTT, config and explicit fake-sensor telemetry have physical evidence; selected RTC/accounting sleep, cold-reset and corrupt-retention cases pass. M9 work is now frozen with deferred physical/HIL closure and explicit runtime
+acceptance gaps; see [the acceptance inventory](docs/reports/M9-acceptance-freeze.md).
+GPIO5 static LOW/pull-down and PicoScope tooling are verified, but full boot/reset
+transient coverage is not. M10 remains NOT READY and has not started.**
 
 | | State |
 |---|---|

@@ -67,3 +67,5 @@ cd firmware/esp32-node && cargo test conformance::
 firmware/esp32-node/tests/conformance.rs
 test/scenarios/conformance_script.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

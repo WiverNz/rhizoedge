@@ -1,5 +1,9 @@
 # M9 current bench state
 
+**FROZEN by user instruction (2026-11-02): no further hardware experiments,
+sleep campaigns or GPIO/HIL work in this phase.** Resume only on a new request.
+See the [acceptance freeze](../reports/M9-acceptance-freeze.md).
+
 Last confirmed: 2026-11-02, diagnostic cleanup verified config 18 always-on; wiring unchanged.
 Update this record immediately after **every confirmed physical change**;
 do not infer a requested action was performed. Before requesting an action,
@@ -133,3 +137,5 @@ HIL counts remain unchanged and transient work remains deferred.
 Diagnostic image flashed with established bootloader/partition table; current NVS verified (generation 444, used_ml=40, window_ms=1151137). Three-wake sample now running from generation 445, config 17. Earlier flash omitted custom layout, selected legacy NVS and failed preflight; corrected before sample. Wiring unchanged; no HIL counts.
 
 Latest: three-wake Wi-Fi diagnostic sample completed within ADR-018 windows; config 18 always-on/pump-disabled restoration verified. Diagnostic image SHA above remains flashed, production GpioPump/advisory sensors. No wiring change, no GPIO/HIL evidence or counts. Full 20-cycle test not started. Wi-Fi root cause remains insufficiently evidenced; previous 100-second harness cutoff was not canonical.
+
+Final freeze: config 18 always-on/pump-disabled, generation 449 last observed. No physical changes during checkpoint gates. All loads/display remain disconnected; probe stays on GPIO5. Host-side production rebuilds are not flashed and do not change the recorded diagnostic image on the board.

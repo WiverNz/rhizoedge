@@ -96,3 +96,5 @@ that should reach them still answered a dead router by sleeping. "Done (host)"
 was the wrong grade for that, because the missing piece was wiring rather than
 hardware. `serve_isolated` is that wiring, and the criteria above are ticked
 against it.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

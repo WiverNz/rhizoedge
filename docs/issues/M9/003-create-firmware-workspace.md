@@ -139,3 +139,5 @@ firmware/esp32-node/src/board/devkitm1.rs
 firmware/esp32-node/src/*
 firmware/esp32-node/tests/board_isolation.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

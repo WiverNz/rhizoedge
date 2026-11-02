@@ -432,6 +432,12 @@ enforces none of its own.
 
 ### M9 — ESP32 Rust Firmware Foundation · IN PROGRESS
 
+**Development checkpoint (2026-11-02):** M9 work is frozen with mandatory
+deferred physical/HIL closure and explicit runtime gaps. See the
+[criterion inventory](docs/reports/M9-acceptance-freeze.md) and
+[checkpoint report](docs/reports/M9.md). M9 is not DONE; M10 remains NOT READY
+and not started. No predecessor or HIL gate is waived.
+
 **Objective.** Real firmware speaking the identical protocol, with fake sensors
 and pump, so the simulator's fidelity claim is tested.
 
@@ -1016,20 +1022,19 @@ Recorded so their absence is a decision rather than an oversight:
 
 **M0–M8 are `DONE`. M9 is `IN PROGRESS`.** Its board-free work is
 substantially complete and recorded in [docs/reports/M9.md](docs/reports/M9.md),
-which labels every criterion as verified without hardware, implemented with
-hardware verification pending, or not started.
+with its current [four-way acceptance classification](docs/reports/M9-acceptance-freeze.md).
 
-The next work is **hardware-blocked**, not unstarted:
+Work is **frozen**, with physical evidence and identified runtime/verification gaps outstanding:
 
 ```text
 M9-022 — M9 verification and exit criteria
 ```
 
-The ESP32-C3 is connected and bare-board radio/config bring-up is underway.
-HIL-1 needs the external GPIO5 10 kΩ pull-down and an oscilloscope or suitable
-logic analyzer; a DMM cannot rule out short pulses. Its complete 20-reset and
-10-mid-boot-power-cut campaign remains pending — see the October evidence in
-[docs/reports/M9.md](docs/reports/M9.md) §10.
+The ESP32-C3 foundation and GPIO5 static LOW are evidenced. The GPIO5 10 kΩ
+pull-down is fitted and PicoScope tooling is available, but no qualified
+full-boot transient capture configuration exists. HIL-1 remains 0/20 resets,
+0 watchdog, 0/10 mid-boot cuts. Work resumes only when requested; see the
+[freeze record](docs/reports/M9-acceptance-freeze.md).
 
 M9-001 resolved the toolchain question empirically: stock Rust 1.98.0 **cannot**
 build `riscv32imc-esp-espidf` (a tier-3 target with no distributed `std`), so

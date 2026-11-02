@@ -77,3 +77,5 @@ firmware/esp32-node/src/app/budget.rs
 ```
 
 October 15–16: measured RTC elapsed is now applied to retained accounting. Two real timer wakes each credited 60,603 ms; nonzero budget/cooldown survived a USB power cycle without credit; a deliberately corrupt RTC checksum on a real timer wake also credited zero. Physical brownout/watchdog/external-wake accounting classes and trusted-wall-clock advancement remain unproven. See [M9 physical report](../../reports/M9.md).
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

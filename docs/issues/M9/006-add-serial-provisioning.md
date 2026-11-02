@@ -76,3 +76,5 @@ pre-network console and MQTT constructor have focused host regressions in
 `firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
 by the production startup log, not by a measured watchdog-reset GPIO trial.
 No transient/HIL criterion is closed by this reconciliation.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

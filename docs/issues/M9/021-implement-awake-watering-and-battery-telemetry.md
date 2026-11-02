@@ -83,7 +83,7 @@ to an uncalibrated soil probe publishing `null`.
 
 ## Acceptance criteria
 
-- [x] The device does not sleep while a dose is in progress, including when
+- [ ] The device does not sleep while a dose is in progress, including when
       `awake_budget_seconds` is shorter than the dose.
 - [x] The hold is released on every path, including a refused command, a failed
       publish, and a panic-free error return.
@@ -91,7 +91,7 @@ to an uncalibrated soil probe publishing `null`.
 - [ ] `FIRMWARE_MAX_RUN_SECONDS` still ends a run independently of the hold.
 - [ ] A power cut mid-dose yields a boot with the pump off and
       `status: "interrupted"`, `delivered_ml: null`, reported at the next wake.
-- [ ] `battery_voltage` appears in the telemetry batch on capable hardware and is
+- [x] `battery_voltage` appears in the telemetry batch on capable hardware and is
       **absent** on hardware without the divider.
 - [x] `battery_percent` is absent unless a chemistry curve is configured.
 - [ ] `battery_low` is raised once per crossing, not once per sample.
@@ -131,3 +131,5 @@ firmware/esp32-node/src/app/awake_hold.rs
 firmware/esp32-node/src/app/watering.rs
 firmware/esp32-node/src/hal/battery.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

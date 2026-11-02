@@ -131,3 +131,5 @@ VERIFIED; whole timing checkbox stays open (42.29 s from host USB disappearance
 with the then-incorrect 30 s device keepalive). Protocol/simulator require 60 s;
 regression-backed correction built but physical timing retest pending. See M9
 report for the MQTT 1.5× timeout/acceptance-wording distinction.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

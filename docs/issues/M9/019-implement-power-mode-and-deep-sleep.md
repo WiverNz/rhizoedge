@@ -93,7 +93,7 @@ reasons — which is the only practical way to test the checksum-failure branch.
 - [x] One image serves both power modes, selected by configuration.
 - [x] An absent or unrecognised `power.mode` yields `AlwaysOn`.
 - [ ] Always-on behaviour is unchanged; M9-001…M9-018 tests stay green.
-- [ ] The sleep announcement's PUBACK is observed before `esp_deep_sleep`.
+- [x] The sleep announcement's PUBACK is observed before `esp_deep_sleep`.
 - [x] A timer wake with a valid checksum credits elapsed time; a cold boot and a
       corrupted checksum each credit zero.
 - [x] A power cycle mid-cooldown neither shortens the cooldown nor replenishes
@@ -139,3 +139,5 @@ firmware/esp32-node/src/hal/rtc_store.rs
 ```
 
 October hardware evidence: real 60-second sleep, timer wake, NVS config retained, and Wi-Fi/MQTT reconnect observed. Active-dose inhibition, durable result completion, accounting restoration and physical rails are not verified. See [M9 physical report](../../reports/M9.md).
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

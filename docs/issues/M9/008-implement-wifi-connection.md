@@ -46,9 +46,9 @@ mode this project exists to avoid.
 ## Acceptance criteria
 
 - [x] The device connects with NVS credentials.
-- [ ] Reconnect uses the documented backoff, with jitter, capped at 300 s.
-- [ ] Retry is unlimited — the device never stops trying.
-- [ ] Sampling continues while Wi-Fi is down.
+- [x] Reconnect uses the documented backoff, with jitter, capped at 300 s.
+- [x] Retry is unlimited — the device never stops trying.
+- [x] Sampling continues while Wi-Fi is down.
 - [ ] The pump stays off while disconnected.
 - [x] RSSI is reported in status.
 
@@ -85,3 +85,5 @@ No transient/HIL criterion is closed by this reconciliation.
 2026-11-01 physical protocol evidence: see M9 report LAN/RSSI/clock section;
 startup without time verified, physical 1800 s expiry remains pending. No GPIO
 or HIL-1 acceptance is implied.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

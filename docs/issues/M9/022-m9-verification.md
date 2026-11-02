@@ -73,7 +73,7 @@ Host tests complement, but do not replace, the physical criteria below.
 ## Acceptance criteria
 
 - [x] `cargo build --release` succeeds for the ESP target with no board.
-- [ ] The CI firmware job passes.
+- [x] The CI firmware job passes.
 - [x] ADR-007's toolchain section has been executed and corrected.
 - [x] ADR-007's firmware-structure section matches the board layer as built.
 - [x] `board-devkitm1` builds; zero or two board features fail with a clear
@@ -82,7 +82,7 @@ Host tests complement, but do not replace, the physical criteria below.
       or board-specific peripheral construction outside `src/board/`.
 - [x] The `app/` host tests are board-independent — they pass with no board
       profile selected, and their results do not vary by profile.
-- [ ] CI builds every declared board profile from the same application code.
+- [x] CI builds every declared board profile from the same application code.
 - [x] Host tests cover boot safety, interrupted dose, dedup ring, and command validation.
 - [x] **The pending-result ledger's saturation behaviour is decided, documented,
       and tested** (M9-011): the ledger fails closed when full, no unacknowledged
@@ -100,7 +100,7 @@ Host tests complement, but do not replace, the physical criteria below.
 - [ ] **With a board:** an oversized command is clamped or rejected.
 - [ ] **With a board:** HIL-1 passes with transient capture (DMM alone is insufficient).
 - [x] **With a board:** blocking the `time` topic (or disconnecting the edge) refuses commands with `clock_unsynced` while telemetry continues.
-- [ ] Documentation updated; report recorded.
+- [x] Documentation updated; report recorded.
 
 ## Verification
 
@@ -139,3 +139,5 @@ October 14–15 physical bring-up is recorded in [M9 report §10](../../reports/
 2026-11-01 physical protocol evidence: see M9 report LAN/RSSI/clock section;
 startup without time verified, physical 1800 s expiry remains pending. No GPIO
 or HIL-1 acceptance is implied.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

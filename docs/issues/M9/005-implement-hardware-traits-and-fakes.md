@@ -90,3 +90,5 @@ firmware/esp32-node/src/pump/mod.rs
 firmware/esp32-node/src/board/mod.rs
 firmware/esp32-node/src/board/devkitm1.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

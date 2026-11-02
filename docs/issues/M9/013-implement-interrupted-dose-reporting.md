@@ -69,3 +69,5 @@ cargo test safety_011
 ```text
 firmware/esp32-node/src/app/recovery.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

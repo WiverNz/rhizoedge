@@ -76,3 +76,5 @@ cargo test safety_019
 firmware/esp32-node/src/nvs.rs
 firmware/esp32-node/src/app/policy.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

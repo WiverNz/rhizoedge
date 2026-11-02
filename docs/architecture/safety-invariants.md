@@ -39,6 +39,13 @@ actually done to it.
 
 ---
 
+
+**M9 freeze checkpoint (2026-11-02):** see the [complete acceptance inventory](../reports/M9-acceptance-freeze.md).
+Real-board virtual-actuator NVS/dedup/ledger proofs and static GPIO5 LOW do not
+establish physical boot/reset/hard-limit safety. HIL-1 remains 0/20 resets,
+0 watchdog, 0/10 mid-boot cuts. No invariant status is promoted by this freeze;
+remaining runtime rail/result-sleep ordering gaps are also mandatory closure work.
+
 ## Summary table
 
 | ID | Invariant | Primary enforcer | Enforced at | Status |

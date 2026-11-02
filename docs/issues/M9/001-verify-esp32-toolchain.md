@@ -47,7 +47,7 @@ Record versions that actually build, not the ones the ADR guessed. Pin them.
 - [x] The firmware Rust version is resolved: either `1.98.0` or a named
       ESP-specific channel, pinned in the firmware workspace and recorded in
       ADR-007's embedded-exception section.
-- [x] The host workspace toolchain is **unchanged** at 1.98.0.
+- [ ] The host workspace toolchain is **unchanged** at 1.98.0.
 - [x] Build time from cold is measured and noted.
 - [x] The re-verify note in ADR-007's Status is updated with the date.
 
@@ -71,3 +71,5 @@ cargo build --release --target riscv32imc-esp-espidf
 ```text
 docs/adr/007-esp32-rust-framework-and-toolchain.md
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

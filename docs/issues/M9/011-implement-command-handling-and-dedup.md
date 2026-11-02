@@ -178,3 +178,5 @@ retry termination. The earlier four-ID experiment was inconclusive and is not
 used as evidence. Exact IDs, counts and fixes are in [M9 report §13](../../reports/M9.md)
 and [virtual bench evidence](../../testing/m9-virtual-actuator-2026-10-16.md).
 No physical GPIO/pump behavior is proved.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

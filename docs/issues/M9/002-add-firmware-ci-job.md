@@ -79,3 +79,5 @@ toolchain download.
 Warm-cache evidence: CI run 41410668212, image job 125162737430, 4m39s
 including setup, restored cache and actual release build. See the 2026-11-02
 CI checkpoint in [M9 report](../../reports/M9.md).
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

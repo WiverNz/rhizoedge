@@ -49,10 +49,10 @@ cannot satisfy it is not a supported board.
 - [x] `pump_off()` is the first statement in `main`.
 - [x] A host test asserts the call ordering.
 - [x] The watchdog is enabled.
-- [x] A watchdog reset path leaves the pump off.
+- [ ] A watchdog reset path leaves the pump off.
 - [x] The hardware pull-down requirement is documented in the board profile,
       beside the pump pin it constrains.
-- [x] No initialisation path can energise the pump.
+- [ ] No initialisation path can energise the pump.
 
 ## Verification
 
@@ -83,3 +83,5 @@ pre-network console and MQTT constructor have focused host regressions in
 `firmware/node-app/tests/board_isolation.rs`. Watchdog subscription is established
 by the production startup log, not by a measured watchdog-reset GPIO trial.
 No transient/HIL criterion is closed by this reconciliation.
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).

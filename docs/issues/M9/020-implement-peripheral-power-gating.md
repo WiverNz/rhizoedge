@@ -86,9 +86,9 @@ and the whole reason M10-011 exists is that nobody knows the real number yet.
       sleep call.
 - [ ] A read attempted before `sensor_warmup_ms` has elapsed raises
       `sensor_warmup_incomplete` and does not publish a sample.
-- [x] An error during sampling still disables both rails.
+- [ ] An error during sampling still disables both rails.
 - [x] Rails are driven off in the boot-safe sequence.
-- [x] `AlwaysOn` mode leaves rails enabled and its behaviour unchanged.
+- [ ] `AlwaysOn` mode leaves rails enabled and its behaviour unchanged.
 - [x] No stabilisation constant for any specific sensor part appears in the
       firmware source.
 - [x] A device with no RS485 capability never enables that rail.
@@ -124,3 +124,5 @@ firmware/esp32-node/src/app/sampling.rs
 firmware/esp32-node/src/board/mod.rs
 firmware/esp32-node/src/board/devkitm1.rs
 ```
+
+Frozen classification and exact remaining evidence: [M9 acceptance inventory](../../reports/M9-acceptance-freeze.md).
