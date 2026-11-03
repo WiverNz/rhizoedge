@@ -6,8 +6,9 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M8 complete. M9 in progress - its board-free work is
-> substantially complete; its hardware verification is pending a board.**
+> **Status: M0 through M8 complete. M9 IN PROGRESS, frozen at a development
+> checkpoint with deferred physical/HIL acceptance and remaining runtime gaps.
+> M10 is NOT READY and has not started.**
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
@@ -43,22 +44,22 @@ cloud synchronisation.
 > forty-one scenarios, and seven deliberate mutations of the safety logic that
 > each turn the suite red ([docs/reports/M8.md](docs/reports/M8.md)).
 >
-> **M9 is in progress, and is the first milestone that needs an ESP32.** The
-> firmware exists and builds for `riscv32imc-esp-espidf`; the toolchain question
-> ADR-007 left open is resolved from a real machine (stock Rust 1.98.0 *cannot*
-> build that target, so the image workspace pins a dated nightly with
-> `-Z build-std`); and every criterion a host can settle has been settled -
-> boot-safe pump ordering, the dedup ring across a simulated power cycle, the
-> pending-result ledger's fail-closed saturation, policy activation interrupted
-> at every step, and a conformance suite proving the firmware and the simulator
-> answer identically.
+> **M9 has a verified firmware foundation on a real ESP32-C3.** The pinned
+> toolchain builds the production image; Wi-Fi/MQTT, advisory fake-sensor
+> telemetry through Edge to SQLite/API, selected RTC/deep-sleep accounting
+> safeguards and retained state across power loss have physical evidence.
+> A compile-time virtual-actuator bench build verified executed-command
+> deduplication, durable result-ledger saturation and result retry/application
+> ACK behavior on real NVS. Those tests do not prove physical pump behavior.
 >
-> **No board has executed any of it.** Wi-Fi, real flash, the RTC domain, deep
-> sleep, and every GPIO measured with a meter are implemented and
-> **hardware-verification pending** - above all HIL-1, the multimeter check that
-> the pump line never asserts across twenty resets.
-> [docs/reports/M9.md](docs/reports/M9.md) labels every criterion with what was
-> actually done to it, because a compile is not a board.
+> **M9 is not DONE.** GPIO5 static LOW is verified, but boot/reset transient
+> safety is not. HIL-1 remains **0/20 resets, 0 watchdog, 0/10 mid-boot power
+> cuts**; it requires suitable transient capture, not a DMM alone. The complete
+> 20-wake campaign and identified runtime integration gaps also remain open.
+> No safety criterion is waived by this checkpoint, and M10 has not started.
+> See the [acceptance inventory](docs/reports/M9-acceptance-freeze.md) for every
+> criterion's classification and missing evidence, and the
+> [M9 report](docs/reports/M9.md) for measurements, regressions and deferred work.
 >
 > To run it now, see [Running it locally](#running-it-locally).
 
@@ -464,7 +465,7 @@ safety suite with no board, no ESP-IDF installation, and no nightly toolchain.
 Building the *image* needs the ESP toolchain; verifying it on silicon needs the
 board.
 
-When hardware does arrive, the
+For hardware setup, the
 [home node hardware guide](docs/hardware/home-node-hardware-guide.md) is the
 bill of materials, wiring, power, and assembly order for building one - bench
 bring-up on an official Espressif ESP32-C3-DEVKITM-1-N4X through a battery and
@@ -687,7 +688,8 @@ Start here: **[docs/README.md](docs/README.md)** - the documentation index.
 | [Failure model](docs/architecture/failure-model.md) | Every failure and its expected behaviour |
 | [Testing strategy](docs/testing/strategy.md) | How the safety claims are proven |
 | [Local development](docs/testing/local-development.md) | Running and debugging |
-| [Milestone reports](docs/reports/) | What each completed milestone actually delivered, and what it deliberately did not |
+| [Milestone reports](docs/reports/) | Verified results, current acceptance status and remaining work |
+| [M9 acceptance inventory](docs/reports/M9-acceptance-freeze.md) | Frozen M9 criterion classifications and exact evidence gaps |
 | [Home node hardware guide](docs/hardware/home-node-hardware-guide.md) | What to buy and how to build one physical node |
 
 ## Known V1 limitations
