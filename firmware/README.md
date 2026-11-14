@@ -58,7 +58,7 @@ cargo build --release --ignore-rust-version
 
 The ESP32 image retains `nightly-2026-07-01`. Its build commands use
 `--ignore-rust-version` because the shared crates and `node-app` declare the
-host MSRV, now 1.99.0. This bypasses Cargo metadata checking only; the image
+host MSRV, now 1.100.0. This bypasses Cargo metadata checking only; the image
 build and Clippy still verify compiler compatibility. Do not use this flag
 for the root workspace or `firmware/node-app` host checks.
 

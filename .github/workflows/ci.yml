@@ -357,7 +357,7 @@ jobs:
           echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"
           dirname "$LIBCLANG_PATH" >> "$GITHUB_PATH"
 
-      # Shared crates declare the host MSRV (1.99.0). The retained ESP nightly
+      # Shared crates declare the host MSRV (1.100.0). The retained ESP nightly
       # predates it; bypass only Cargo metadata here and compile the code to
       # verify embedded compatibility. Host jobs enforce the MSRV normally.
       - name: Build the image

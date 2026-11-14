@@ -496,7 +496,7 @@ Controller architecture.
 Node.js, and no TypeScript anywhere in this project, and the UI's Tauri workflow
 is Cargo-based specifically to keep it that way.
 
-**MSRV is Rust 1.99.0**, and `rust-toolchain.toml` currently pins 1.99.1.
+**MSRV is Rust 1.100.0**, and `rust-toolchain.toml` currently pins 1.100.0.
 The pin may be raised to a newer stable as a deliberate change, but no change may
 silently raise the MSRV, and nothing is downgraded below it.
 
