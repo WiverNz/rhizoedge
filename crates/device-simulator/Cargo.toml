@@ -24,7 +24,6 @@ path = "src/main.rs"
 test-hooks = []
 
 [dependencies]
-anyhow = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }

@@ -493,7 +493,6 @@ dependencies = [
 name = "device-simulator"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "axum",
  "clap",
  "device-simulator",
