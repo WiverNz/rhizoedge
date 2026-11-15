@@ -85,6 +85,15 @@ impl Harness {
         })
     }
 
+    /// Virtual seconds per real second, as the whole topology was started.
+    ///
+    /// For a scenario that has to convert real time it measured into the
+    /// virtual time a simulator spent meanwhile.
+    #[must_use]
+    pub const fn time_scale(&self) -> f64 {
+        self.expected_time_scale
+    }
+
     /// Proves Edge, simulator, and runner agree before any scenario executes.
     ///
     /// M8-004: asserted *before* the first scenario, because a mismatch found
@@ -755,10 +764,15 @@ fn docker_service(action: &str, service: &str) -> Result<()> {
 }
 
 fn docker_container_id(service: &str) -> Result<String> {
+    // Compose passes its resolved project name, including -p / environment
+    // overrides. Keep the base topology's name as the host-runner default.
+    let project = env("RHIZO_SCENARIO__COMPOSE_PROJECT", "rhizo-edge");
     let output = Command::new("docker")
         .args([
             "ps",
             "-aq",
+            "--filter",
+            &format!("label=com.docker.compose.project={project}"),
             "--filter",
             &format!("label=com.docker.compose.service={service}"),
         ])
@@ -768,7 +782,10 @@ fn docker_container_id(service: &str) -> Result<String> {
     }
     let id = String::from_utf8(output.stdout)?.trim().to_owned();
     if id.is_empty() || id.lines().count() != 1 {
-        bail!("expected exactly one container for Compose service {service}, got `{id}`");
+        bail!(
+            "expected exactly one container for Compose service {service} in project \
+             {project}, got `{id}`"
+        );
     }
     Ok(id)
 }

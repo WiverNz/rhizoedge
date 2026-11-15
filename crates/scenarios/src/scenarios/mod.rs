@@ -3222,25 +3222,36 @@ fn isolated_no_wall_clock<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
         ensure!(dosed["clock_synced"] == false);
         fault(h, "disconnect:1", false).await?;
         wait_simulator(h, 500, |s| s["connected"] == true).await?;
-        let replay_has_monotonic_without_wall = h
-            .mqtt()
-            .await
-            .iter()
-            .filter(|m| m.topic.ends_with("/events"))
-            .any(|m| {
-                serde_json::from_slice::<Value>(&m.payload).is_ok_and(|v| {
-                    v["data"]["events"].as_array().is_some_and(|events| {
-                        events.iter().any(|e| {
-                            e["kind"] == "watering.offline_autonomous"
-                                && e["device_time_ms"].is_null()
-                                && e["monotonic_ms"].as_u64().is_some()
-                        })
-                    })
-                })
-            });
+        // `connected` is the simulator's view of its socket, and the replay
+        // follows it: reading the capture once at that instant raced the very
+        // publish being asserted on. Wait for the replayed dose itself, then
+        // assert on its time fields, so a regression in those still fails here
+        // with the payload in hand rather than as a timeout.
+        let offline_doses = |m: &crate::harness::CapturedMqtt| -> Vec<Value> {
+            if !m.topic.ends_with("/events") {
+                return Vec::new();
+            }
+            serde_json::from_slice::<Value>(&m.payload)
+                .ok()
+                .and_then(|v| v["data"]["events"].as_array().cloned())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|e| e["kind"] == "watering.offline_autonomous")
+                .collect()
+        };
+        wait_mqtt_until(
+            h,
+            Duration::from_secs(60),
+            "the replayed watering.offline_autonomous event",
+            |m| !offline_doses(m).is_empty(),
+        )
+        .await?;
+        let replayed: Vec<Value> = h.mqtt().await.iter().flat_map(offline_doses).collect();
         ensure!(
-            replay_has_monotonic_without_wall,
-            "offline event did not preserve monotonic-only time"
+            replayed
+                .iter()
+                .any(|e| e["device_time_ms"].is_null() && e["monotonic_ms"].as_u64().is_some()),
+            "offline event did not preserve monotonic-only time: {replayed:?}"
         );
         let (id, payload) = direct_water_payload(h, &device).await?;
         h.publish(
@@ -4023,6 +4034,11 @@ fn sleep_budget_cooldown<'a>(h: &'a Harness) -> ScenarioFuture<'a> {
 /// The whole of `scenario_sleep_budget_cooldown`, in real time.
 const SLEEP_BUDGET_COOLDOWN_LIMIT: Duration = Duration::from_secs(600);
 
+/// Virtual time a cold reset may appear to cost beyond what was measured: one
+/// wake interval of the battery node (`--wake-interval-seconds 1800` in the
+/// test overlay), for a tick or a wake already due when the measurement began.
+const COLD_RESET_SLACK_MS: u64 = 1_800_000;
+
 async fn sleep_budget_cooldown_steps(h: &Harness) -> Result<()> {
     setup_battery_plant(h).await?;
     let authored = api_ok(
@@ -4070,17 +4086,38 @@ async fn sleep_budget_cooldown_steps(h: &Harness) -> Result<()> {
         },
     )
     .await?;
-    let before = cooling["offline_cooldown_remaining_ms"]
-        .as_u64()
-        .context("cooldown")?;
-    let cold = h.battery_post("/sim/restart", json!({})).await?;
-    ensure!(cold["zero_credit_resets"].as_u64().unwrap_or_default() > 0);
     ensure!(
-        cold["offline_cooldown_remaining_ms"]
-            .as_u64()
-            .unwrap_or_default()
-            >= before.saturating_sub(60_000),
-        "cold reset shortened cooldown"
+        cooling["offline_cooldown_remaining_ms"].as_u64().is_some(),
+        "cooldown missing from the battery state: {cooling}"
+    );
+    // At 3600x, the old 60-virtual-second allowance gave these separate HTTP
+    // requests only 17 ms of real time. Measure their duration and also allow
+    // one wake interval for time credited in a batch across a timer wake.
+    // Reject an exhausted observation window so dropping the cooldown to zero
+    // cannot pass through saturating subtraction.
+    let asked = tokio::time::Instant::now();
+    let warm = h.get_json(&format!("{}/sim/state", h.battery_url)).await?;
+    let before = warm["offline_cooldown_remaining_ms"]
+        .as_u64()
+        .context("cooldown before the cold reset")?;
+    let cold = h.battery_post("/sim/restart", json!({})).await?;
+    let observed = asked.elapsed();
+    ensure!(cold["zero_credit_resets"].as_u64().unwrap_or_default() > 0);
+    let after = cold["offline_cooldown_remaining_ms"]
+        .as_u64()
+        .context("cooldown after the cold reset")?;
+    let ran_meanwhile_ms =
+        u64::try_from(observed.mul_f64(h.time_scale()).as_millis()).unwrap_or(u64::MAX);
+    let allowed_ms = ran_meanwhile_ms.saturating_add(COLD_RESET_SLACK_MS);
+    ensure!(
+        before > allowed_ms,
+        "the cooldown had {before} ms left, inside the {allowed_ms} ms the two requests may \
+         account for ({observed:?} of real time), so the cold reset proved nothing"
+    );
+    ensure!(
+        after >= before.saturating_sub(allowed_ms),
+        "cold reset shortened cooldown: {before} ms before, {after} ms after, with only \
+         {allowed_ms} ms accounted for by {observed:?} of real time between the two requests"
     );
     let corrupt = h.battery_post("/sim/rtc-corrupt", json!({})).await?;
     ensure!(

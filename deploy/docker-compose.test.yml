@@ -91,6 +91,7 @@ services:
         condition: service_healthy
     environment:
       RHIZO_SCENARIO__EDGE_URL: http://edge-controller:8080
+      RHIZO_SCENARIO__COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
       RHIZO_SCENARIO__CLOUD_URL: http://cloud-api:8081
       RHIZO_SCENARIO__SIMULATOR_URL: http://device-simulator:9090
       RHIZO_SCENARIO__BATTERY_URL: http://battery-simulator:9090
