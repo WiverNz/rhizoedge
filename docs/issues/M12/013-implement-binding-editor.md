@@ -1,5 +1,8 @@
 # Issue M12-013 — Implement the sensor binding and measurement policy editor
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-008
 
 ## Context
@@ -42,6 +45,10 @@ plant with a missing part. No empty watering panel, no disabled controls, no
 warning icon (SAFETY-018).
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] Bindings are listed, added, and removed.
 - [ ] Only declared capabilities are offerable.

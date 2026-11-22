@@ -1,27 +1,25 @@
 # Issue M11-009 — Run HIL-1 boot safety verification
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-002, M11-008
 
 ## Context
 
-**The gate that everything else waits behind.** SAFETY-011 verified
-electrically, with a multimeter, before any water is in the system.
+Targeted prototype hardware check under PRD 110 and the testing policy. The full HIL catalogue remains deferred reference, not a mandatory repetition matrix.
 
 ## Goal
 
-Prove the pump line never asserts except on a validated command.
+Establish safe control behavior before pump operation.
 
 ## Scope
 
-- The full HIL-1 checklist from hardware-in-the-loop.md
-- Multimeter on the pump driver input throughout
-- Tubing disconnected, reservoir empty
-- 20 resets, flashing while powered, a watchdog reset, 10 mid-boot power cuts
-- Results recorded in `docs/testing/hil-runs/`
+Perform and record the acceptance checks below on the actual setup. Reuse valid previous evidence when wiring and relevant firmware have not changed.
 
 ## Non-goals
 
-- Anything involving water.
+Extended repetition campaigns, exhaustive fault injection and production validation.
 
 ## Dependencies
 
@@ -30,35 +28,27 @@ Prove the pump line never asserts except on a validated command.
 
 ## Implementation notes
 
-If the pump line asserts even momentarily, the gate pull-down is wrong. Fix
-the hardware before proceeding — no firmware change compensates for a pin that
-floats high during reset.
-
-An in-line pump power switch must be present even though the reservoir is empty:
-the habit matters more than this particular run.
+Keep the pump disabled until essential electrical/control checks pass. Start with a cup and a reachable power disconnect. Record actual observations briefly; no new full campaign report is needed.
 
 ## Acceptance criteria
 
-- [ ] The pump line never asserts during boot, across 20 resets.
-- [ ] It does not pulse during flashing.
-- [ ] A watchdog reset leaves it inactive.
-- [ ] 10 mid-boot power cuts produce no actuation.
-- [ ] Results are recorded with the multimeter readings.
-- [ ] **Any twitch stops the milestone until the hardware is fixed.**
+- [ ] Actual wiring, supply/polarity, control timing and safe off-state are verified with motor disabled.
+- [ ] Boot, reset, watchdog reset and lost control/MCU power leave the actual driver safely off; observe pulses with suitable capture, not a DMM alone.
+- [ ] A reachable pump-power disconnect is identified and usable.
+- [ ] Short record states observed coverage and remaining limits; no exhaustive transient-proof claim.
+- [ ] Unexpected actuation blocks pump operation until fixed; sensor/UI work can continue.
 
 ## Verification
 
-```bash
-# manual checklist with a multimeter; recorded in docs/testing/hil-runs/
-```
+Perform the specific physical checks above with human supervision; record actual setup, observations and remaining limits in this issue. Full HIL repetitions are deferred.
 
 ## Tests required
 
-- The HIL-1 checklist.
+The essential prototype checks above only, plus a relevant regression if a defect is fixed.
 
 ## Documentation impact
 
-- hil-runs record.
+Short issue result; retain earlier evidence and do not mark extended HIL passed.
 
 ## Files likely affected
 

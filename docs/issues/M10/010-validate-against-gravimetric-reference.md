@@ -1,5 +1,8 @@
 # Issue M10-010 — Validate readings against a gravimetric reference
 
+> **Execution scope, 2026-11-22:** **Status: DEFERRED.** Keep the criteria below open for later hardening/expansion; they do not gate the first supervised plant experiment. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-009
 
 ## Context

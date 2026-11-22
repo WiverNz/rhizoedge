@@ -1,7 +1,7 @@
 # Rhizo Edge — Documentation Index
 
 Everything needed to implement Rhizo Edge without rediscovering the
-architecture. **M0–M7 are complete. M8 is READY; M8-001 is next.**
+architecture. **M0–M8 are complete; M9 remains incomplete; M10 is READY and M10-001 is next.**
 
 > **Four passes have amended the plan since M0 shipped.** In date order:
 >
@@ -34,8 +34,9 @@ architecture. **M0–M7 are complete. M8 is READY; M8-001 is next.**
 3. The PRD for your milestone — what to build and why
 4. Your issue file — the step-by-step scope and acceptance criteria
 
-Then start at **[M8-001](issues/M8/001-add-dockerfiles.md)** — M0–M7 are
-complete.
+Then start at **[M10-001](issues/M10/001-define-real-sensor-adapters.md)**.
+The permanent prototype path in ROADMAP supersedes historical milestone gates;
+M9 evidence remains intact and deferred work is not marked passed.
 
 ---
 
@@ -143,7 +144,7 @@ One PRD per milestone.
 | [strategy.md](testing/strategy.md) | The test pyramid, naming, CI gates, what is deliberately not tested |
 | [failure-scenarios.md](testing/failure-scenarios.md) | **SCEN-001…117** — the executable scenario catalogue and its invariant coverage matrix |
 | [simulator-strategy.md](testing/simulator-strategy.md) | Physical model, fault catalogue, the permissiveness rule |
-| [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | HIL-1…HIL-7 gated checklists for real hardware; HIL-8 is added by M16-015 |
+| [hardware-in-the-loop.md](testing/hardware-in-the-loop.md) | Essential prototype checks plus deferred HIL-1…HIL-7 campaigns; HIL-8 belongs to deferred M16-015 |
 | [local-development.md](testing/local-development.md) | Running, debugging, inspecting, common problems, and (§14) reproducing a 2-vCPU CI runner locally |
 
 ## Firmware
@@ -192,10 +193,10 @@ acceptance criteria, and verification commands.
 | [M15](issues/M15/) | 14 | Per-plant adaptive water model |
 | [M16](issues/M16/) | 16 | Verified watering |
 
-Issue numbering within a milestone is a valid execution order: every issue's
-dependencies have lower numbers in the same milestone, or belong to an earlier
-one. The [dependency graph](architecture/dependency-graph.md) shows where that
-order can safely be widened into parallel work.
+Issue identifiers are stable labels, not execution gates. Follow actual
+functional dependencies and the [prototype order](architecture/dependency-graph.md).
+M11 prototype exit depends on the minimal M12 interface; numeric milestone order
+does not prevent this acyclic dependency.
 
 ## Validation
 
@@ -207,7 +208,7 @@ cargo run -p rhizo-docscheck
 artefacts are internally consistent: required files exist, identifiers are
 unique, every `M*-*` / `ADR-*` / `PRD *` / `SAFETY-*` / `SCEN-*` reference
 resolves, relative links resolve, the issue dependency graph is acyclic, and
-issue numbering is a valid execution order.
+dependencies form a valid execution order independent of numbering.
 
 It is planning tooling, not a product crate — never shipped, and never a
 dependency of a runtime crate. M0-011 adopted it into the root workspace, which

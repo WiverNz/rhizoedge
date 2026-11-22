@@ -1,26 +1,25 @@
 # Issue M12-019 — M12 verification and exit criteria
 
-**Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-001, M12-002, M12-003, M12-004, M12-005, M12-006, M12-007, M12-008, M12-009, M12-010, M12-011, M12-012, M12-013, M12-014, M12-015, M12-016, M12-017, M12-018
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-001, M12-002, M12-003, M12-004, M12-006, M12-008, M12-010, M12-013, M12-014
 
 ## Context
 
-Final gate for M12. The decisive property is that the UI **cannot** bypass
-safety — a structural claim, verified structurally.
+Prototype exit for M12, governed by the current PRD scope and ROADMAP. Deferred hardening is not a passing result or an entry gate for other features.
 
 ## Goal
 
-Verify every PRD 120 acceptance criterion.
+Demonstrate the M12 prototype slice.
 
 ## Scope
 
-- Build on both platforms; manual checklist against a running system
-- Verify the forbidden dependencies are absent
-- Verify no override control exists
-- Update ROADMAP.md; record the report
+Relevant tests, a local functional smoke, a short result in this issue and accurate roadmap status. Reuse prior evidence; no full campaign report required.
 
 ## Non-goals
 
-- New behaviour.
+Deferred production hardening and full historical verification campaigns.
 
 ## Dependencies
 
@@ -28,60 +27,35 @@ Verify every PRD 120 acceptance criterion.
 - M12-002
 - M12-003
 - M12-004
-- M12-005
 - M12-006
-- M12-007
 - M12-008
-- M12-009
 - M12-010
-- M12-011
-- M12-012
 - M12-013
 - M12-014
-- M12-015
-- M12-016
-- M12-017
-- M12-018
 
 ## Implementation notes
 
-Verify the leak case manually and completely: the lockout is prominent, no
-clear button is shown, manual watering renders the reason rather than a generic
-error, and nothing in the interface offers a way around it.
-
-Also verify the disconnected case, because it is the one an operator meets at
-the worst moment.
+Use actual observed behavior and report limitations. The first plant experiment is supervised with small quantities; it does not require a month-long campaign.
 
 ## Acceptance criteria
 
-- [ ] `cargo tauri build` produces a runnable app on Windows and Linux.
-- [ ] **No `package.json`, `node_modules`, or JS dependency anywhere.**
-- [ ] **No MQTT or `rhizo-domain` dependency in any UI manifest.**
-- [ ] All views render against a live edge.
-- [ ] Manual watering works and shows the result.
-- [ ] A leak lockout is prominent with no clear button; manual watering shows the reason.
-- [ ] Enabling automation shows dose, cap, and cooldown first.
-- [ ] Stopping the edge shows a banner and greyed data with its age.
-- [ ] **No override control exists anywhere.**
-- [ ] Charts render with the target band and watering markers.
-- [ ] ROADMAP.md updated; report recorded.
+- [ ] Minimal interface runs on the development host using Edge REST only.
+- [ ] Measurements, age, faults, bindings, thresholds and watering limits are usable for one plant.
+- [ ] Manual water/stop, refusal display and disconnected state work.
+- [ ] Automation shows limits; no bypass control exists.
+- [ ] One live local smoke passes; short result recorded; deferred UI remains open.
 
 ## Verification
 
-```bash
-cd ui/rhizo-ui && cargo tauri build
-find . -name package.json -o -name node_modules | wc -l
-grep -rn 'rumqttc\|rhizo-domain' ui/ --include=Cargo.toml
-```
+Run the relevant tests for changed behavior and the prototype smoke described above using the current firmware/local development commands. Record actual commands and results; do not run an unrelated full suite.
 
 ## Tests required
 
-- Component suite plus the manual checklist.
+Relevant unit/regression tests and the local prototype smoke; essential hardware checks where actuation is involved.
 
 ## Documentation impact
 
-- ROADMAP.md.
-- Milestone report.
+Current issue result and ROADMAP status only; retain historical reports and deferred criteria.
 
 ## Files likely affected
 

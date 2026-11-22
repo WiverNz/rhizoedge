@@ -1,5 +1,8 @@
 # Issue M11-012 — Run HIL-5 safety hardware lockout verification
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-011, M11-007
 
 ## Context
@@ -37,6 +40,10 @@ under sensor fault (a human has looked at the plant) but never under leak (a
 human has not yet looked at the floor). Confirm both halves.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] A wet leak sensor locks out within one control tick.
 - [ ] `POST /water` returns 409 while wet.

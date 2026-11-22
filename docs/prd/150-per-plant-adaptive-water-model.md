@@ -1,6 +1,11 @@
 # PRD 150 — Per-Plant Adaptive Water Model
 
-**Milestone:** M15 · **Status:** PLANNED · **Depends on:** M13
+> **Deferred, 2026-11-22:** This is future scope, not a prerequisite for
+> the real-plant prototype. Revisit based on actual usage; no new hardware or
+> validation work is requested here. See [ROADMAP](../../ROADMAP.md).
+
+
+**Milestone:** M15 · **Status:** DEFERRED · **Depends on:** M13
 
 > **Added 2026-09-01.** The first milestone whose subject is *inference* rather
 > than mechanism. It is deliberately placed after M13: the estimators need real

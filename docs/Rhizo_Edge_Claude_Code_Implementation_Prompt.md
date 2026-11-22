@@ -1,5 +1,11 @@
 # Claude Code Implementation Prompt — Rhizo Edge
 
+> **Historical input:** Execution priority and validation gates are superseded
+> by the permanent 2026-11-22 strategy in [ROADMAP](../ROADMAP.md) and
+> [agent instructions](../AGENTS.md). Preserve this document as provenance;
+> do not follow its old sequencing or exhaustive verification mandates.
+
+
 You are implementing **Rhizo Edge**, an edge-first plant monitoring and automated irrigation platform.
 
 The repository contains (or will contain) the project specification:

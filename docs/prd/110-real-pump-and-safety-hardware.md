@@ -1,11 +1,37 @@
 # PRD 110 — Real Pump and Safety Hardware
 
-**Milestone:** M11 · **Status:** PLANNED · **Depends on:** M10
+## Prototype scope — supersession, 2026-11-22
+
+M11 is **READY** for adapter implementation against existing firmware; it
+does not wait for all of M10. Closed-loop watering needs real valid readings.
+Use the requested DFR0523 with its integrated driver, not an assumed two-wire
+pump plus generic MOSFET. Resolve actual pulse timing and electrical off-state
+before energizing the motor; a pull-down or static LOW is not sufficient proof.
+Do not add driver hardware unless an observed safety need requires it.
+
+Required now: independent duration guard, conservative per-dose/cumulative volume
+and cooldown/frequency limits, calibration for small doses, fault/stop handling,
+physical required tank/leak inputs, and safe startup/reset/watchdog/control loss.
+Keep absent or invalid required inputs fail-closed. Perform cup checks then one
+supervised plant experiment, with reachable power disconnect. No fixed repetition
+matrix, month-long plant trial or exhaustive invariant re-verification is required.
+F-110-11/13's fixed five-run statistical campaign is deferred; obtain enough small
+measured doses to establish a conservative usable conversion and check it once.
+Unstable or uncontrolled delivery must be fixed, not averaged away.
+
+The remaining detailed design is reference scope; current prototype acceptance
+and testing policy supersede its full-campaign gates. Volume remains an estimate
+without a delivery witness; M16 is deferred and is not needed for this experiment.
+
+See [ROADMAP](../../ROADMAP.md) and [testing policy](../testing/strategy.md).
+
+
+**Milestone:** M11 · **Status:** READY · **Depends on:** Existing M9 interfaces; M10 readings before closed-loop watering
 
 ## Summary
 
 Connect a real peristaltic pump, a reservoir level sensor, and a leak sensor.
-Calibrate delivery, verify every hard limit against physical water, and complete
+Calibrate small doses, check essential limits with physical water, and complete
 the first hardware demo.
 
 This is the milestone where a software defect becomes a wet floor.
@@ -24,7 +50,7 @@ a pump that runs dry, a float switch that sticks.
 3. Tank level and leak sensors integrated.
 4. A run-duration guard **independent of the MQTT task**.
 5. Boot-safe and fail-closed behaviour verified electrically.
-6. Every SAFETY invariant re-verified with real water.
+6. Essential protections demonstrated on the actual prototype; deeper validation later.
 
 ## Non-goals
 
@@ -45,7 +71,8 @@ wire pump + driver + external supply → HIL-1 boot safety → HIL-3 calibration
    → HIL-7 supervised plant
 ```
 
-Every stage gates the next. See
+Essential electrical/control checks gate actuation, cup checks precede plant
+use, and the extended campaign is deferred. See
 [hardware-in-the-loop.md](../testing/hardware-in-the-loop.md).
 
 ## Functional requirements
@@ -55,8 +82,8 @@ Every stage gates the next. See
 | ID | Requirement |
 |---|---|
 | F-110-01 | Real adapter implements the **existing** `Pump` trait unchanged |
-| F-110-02 | GPIO drives a MOSFET or relay module; the pump has its own supply, never the ESP32 rail |
-| F-110-03 | **The gate is pulled down in hardware** so an un-driven pin is pump-off — covering reset and the bootloader window |
+| F-110-02 | DFR0523 integrated driver receives verified control pulses; pump supply is separate from the ESP32 rail |
+| F-110-03 | The actual driver must remain off with un-driven/absent control during startup/reset; verify electrical off-state rather than assuming a GPIO pull-down proves it |
 | F-110-04 | Duration computed as `effective_ml / ml_per_second`, clamped to `FIRMWARE_MAX_RUN_SECONDS` |
 | F-110-05 | A run-duration guard on a **separate timer/task from MQTT**; a hung MQTT task cannot leave the pump energised |
 | F-110-06 | Hardware watchdog enabled; a watchdog reset leaves the pump off |
@@ -214,50 +241,31 @@ whether it was clamped.
 
 ## Acceptance criteria
 
-- [ ] HIL-1 passes: the pump line never asserts across 20 resets, a watchdog
-      reset, and 10 mid-boot power cuts.
-- [ ] Calibration: five runs, σ < 5 % of the mean, recorded.
-- [ ] A 40 ml request delivers 40 ml ± 10 %, measured.
-- [ ] `requested_ml: 10000` published directly to the broker delivers no more
-      than `FIRMWARE_MAX_ML_PER_RUN` — **measured in a cup**.
-- [ ] Wetting the leak sensor stops an in-progress dose within 1 second.
-- [ ] With a leak asserted, `POST /plants/{id}/water` returns 409 and the pump
-      stays silent.
-- [ ] Clearing the lockout with the sensor still wet returns 409.
-- [ ] Draining the reservoir prevents watering; the device refuses independently.
-- [ ] Disconnecting the tank sensor prevents watering.
-- [ ] A simulated relay-stuck condition de-energises at
-      `FIRMWARE_MAX_RUN_SECONDS`.
-- [ ] HIL-6 full dry cycle completes correctly into a measuring cup, then into soil.
-- [ ] `docs/testing/hil-runs/` contains a complete record.
+- [ ] DFR0523 signal timing/off-state and startup/reset/watchdog/control-loss behavior checked before motor enable; safe wiring and supply verified.
+- [ ] Small cup doses establish a conservative calibration and actual runtime is reported.
+- [ ] Runtime, per-dose/cumulative volume and frequency limits hold; MQTT loss cannot defeat the independent run guard.
+- [ ] Required tank/leak inputs work physically; invalid/missing/stale inputs refuse watering and a leak stops an active dose.
+- [ ] Manual stop and reachable pump-power disconnect work; restart does not replay watering or reset budgets permissively.
+- [ ] One supervised real-plant cycle succeeds through the local system and minimal interface; short result and limitations recorded.
+
+This is prototype evidence only. Extended HIL matrices and production validation
+remain deferred; do not relabel an entire invariant physically verified from one
+observed case.
 
 ## Dependencies
 
-- M10 (real soil readings to close the loop).
-- M9 (firmware, trait boundaries, boot safety).
-- Hardware: peristaltic pump, MOSFET/relay driver module with gate pull-down,
-  external pump supply, silicone tubing, reservoir, tank sensor, leak sensor,
-  measuring cup, multimeter, towels, and an in-line power switch.
+- Existing M9 pump/config/command interfaces; real M10 readings before closed-loop actuation.
+- DFR0523 with its integrated driver, verified safe power/wiring, tubing, reservoir, a way to measure small doses and an accessible power disconnect.
+- Actual required tank/leak inputs under the existing safety contract; do not fake healthy readings.
+- Check the local inventory before choosing equipment. No generic extra MOSFET, flow meter or reservoir scale is required by this plan.
 
 ## Open questions
 
-1. **Relay vs MOSFET.** MOSFET preferred: no mechanical contacts to weld, faster
-   turn-off, and a gate pull-down is trivial. A relay is acceptable if the pump
-   needs AC. Decided at purchase.
-2. **Tank sensor type.** A float switch is cheapest and most reliable but binary;
-   ultrasonic gives a real percentage but is sensitive to reservoir geometry and
-   foam. Starting with a float switch and documenting the coarseness.
-3. **Whether a flow meter is worth adding early.** ~~Deferred to M14.~~
-   **Answered on 2026-09-01 by
-   [ADR-020](../adr/020-verified-watering-and-delivery-evidence.md) §4: no.**
-   The reasoning in the question itself is why — a dosing pump of this class
-   moves a fraction of a litre per minute, which is the bottom of a cheap
-   turbine meter's range and its least accurate decade. Direct delivery
-   verification is worth having and arrives in **M16**, with a **load cell under
-   the reservoir** as the witness: it measures volume by subtraction at
-   1 g = 1 ml, has no minimum flow rate, and sits outside the wetted path. An
-   inline flow meter remains a first-class *future* `DeliveryWitness` for
-   greenhouse-scale flows, not a V1 part.
+Resolve the DFR0523 control waveform and signal-loss behavior against its
+actual driver before power. Do not assume a generic MOSFET GPIO command or
+copy conflicting frequency/pulse-width specifications. Confirm safe connectors
+and a means of measuring small doses before the cup test. Any concrete safety
+gap blocks that operation, not sensor implementation.
 
 ## Future work
 

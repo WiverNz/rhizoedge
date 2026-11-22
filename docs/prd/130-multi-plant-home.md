@@ -1,6 +1,11 @@
 # PRD 130 — Multi-Plant Home System
 
-**Milestone:** M13 · **Status:** PLANNED · **Depends on:** M12
+> **Deferred, 2026-11-22:** This is future scope, not a prerequisite for
+> the real-plant prototype. Revisit based on actual usage; no new hardware or
+> validation work is requested here. See [ROADMAP](../../ROADMAP.md).
+
+
+**Milestone:** M13 · **Status:** DEFERRED · **Depends on:** M12
 
 > **Revised 2026-08-26.** Three operational deliverables were added:
 > **release binary CI** (M13-013), the **MSRV + current-stable CI matrix**

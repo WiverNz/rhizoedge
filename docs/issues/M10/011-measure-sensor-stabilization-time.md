@@ -1,5 +1,8 @@
 # Issue M10-011 — Measure sensor power-on stabilization time
 
+> **Execution scope, 2026-11-22:** **Status: DEFERRED.** Keep the criteria below open for later hardening/expansion; they do not gate the first supervised plant experiment. Basic settling in the intended soil is still required in the active sensor slice; the full cycle/temperature distribution is deferred. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-010
 
 ## Context

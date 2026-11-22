@@ -1,5 +1,8 @@
 # Issue M12-008 — Implement the profile editor
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-002
 
 ## Context
@@ -38,6 +41,10 @@ Showing which plants use a profile before saving prevents the surprise of
 changing five plants while intending to change one.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] All fields are editable with immediate validation.
 - [ ] Client rules mirror the server's.

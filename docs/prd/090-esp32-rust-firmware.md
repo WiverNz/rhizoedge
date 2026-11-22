@@ -1,6 +1,20 @@
 # PRD 090 — ESP32 Rust Firmware Foundation
 
-**Milestone:** M9 · **Status:** PLANNED · **Depends on:** M8
+## Prototype scope — supersession, 2026-11-22
+
+M9 stays **IN PROGRESS**. The frozen acceptance inventory and all unchecked
+criteria remain historical evidence. Existing sensor, configuration and telemetry
+interfaces are sufficient to start M10; M9-022 is not its entry gate. For the
+always-on prototype, resolve only runtime gaps affecting actual sensing, command
+validation, stop, duration/budget limits, restart and physical pump safety before
+watering. Battery/sleep campaigns, full conformance, CI negative controls and
+unrelated audit coverage are deferred, not passed. Original requirements below
+remain the broader M9 closure specification, not a prerequisite for new features.
+
+See [ROADMAP](../../ROADMAP.md) and [testing policy](../testing/strategy.md).
+
+
+**Milestone:** M9 · **Status:** IN PROGRESS · **Depends on:** M8
 
 > **Revised 2026-08-26.** The firmware now also implements **offline autonomy**
 > ([ADR-015](../adr/015-device-offline-autonomy.md)): an NVS policy store with

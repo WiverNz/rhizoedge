@@ -1,5 +1,13 @@
 # Rhizo Edge — Home Node Hardware Guide
 
+> **Prototype scope, 2026-11-22:** Follow [ROADMAP](../../ROADMAP.md) and the
+> local inventory before selecting equipment. This broader assembly/procurement
+> guide does not require buying a full future deployment. Start with SEN0601
+> and the DFR0523 integrated driver, verified actual wiring and separate safe
+> power domains. Battery, solar, extra delivery witnesses and field hardware
+> are deferred; old generic MOSFET descriptions are not a DFR0523 wiring recipe.
+
+
 **Status:** practical procurement and assembly guide
 
 **Price snapshot:** 2026-08-31, Germany/EU; approximate retail ranges, excluding shipping

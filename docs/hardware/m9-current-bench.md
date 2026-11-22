@@ -1,5 +1,11 @@
 # M9 current bench state
 
+> **Planning supersession, 2026-11-22:** The bench state recorded below is
+> evidence, not proof of present connectivity or an M10 entry restriction.
+> Follow [ROADMAP](../../ROADMAP.md) for prototype work and run the required
+> hardware status/physical checks before use. This planning change moved no wires.
+
+
 **FROZEN by user instruction (2026-11-02): no further hardware experiments,
 sleep campaigns or GPIO/HIL work in this phase.** Resume only on a new request.
 See the [acceptance freeze](../reports/M9-acceptance-freeze.md).

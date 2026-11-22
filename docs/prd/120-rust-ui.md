@@ -1,6 +1,24 @@
 # PRD 120 — Rust UI (Tauri + Leptos Desktop Application)
 
-**Milestone:** M12 · **Status:** PLANNED · **Depends on:** M6 (functionally), M11 (for the full picture)
+## Prototype scope — supersession, 2026-11-22
+
+M12 is **READY** against the existing M6 REST API, independently of full
+M11 completion. Build a minimal single-plant interface on the development host
+using the existing Rust UI decision. Show measurements and age/health, configure
+bindings/thresholds and watering limits, manually water or stop, and display
+refusals/faults and connection loss. Enable automation only with the limits visible.
+The UI never bypasses Edge or talks directly to MQTT/hardware.
+
+M12-001/002/003/004/006/008/010/013/014/019 form the prototype slice. Keep editors
+and views minimal. Rich device views, charts, cloud/offline history, fleet/sleep
+presentation, installers and multi-platform UI CI (other issues) are deferred,
+not passed. Detailed full-UI requirements below remain backlog reference; they
+do not gate the minimal exit.
+
+See [ROADMAP](../../ROADMAP.md) and [testing policy](../testing/strategy.md).
+
+
+**Milestone:** M12 · **Status:** READY · **Depends on:** Existing M6 REST API
 
 > **Revised 2026-08-26.** The UI must now let an operator understand and edit
 > **per-plant configuration** and see **offline autonomy** honestly. Issues
@@ -275,31 +293,14 @@ project excludes ([strategy.md](../testing/strategy.md) §11).
 
 ## Acceptance criteria
 
-- [ ] A plant can be created from a species preset, with every generated value
-      reviewed and editable before the first write.
-- [ ] Source-stated and Rhizo-derived values are distinguishable in words.
-- [ ] "Configure manually" reaches the full editor without a preset.
-- [ ] The preset flow works with no internet connection.
+- [ ] Minimal single-plant interface runs on the development host through Edge REST only.
+- [ ] Current measurements, freshness and faults are visible.
+- [ ] Bindings, thresholds and dose/cap/cooldown settings can be configured using existing APIs.
+- [ ] Manual water and stop work; refusal and disconnected states are clear.
+- [ ] Automation enabling presents current limits; no override/bypass exists.
+- [ ] One live local-system smoke demonstrates these actions.
 
-- [ ] `cargo tauri build` produces a runnable app on Windows and Linux.
-- [ ] **No `package.json`, no `node_modules`, no JS dependency** anywhere in the
-      repository.
-- [ ] All views render against a live edge.
-- [ ] Manual watering works and shows the delivered result.
-- [ ] A leak lockout renders prominently with **no** clear button, and manual
-      watering shows the reason rather than a generic failure.
-- [ ] Enabling automation shows dose, daily cap, and cooldown first.
-- [ ] Stopping the edge shows a banner and greyed last-known data with its age.
-- [ ] `ui/rhizo-ui/**/Cargo.toml` contains no MQTT dependency and no
-      `rhizo-domain` dependency.
-- [ ] Charts render moisture, EC, and weight with the target band and watering
-      markers, in inline SVG.
-- [ ] Operators can edit bindings/roles and per-measurement policies, including
-      warning/critical/target bands and offline automation enable/disable.
-- [ ] Connectivity, reconciliation state, desired/applied policy versions,
-      autonomous offline events, and history gaps are represented accurately.
-- [ ] A monitoring-only plant has no watering UI, and charts do not interpolate
-      across a reported history gap.
+Charts, installers, additional platforms and rich history/fleet/cloud views remain deferred.
 
 ## Dependencies
 

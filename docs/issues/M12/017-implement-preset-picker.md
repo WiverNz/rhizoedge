@@ -1,5 +1,8 @@
 # Issue M12-017 — Implement the species preset picker and review step
 
+> **Execution scope, 2026-11-22:** **Status: DEFERRED.** Keep the criteria below open for later hardening/expansion; they do not gate the first supervised plant experiment. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-013, M12-014, M12-002
 
 ## Context

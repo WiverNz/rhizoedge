@@ -1,6 +1,17 @@
 # Issue M10-006 — Implement sensor calibration
 
-**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-004, M10-005
+> **SEN0601 implementation:** Configure its documented units/scaling and
+> calibration provenance first, checking repeatability in intended soil. Do not
+> impose an analogue raw-dry/raw-wet procedure on factory-scaled registers or
+> claim laboratory VWC accuracy. Missing calibration/conversion information
+> stays invalid. The analogue two-point and optional compensation work below
+> is deferred, superseded for this slice by PRD 100 prototype scope.
+
+
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-004
 
 ## Context
 
@@ -27,7 +38,6 @@ Map raw readings to physical units, or refuse.
 ## Dependencies
 
 - M10-004
-- M10-005
 
 ## Implementation notes
 
@@ -39,6 +49,10 @@ Clamp-and-flag rather than extrapolate: outside the calibrated range the linear
 model has no support, and extrapolating produces confident nonsense.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] Two-point calibration produces correct VWC for known raw values.
 - [ ] **An uncalibrated sensor publishes `null`.**

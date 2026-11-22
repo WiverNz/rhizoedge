@@ -1,5 +1,8 @@
 # Issue M12-003 — Implement the overview dashboard
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-002
 
 ## Context
@@ -38,6 +41,10 @@ Poll rather than push: telemetry arrives every 300 s and the control loop ticks
 every 30 s, so sub-second latency has nothing to show.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] All plants appear with their state and latest moisture.
 - [ ] **A lockout is the most visually prominent element.**

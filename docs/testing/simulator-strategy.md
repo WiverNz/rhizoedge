@@ -1,5 +1,14 @@
 # Simulator Strategy
 
+> **Scope revised 2026-11-22:** [Testing policy](strategy.md) and
+> [ROADMAP](../../ROADMAP.md) govern execution. This detailed catalogue is a
+> reference for targeted checks and deferred hardening, not a mandatory full
+> campaign before the next feature. Essential electrical/startup/control safety,
+> bounded cup watering and fault/stop checks remain required before plant use.
+> Historical repetition counts and week/month observation periods do not gate
+> the first supervised experiment. Record only the coverage actually observed.
+
+
 > **Battery mode, added by M5-021 on 2026-08-29.** `--power-mode battery` makes
 > the simulator sleep between sampling cycles on the accelerated clock, so a
 > 900-second wake interval is sub-second at `--time-scale 600`. It announces each

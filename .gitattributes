@@ -31,8 +31,9 @@ Dockerfile      text eol=lf
 aclfile         text eol=lf
 passwd          text eol=lf
 
-# Windows-only scripts keep CRLF; some Windows tooling requires it.
-*.ps1       text eol=crlf
+# PowerShell scripts follow the repository LF policy.
+*.ps1       text eol=lf
+# Windows batch scripts retain their existing checkout convention.
 *.bat       text eol=crlf
 *.cmd       text eol=crlf
 

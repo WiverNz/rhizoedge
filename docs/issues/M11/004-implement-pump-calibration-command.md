@@ -1,5 +1,8 @@
 # Issue M11-004 — Implement the pump calibration command
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-001
 
 ## Context
@@ -43,7 +46,7 @@ peristaltic tubing hardens and flow degrades predictably.
 - [ ] Its volume counts toward the device daily cap.
 - [ ] `ml_per_second` and `calibrated_at` are stored.
 - [ ] **A five-run set with σ above 5% of the mean is rejected.**
-- [ ] A 40 ml request then delivers within ±10%.
+- [ ] A small measured cup dose checks the conservative calibration for the prototype; the fixed 40 ml accuracy campaign is deferred.
 
 ## Verification
 

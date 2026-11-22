@@ -1,6 +1,11 @@
 # PRD 140 — Field Readiness Architecture
 
-**Milestone:** M14 · **Status:** PLANNED (architecture only) · **Depends on:** M13
+> **Deferred, 2026-11-22:** This is future scope, not a prerequisite for
+> the real-plant prototype. Revisit based on actual usage; no new hardware or
+> validation work is requested here. See [ROADMAP](../../ROADMAP.md).
+
+
+**Milestone:** M14 · **Status:** DEFERRED (architecture only) · **Depends on:** M13
 
 > **Revised 2026-08-26.** Two planning items were added: **optional Helm
 > packaging** for server-side components (M14-007) and the **future actuator

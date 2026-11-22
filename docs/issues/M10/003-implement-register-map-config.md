@@ -1,5 +1,8 @@
 # Issue M10-003 — Implement register maps as configuration data
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-002
 
 ## Context
@@ -34,6 +37,10 @@ Validate ranges after applying a map and reject a map that produces impossible
 values on a known input.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] A register map is selectable by name from config.
 - [ ] Scale, offset, and signedness are applied correctly.

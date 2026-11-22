@@ -6,9 +6,10 @@ An **offline-first Rust platform for plant monitoring and fail-safe automated
 irrigation**, using MQTT, local edge processing, ESP32 devices, and optional
 cloud synchronisation.
 
-> **Status: M0 through M8 complete. M9 IN PROGRESS, frozen at a development
-> checkpoint with deferred physical/HIL acceptance and remaining runtime gaps.
-> M10 is NOT READY and has not started.**
+> **Status: M0 through M8 complete; M9 IN PROGRESS with preserved gaps.
+> M10 READY to start; M11 and minimal M12 implementation can proceed on existing interfaces.**
+> **Permanent priority (2026-11-22): a working real-plant prototype, essential
+> safety, then deeper validation.** Follow the [short critical path](ROADMAP.md#2-shortest-path-to-the-first-plant-watering).
 > **Unless explicitly marked as implemented, the sections below describe the
 > planned target architecture.**
 >
@@ -56,7 +57,8 @@ cloud synchronisation.
 > safety is not. HIL-1 remains **0/20 resets, 0 watchdog, 0/10 mid-boot power
 > cuts**; it requires suitable transient capture, not a DMM alone. The complete
 > 20-wake campaign and identified runtime integration gaps also remain open.
-> No safety criterion is waived by this checkpoint, and M10 has not started.
+> Those historical counts remain incomplete. They do not block M10 sensor
+> implementation; essential checks on the actual driver still precede pump power.
 > See the [acceptance inventory](docs/reports/M9-acceptance-freeze.md) for every
 > criterion's classification and missing evidence, and the
 > [M9 report](docs/reports/M9.md) for measurements, regressions and deferred work.

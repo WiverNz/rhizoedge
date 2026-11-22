@@ -2,7 +2,7 @@
 //!
 //! Verifies that the planning documentation is internally consistent: required
 //! artefacts exist, identifiers are unique, every cross-reference resolves, the
-//! issue dependency graph is acyclic, and issue numbering is a valid execution
+//! issue dependency graph is acyclic, and dependencies form a valid execution
 //! order.
 //!
 //! Deliberately dependency-free so it runs offline with nothing but rustc.
@@ -783,23 +783,10 @@ fn check_dependency_graph(root: &Path, issues: &BTreeMap<usize, BTreeSet<String>
                             format!("M{m}-{num}: depends on M{ms}-{is}, which does not exist"),
                         );
                         if exists {
-                            // Within a milestone, dependencies must have lower
-                            // numbers, so numeric order is a valid execution order.
-                            if ms == *m {
-                                r.check(
-                                    is.as_str() < num.as_str(),
-                                    format!(
-                                        "M{m}-{num}: depends on M{ms}-{is}, which is not earlier in the same milestone"
-                                    ),
-                                );
-                            } else {
-                                r.check(
-                                    ms < *m,
-                                    format!(
-                                        "M{m}-{num}: depends on M{ms}-{is} from a LATER milestone"
-                                    ),
-                                );
-                            }
+                            // Issue numbers identify work; they do not schedule it.
+                            // Prototype slices may depend on a later-numbered
+                            // milestone (for example the minimal UI). The DAG
+                            // check below rejects actual dependency cycles.
                             list.push((ms, is));
                         }
                     }
@@ -809,8 +796,7 @@ fn check_dependency_graph(root: &Path, issues: &BTreeMap<usize, BTreeSet<String>
         }
     }
 
-    // Acyclicity. The intra-milestone ordering rule above already forbids cycles,
-    // but verify directly so the guarantee does not depend on that reasoning.
+    // Acyclicity is the scheduling constraint, independent of issue numbering.
     let mut state: BTreeMap<(usize, String), u8> = BTreeMap::new();
     let nodes: Vec<_> = deps.keys().cloned().collect();
     for n in nodes {

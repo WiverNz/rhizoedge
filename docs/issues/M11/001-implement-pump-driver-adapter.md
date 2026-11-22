@@ -1,12 +1,15 @@
 # Issue M11-001 — Implement the real pump driver adapter
 
-**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M10-013
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M9-005, M9-011, M9-012
 
 ## Context
 
-PRD 110 F-110-01 through F-110-03. **The hardware pull-down is the requirement
-software cannot compensate for**: the pump must be electrically off when the pin
-is un-driven, covering reset and the bootloader window.
+Use DFR0523's integrated driver. A generic MOSFET gate-low assumption does
+not establish its off-state. Verify waveform, signal compatibility and loss-of-
+control behavior before motor power; see PRD 110 prototype scope.
 
 ## Goal
 
@@ -14,11 +17,10 @@ Drive a real pump safely.
 
 ## Scope
 
-- `RealPump` implementing the **existing** `Pump` trait
-- GPIO driving a MOSFET module with a **gate pull-down**
-- Pump on its own supply, never the ESP32 rail
-- Duration from `effective_ml / ml_per_second`, clamped
-- Actual run duration measured and reported
+- Real adapter behind the existing Pump interface, using verified DFR0523 control timing.
+- Separate verified pump supply and safe power wiring.
+- Duration from conservative calibration, clamped to firmware limits.
+- Actual runtime reported; no raw/bypass actuation path.
 
 ## Non-goals
 
@@ -26,28 +28,24 @@ Drive a real pump safely.
 
 ## Dependencies
 
-- M10-013
+- M9-005
+- M9-011
+- M9-012
 
 ## Implementation notes
 
-MOSFET over relay: no contacts to weld, faster turn-off, and a gate
-pull-down is trivial. A relay is acceptable only if the pump needs AC.
-
-Document the wiring requirement in the board profile alongside the pin
-definition, so
-whoever wires the next board reads it at the right moment.
-
-Measuring actual duration rather than assuming it is what makes overrun
-detectable.
+Inspect the current board profile and actual hardware before selecting pins.
+Verify the real driver's startup/reset and absent-signal behavior with motor
+power disabled. Document the confirmed waveform/off-state; do not invent pulse
+timing from conflicting specifications or add a generic MOSFET by default.
 
 ## Acceptance criteria
 
-- [ ] The pump runs for the computed duration.
-- [ ] Actual duration is measured and reported.
-- [ ] The gate pull-down requirement is documented at the pin definition.
-- [ ] The pump has a separate supply.
-- [ ] Duration is clamped to `FIRMWARE_MAX_RUN_SECONDS`.
-- [ ] Host tests cover the logic with a fake GPIO.
+- [ ] Adapter uses the confirmed DFR0523 control interface and existing shared command gate.
+- [ ] Duration is computed, measured and clamped to firmware maximum.
+- [ ] Confirmed control/off-state and separate supply requirements are documented.
+- [ ] Relevant host tests cover timing/clamping with a fake output.
+- [ ] Motor remains disabled until essential physical safety checks pass.
 
 ## Verification
 

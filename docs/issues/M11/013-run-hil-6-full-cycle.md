@@ -1,65 +1,53 @@
 # Issue M11-013 — Run HIL-6 full dry cycle verification
 
-**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-012
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-012, M10-013
 
 ## Context
 
-The complete automatic cycle against real hardware — first with the outlet in
-a separate measuring cup so control logic is decoupled from where the water
-goes, then into the soil.
+Targeted prototype hardware check under PRD 110 and the testing policy. The full HIL catalogue remains deferred reference, not a mandatory repetition matrix.
 
 ## Goal
 
-Verify the full multi-dose cycle physically.
+Complete a bounded cup cycle, then the first supervised real-plant watering.
 
 ## Scope
 
-- Dry a soil sample below `target_min`
-- Confirm the state sequence matches SCEN-002
-- Verify each dose's volume in the cup against calibration
-- Confirm the absorption wait is honoured in real time
-- Confirm the cycle stops at `max_doses_per_cycle` with `MaxDosesReached`
-- Confirm the rolling daily cap holds across cycles
-- Repeat with the outlet in the soil
+Perform and record the acceptance checks below on the actual setup. Reuse valid previous evidence when wiring and relevant firmware have not changed.
 
 ## Non-goals
 
-- A plant (HIL-7).
+Extended repetition campaigns, exhaustive fault injection and production validation.
 
 ## Dependencies
 
 - M11-012
+- M10-013
 
 ## Implementation notes
 
-The two-phase approach separates two questions that a single test would
-conflate: does the control logic sequence correctly, and does the water actually
-reach the soil and register. Running the first into a cup makes a control bug
-diagnosable without soil physics in the way.
+Keep the pump disabled until essential electrical/control checks pass. Start with a cup and a reachable power disconnect. Record actual observations briefly; no new full campaign report is needed.
 
 ## Acceptance criteria
 
-- [ ] The state sequence matches SCEN-002 exactly.
-- [ ] Each dose's measured volume matches the request within calibration tolerance.
-- [ ] The absorption wait is honoured in real time.
-- [ ] The cycle stops at the dose limit with `MaxDosesReached`.
-- [ ] The rolling daily cap holds across cycles.
-- [ ] With the outlet in soil, moisture rises and the cycle terminates on recovery.
-- [ ] The overshoot-then-settle behaviour resembles the simulator's model.
+- [ ] A threshold decision using real soil data produces one bounded dose into a cup; cooldown and caps remain active.
+- [ ] After the essential cup checks, one supervised real plant receives a small dose through the complete system.
+- [ ] Measurements, decision, command result and faults are observable; manual stop is available.
+- [ ] Observe the soil response without requiring it to match the simulator; record limits and next practical improvement.
 
 ## Verification
 
-```bash
-# manual: HIL-6 checklist, both phases
-```
+Perform the specific physical checks above with human supervision; record actual setup, observations and remaining limits in this issue. Full HIL repetitions are deferred.
 
 ## Tests required
 
-- The HIL-6 checklist.
+The essential prototype checks above only, plus a relevant regression if a defect is fixed.
 
 ## Documentation impact
 
-- hil-runs record; simulator model refined if reality diverges materially.
+Short issue result; retain earlier evidence and do not mark extended HIL passed.
 
 ## Files likely affected
 

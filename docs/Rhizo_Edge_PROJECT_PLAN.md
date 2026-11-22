@@ -1,5 +1,11 @@
 # Rhizo Edge — Project Plan
 
+> **Historical input:** Execution priority and validation gates are superseded
+> by the permanent 2026-11-22 strategy in [ROADMAP](../ROADMAP.md) and
+> [agent instructions](../AGENTS.md). Preserve this document as provenance;
+> do not follow its old sequencing or exhaustive verification mandates.
+
+
 > **Normalisation note.** This is the original product specification and remains
 > the source of product *intent*. Superseded implementation alternatives have
 > been replaced with the decisions actually taken, so the repository does not

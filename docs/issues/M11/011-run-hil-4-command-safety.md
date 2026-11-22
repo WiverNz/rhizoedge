@@ -1,5 +1,8 @@
 # Issue M11-011 — Run HIL-4 command safety verification
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-010
 
 ## Context
@@ -10,17 +13,14 @@ a claim about the simulator.
 
 ## Goal
 
-Verify every command safety rule against real water.
+Demonstrate bounded command execution, communication-loss handling and restart on the real prototype.
 
 ## Scope
 
-- `requested_ml: 10000` -> **measure the cup**, never above the hard limit
-- Expired command -> rejected, pump silent
-- Same `command_id` three times -> one actuation
-- Negative and zero volumes -> rejected
-- Commands past `FIRMWARE_MAX_DAILY_ML` -> rejected
-- Power cycle then repeat a previous `command_id` -> still deduplicated
-- Edge time sync withheld -> `clock_unsynced` refusal
+- Small cup dose through the real command path, with time and estimated volume bounded.
+- Stop and MQTT loss during a dose; local run guard still enforces the limit.
+- Duplicate command/restart does not water twice or replenish budget/cooldown.
+- Relevant existing host tests cover invalid/expired/oversized commands without repeatedly dispensing water.
 
 ## Non-goals
 
@@ -32,37 +32,31 @@ Verify every command safety rule against real water.
 
 ## Implementation notes
 
-Measure the cup for the oversized command. Reading a log that says 'clamped'
-proves the firmware believes it clamped; the cup proves it did.
-
-Any divergence from simulator behaviour invalidates every simulator-based safety
-test until resolved — treat it as a milestone-blocking finding, not a note.
+Reuse demonstrated host command-validation coverage. Check the actual physical
+boundary and local guard now; run an additional fault case only when a concrete
+defect or changed behavior warrants it. Keep cup quantities small and a power
+disconnect reachable. Protocol/simulator differences need investigation without
+retroactively invalidating unrelated historical evidence.
 
 ## Acceptance criteria
 
-- [ ] `requested_ml: 10000` delivers no more than `FIRMWARE_MAX_ML_PER_RUN`, **measured**.
-- [ ] An expired command is rejected with the pump silent.
-- [ ] Three identical `command_id`s cause one actuation and three results.
-- [ ] Negative and zero volumes are rejected.
-- [ ] The device daily cap is enforced.
-- [ ] Dedup survives a power cycle.
-- [ ] Withholding `edge.time` refuses every command.
-- [ ] **Every behaviour matches the simulator exactly.**
+- [ ] Small real dose is bounded by configured duration and conservative volume.
+- [ ] Manual stop works; communication loss cannot defeat the local guard or start new doses.
+- [ ] Duplicate delivery and ordinary restart cause no second dose; interrupted volume is conservatively accounted.
+- [ ] Cumulative cap and frequency/cooldown remain effective across restart.
+- [ ] Relevant command-validation host tests pass; exact physical observations are recorded briefly.
 
 ## Verification
 
-```bash
-mosquitto_pub -t 'rhizo/v1/devices/plant-node-01/commands/water' -q 1 -m '{...requested_ml:10000...}'
-# then measure the cup
-```
+Use the existing command/API path with a cup and small limits. Perform the stated stop/loss/restart checks; run only the relevant host validation tests. Record actual commands and results.
 
 ## Tests required
 
-- The HIL-4 checklist.
+Targeted command/guard tests and the bounded physical smoke above.
 
 ## Documentation impact
 
-- hil-runs record.
+Short issue result and limitations; extended HIL remains deferred.
 
 ## Files likely affected
 

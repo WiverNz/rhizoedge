@@ -1,13 +1,34 @@
 # PRD 100 — Real Soil Sensor Integration
 
-**Milestone:** M10 · **Status:** PLANNED · **Depends on:** M9
+## Prototype scope — supersession, 2026-11-22
+
+M10 is **READY** for SEN0601 via ESP32-C3/RS485. Entry uses the demonstrated
+M9 traits/config/telemetry, not full M9 acceptance. Implement the minimum Modbus
+read client and SEN0601 register map first, reusing existing Edge storage and API.
+One real sensor and one plant suffice; no analogue adapter or new purchase is
+required. Basic units/scaling and calibration provenance, startup settling in the
+intended soil, plausible repeatable readings and fail-closed read errors are
+required. Manufacturer-scaled moisture must be labelled by its actual calibration
+basis, not claimed as laboratory-validated VWC. Missing conversion/calibration
+information remains invalid; never pass raw counts as physical units.
+
+For this prototype, F-100-05, generic model expansion, optional compensation,
+F-100-30…32 and the full F-100-40…49 campaigns are deferred. Basic settling still
+must be observed before using a reading; use always-on power initially. M10-005
+and M10-010…012 stay open in the hardening backlog. No cloud delivery, four-week
+wait or zero-Edge-diff rule gates completion. The original detailed design below
+is retained for later scope; this section and current acceptance take precedence.
+
+See [ROADMAP](../../ROADMAP.md) and [testing policy](../testing/strategy.md).
+
+
+**Milestone:** M10 · **Status:** READY · **Depends on:** Existing M9 sensor/config/telemetry interfaces; not full M9 closure
 
 ## Summary
 
 Replace the fake soil sensor with real hardware behind the existing
-`SoilSensor` trait — an RS485/Modbus RTU probe as the strategic path, with a
-capacitive analogue sensor as the pragmatic first step — including calibration,
-error handling, and validation against reality.
+`SoilSensor` trait — SEN0601 over RS485/Modbus RTU first — with configured scaling,
+calibration provenance and fail-closed errors. Analogue support is deferred.
 
 ## Problem
 
@@ -217,8 +238,8 @@ Requirements carrying safety weight:
 - **F-100-12** — out-of-calibration-range readings are flagged rather than
   extrapolated.
 
-Nothing about the edge changes. The same lockouts, the same gate, the same
-tests — which is the payoff of the trait boundary established in M9.
+Reuse the same Edge lockouts, gate and storage. Small integration fixes are
+allowed when an actual defect is found; avoid architectural redesign.
 
 ## Observability
 
@@ -251,62 +272,28 @@ Device events: `sensor_invalid`, `sensor_stuck`, `sensor_unhealthy`,
 
 ## Acceptance criteria
 
-- [ ] Real readings flow: sensor → ESP32 → MQTT → edge → SQLite → cloud.
-- [ ] Switching between analogue and Modbus is a **configuration** change, not a
-      rebuild.
-- [ ] Adding a new probe model is a register-map entry, not code.
-- [ ] Unplugging the probe produces `null`, an unhealthy sensor, and a
-      `SensorFault` lockout within one staleness window.
-- [ ] An uncalibrated sensor publishes `null` rather than a raw value.
-- [ ] Readings match a gravimetric reference within documented bounds at three
-      levels.
-- [ ] Four weeks of drift observation are recorded in `docs/testing/hil-runs/`.
-- [ ] **Sensor power-on → time until stable usable reading** is measured per
-      sensor over ≥ 20 cycles and reported as a distribution, with the stability
-      definition written down beforehand.
-- [ ] A recommended `sensor_warmup_ms` with a stated margin exists, and no
-      stabilisation constant for any specific part appears in the firmware.
-- [ ] **Complete-system sleep current** is measured on the assembled device, and
-      the chip deep-sleep figure is reported separately and labelled as such.
-- [ ] The energy budget is recorded with every input labelled measured or
-      assumed, and the dominant term identified.
-- [ ] An explicit verdict on ≥ 6 months at a 15-minute interval is recorded, with
-      numbers — or the target remains labelled unverified.
-- [ ] **No edge-side code changed** to accommodate real sensors.
+- [ ] One real SEN0601 reports useful moisture/temperature/EC through ESP32-C3, MQTT, Edge, SQLite and REST.
+- [ ] Sensor selection, address, scaling and calibration provenance are configured; fakes remain for host tests.
+- [ ] Readings are plausible and repeatable in the intended soil after basic startup settling; limitations are recorded briefly.
+- [ ] Missing, invalid and stale soil readings are visible and block automatic watering, without repeating old data as fresh.
+- [ ] A relevant host test and one local end-to-end smoke demonstrate the slice.
 
-That last criterion is the real test of M9's abstraction.
+The analogue adapter, gravimetric campaign, four-week drift, full stabilization
+matrix and energy budget remain deferred in M10-005 and M10-010…012. No claim
+of measured accuracy or battery lifetime is made.
 
 ## Dependencies
 
-- M9 (firmware foundation, trait boundaries).
-- Hardware: an RS485 soil probe **or** a capacitive sensor, the **DFRobot
-  DFR0845** active isolated RS485-to-UART module for the RS485 path (MCU side:
-  TX, RX, GND, VCC). Its MCU side is powered from **3.3 V**, which is the
-  condition under which its TX/RX connect directly to the ESP32-C3. Never power
-  it from 5 V into ESP32 GPIOs, because its output-high follows the logic-side
-  supply. Also needed: a means of gravimetric reference (a kitchen scale and
-  an oven). **The DFR0845 is not hot-pluggable: do not connect, disconnect, or
-  reconnect it while powered.** The "probe unplugged" acceptance check
-  therefore removes the *probe's own* 12 V supply while the node runs, which
-  makes the probe silent exactly as a lost probe would; alternatively, rewire
-  with all power off and boot with the probe absent.
-- Hardware for M10-012: a current-measurement instrument with a **wide dynamic
-  range** — sleep current is microamps and wake current is hundreds of
-  milliamps within the same second, and a handheld multimeter either burdens the
-  supply at the low end or averages the peaks away at the high end. It cannot do
-  this measurement.
+- Existing M9 sensor/config/telemetry interfaces and the already implemented local Edge path.
+- The requested SEN0601 and an RS485 interface compatible with ESP32-C3 logic.
+- Before power: verify the actual supply, connectors, wiring and isolation from the local inventory. Do not hot-plug the DFR0845; test sensor loss by safe removal of probe power or power-off rewiring.
+- No analogue sensor, reference oven, power profiler or cloud service is required for this prototype.
 
 ## Open questions
 
-1. **Which probe model to buy first.** Deferred to purchase time; the register
-   map is data, so the choice is not architecturally binding. A generic "3-in-1"
-   RS485 probe is the assumed starting point.
-2. **Whether the analogue path is worth implementing at all**, given RS485 is the
-   strategic target. Yes — it de-risks M10 by separating "sensor wiring" from
-   "Modbus wiring", and it is roughly 100 lines.
-3. **Temperature compensation coefficients** are probe-specific and often
-   undocumented. Implemented as an optional linear coefficient; left at zero
-   unless measurement justifies otherwise.
+The first model is SEN0601. Verify its actual revision/register specification
+when implementing the driver. Analogue support and temperature compensation
+remain deferred unless usage establishes a need.
 
 ## Future work
 

@@ -1,5 +1,11 @@
 # Issue M12-006 — Implement watering actions and refusal handling
 
+> **Prototype action requirement:** Include a visible stop action through the existing Edge REST API, with clear acknowledgement/failure display. Keep a physical pump-power disconnect available during experiments.
+
+
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-004
 
 ## Context

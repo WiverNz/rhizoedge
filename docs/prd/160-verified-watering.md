@@ -1,6 +1,11 @@
 # PRD 160 — Verified Watering
 
-**Milestone:** M16 · **Status:** PLANNED · **Depends on:** M11
+> **Deferred, 2026-11-22:** This is future scope, not a prerequisite for
+> the real-plant prototype. Revisit based on actual usage; no new hardware or
+> validation work is requested here. See [ROADMAP](../../ROADMAP.md).
+
+
+**Milestone:** M16 · **Status:** DEFERRED · **Depends on:** M11
 
 > **Added 2026-09-01.** Governed by
 > [ADR-020](../adr/020-verified-watering-and-delivery-evidence.md) and bounded by

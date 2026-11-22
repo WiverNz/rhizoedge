@@ -1,5 +1,8 @@
 # Issue M12-015 — Implement connectivity and offline autonomy views
 
+> **Execution scope, 2026-11-22:** **Status: DEFERRED.** Keep the criteria below open for later hardening/expansion; they do not gate the first supervised plant experiment. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-005, M12-004
 
 ## Context

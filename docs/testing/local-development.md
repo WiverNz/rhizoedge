@@ -1,5 +1,8 @@
 # Local Development
 
+> **Prototype priority (2026-11-22):** [ROADMAP](../../ROADMAP.md) defines current scope. Reuse existing functionality; M10 starts without full M9 closure. Run focused tests and one relevant smoke, not every command in this reference. Preserve essential pre-power and watering safety.
+
+
 How to run, test, and debug Rhizo Edge on a developer machine. No hardware
 required for anything in this document.
 

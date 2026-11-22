@@ -1,25 +1,25 @@
 # Issue M10-013 — M10 verification and exit criteria
 
-**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-001, M10-002, M10-003, M10-004, M10-005, M10-006, M10-007, M10-008, M10-009, M10-010, M10-011, M10-012
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M10-001, M10-002, M10-003, M10-004, M10-006, M10-007, M10-008, M10-009
 
 ## Context
 
-Final gate for M10. The decisive criterion is that **no edge-side code
-changed** to accommodate real sensors — that is the test of M9's abstraction.
+Prototype exit for M10, governed by the current PRD scope and ROADMAP. Deferred hardening is not a passing result or an entry gate for other features.
 
 ## Goal
 
-Verify every PRD 100 acceptance criterion.
+Demonstrate the M10 prototype slice.
 
 ## Scope
 
-- Host tests, hardware readings, and the validation record
-- Confirm zero edge-side changes
-- Update ROADMAP.md; record the report
+Relevant tests, a local functional smoke, a short result in this issue and accurate roadmap status. Reuse prior evidence; no full campaign report required.
 
 ## Non-goals
 
-- The pump (M11).
+Deferred production hardening and full historical verification campaigns.
 
 ## Dependencies
 
@@ -27,52 +27,34 @@ Verify every PRD 100 acceptance criterion.
 - M10-002
 - M10-003
 - M10-004
-- M10-005
 - M10-006
 - M10-007
 - M10-008
 - M10-009
-- M10-010
-- M10-011
-- M10-012
 
 ## Implementation notes
 
-Run `git diff` across `crates/` for the whole milestone. If the edge changed
-to accommodate a sensor, the trait boundary leaked and it is worth understanding
-why before M11 adds actuators behind the same pattern.
+Use actual observed behavior and report limitations. The first plant experiment is supervised with small quantities; it does not require a month-long campaign.
 
 ## Acceptance criteria
 
-- [ ] Real readings flow end to end: sensor to ESP32 to MQTT to edge to SQLite to cloud.
-- [ ] Switching analogue to Modbus is a configuration change.
-- [ ] Adding a probe model is a register-map entry.
-- [ ] Unplugging the probe produces `null`, unhealthy, and a `SensorFault` lockout.
-      Emulate the loss by removing the probe's own 12 V supply, or rewire with all
-      power off: the DFR0845 is not hot-pluggable and is never disconnected or
-      reconnected while powered.
-- [ ] An uncalibrated sensor publishes `null`.
-- [ ] Readings match the gravimetric reference within documented bounds.
-- [ ] Four weeks of drift are recorded.
-- [ ] **`git diff` shows no edge-side change for sensor support.**
-- [ ] ROADMAP.md updated; report recorded.
+- [ ] SEN0601 → ESP32-C3 → MQTT → Edge → SQLite/API works with real readings.
+- [ ] Configured units/scaling/calibration provenance and basic settling are documented.
+- [ ] Readings are plausible/repeatable in intended soil; missing/invalid/stale soil values block automatic watering.
+- [ ] Relevant host tests and one local sensor smoke pass.
+- [ ] Short outcome recorded; roadmap updated only to demonstrated status; deferred work remains open.
 
 ## Verification
 
-```bash
-cd firmware/esp32-node && cargo test
-git diff --stat <m10-start>..HEAD -- crates/   # expect no sensor-driven changes
-```
+Run the relevant tests for changed behavior and the prototype smoke described above using the current firmware/local development commands. Record actual commands and results; do not run an unrelated full suite.
 
 ## Tests required
 
-- Host suite plus the hardware checklist.
+Relevant unit/regression tests and the local prototype smoke; essential hardware checks where actuation is involved.
 
 ## Documentation impact
 
-- ROADMAP.md.
-- Validation record.
-- Milestone report.
+Current issue result and ROADMAP status only; retain historical reports and deferred criteria.
 
 ## Files likely affected
 

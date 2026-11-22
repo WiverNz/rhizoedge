@@ -1,36 +1,35 @@
-# Rhizo Edge — Codex Instructions
+# Rhizo Edge — Development instructions
 
-Rhizo Edge is an offline-first Rust platform for plant monitoring and fail-safe irrigation: devices communicate over MQTT with an edge controller backed by SQLite; cloud synchronization is optional and outside the local control path.
+Build a usable real-plant prototype first. This permanent strategy, adopted
+2026-11-22, supersedes older all-criteria milestone gates and M9-only session
+restrictions. [ROADMAP.md](ROADMAP.md) owns priority and scoped acceptance.
+M0–M8 are delivered, M9 remains incomplete, and M10-001 is the next coding task.
+M10/M11/M12 may proceed on available interfaces without full historical M9 closure.
 
-## Current project state
+## Focus and autonomy
 
-Planning and M0–M7 are complete. M8 is READY; the next executable issue is **M8-001 — Add production Dockerfiles**. M15 and M16 exist as planning artefacts only — an ADR, a PRD, and issue files each — and no runtime code for either is expected before M13 and M11 respectively complete. Verify all of this from `ROADMAP.md`, the dependency graph, Git history, and the working tree at the start of every implementation session. Status summaries in navigation or agent files can become stale.
+- Implement first; investigate only what the current feature needs. Prefer
+  small focused changes and the simplest working solution.
+- Read ROADMAP's current path, the current issue and relevant code. Consult
+  PRDs, ADRs and protocol sections when their behavior is touched. Do not repeat
+  repository-wide audits, history reviews or full builds at session start.
+- Reuse existing decisions, infrastructure, implementations and evidence.
+  Avoid unnecessary web research, speculative failure scenarios, new milestones,
+  new validation issues and expansive reports.
+- Resolve routine engineering choices autonomously within the requested scope.
+  Ask only for information or authority genuinely needed. Finish the requested
+  feature; do not expand scope or start unrelated milestones.
+- Summarize briefly: what changed, what was tested, what remains. Never claim a
+  test or physical observation that did not happen.
 
-Do not begin a milestone merely because its predecessor is complete. Implement only the milestone and issues the user requested, then stop after reporting completion.
+## Source of truth
 
-## Source-of-truth precedence
-
-Use each source for its intended question:
-
-1. The current issue defines implementation scope, dependencies, acceptance criteria, and literal verification commands.
-2. Normative protocol documents, especially `docs/protocol/mqtt-v1.md` and the versioning policy, define wire behavior.
-3. The milestone PRD defines required product behavior.
-4. Accepted ADRs define architectural decisions and rationale.
-5. `docs/architecture/safety-invariants.md` defines non-negotiable safety properties and their evidence.
-6. Other architecture and testing documents define component boundaries and validation strategy.
-7. `ROADMAP.md` defines milestone state, exit criteria, and the current starting point; the dependency graph defines executable order.
-
-`docs/hardware/home-node-hardware-guide.md` is practical procurement and assembly guidance for building a physical node from M9 onward, and is not normative. Do not derive constants, thresholds, limits, or firmware defaults from its parts, prices, or ratings; its own "decisions still requiring measurement" section lists what must be measured rather than copied. Board naming there is governed by `docs/adr/007-esp32-rust-framework-and-toolchain.md`.
-
-Historical prompt and project-plan documents are provenance, not current specifications. If issue prose conflicts with a later accepted ADR or normative protocol, verify the contradiction, update the stale planning text, and implement one consistent current design. Never implement both versions.
-
-## Required reading before implementation
-
-Before coding, read `ROADMAP.md`, `docs/architecture/dependency-graph.md`, the complete current issue and its dependencies, and the milestone PRD. Read the relevant crate boundary in `docs/architecture/component-model.md`.
-
-For M9-M11 and M16 hardware work, also read `docs/testing/hardware-in-the-loop.md` and, for what is physically being built and wired, `docs/hardware/home-node-hardware-guide.md`.
-
-Before changing protocol, safety, actuation, persistence semantics, clocks, or offline behavior, also read the relevant protocol specification, ADRs, safety invariants, failure/time/connectivity model, and existing tests. Use actual shared contract APIs and fixtures; do not reconstruct wire formats from memory.
+ROADMAP and the current PRD/issue prototype scope supersede old sequencing and
+validation requirements. Normative protocol, implemented safety behavior and
+accepted architecture decisions still govern implementation. Historical reports,
+freeze inventories and prompts are evidence/provenance, not current entry gates.
+Keep ADRs and reports intact; document supersession in current planning text.
+Read only the component and failure/time/offline contracts relevant to the change.
 
 ## Architecture constraints
 
@@ -44,63 +43,40 @@ Before changing protocol, safety, actuation, persistence semantics, clocks, or o
 - Cloud is an optional append-only history sink and must never enter the local control path or originate commands.
 - Persist-before-publish and documented transactional deduplication boundaries are safety properties, not implementation details.
 
-## Safety rules
+## Essential safety and hardware
 
-- Uncertainty fails closed. Missing, stale, invalid, unknown, or contradictory safety input never becomes permission to actuate.
-- Never weaken safety behavior to make a test pass. Investigate disagreements between tests, implementation, and normative documentation; fail-closed behavior is not permission to silently diverge from the specification.
-- Do not add force, debug, override, raw-pump, or bypass actuation paths.
-- Firmware hard limits cannot be raised through API, configuration, MQTT, UI, or cloud input.
-- Keep the single shared command validator and single shared offline evaluator; consumers have exactly the documented call path.
-- Edge safety freshness uses Edge `received_at`, never advisory device timestamps.
-- Preserve negative-control and mutation-testing discipline for safety-critical boundaries. Run applicable temporary mutations, prove the intended tests fail, and fully revert them.
+- Missing, stale, invalid or contradictory required inputs fail closed. Never
+  add bypass, raw-pump, force or debug paths around the shared validator.
+- Retain device hard limits, duration guard independent of MQTT, frequency and
+  cumulative volume accounting, cooldown, deduplication and conservative restart.
+- Before hardware work read the local inventory in full and follow local status
+  checks. Verify physical wiring, polarity, supply voltages, logic levels and
+  isolation before power. Inventory is not proof of actual connections.
+- Keep pump power disabled until startup/reset/watchdog and control-signal safety
+  have been checked on the actual driver. Establish reliable stop/power disconnect.
+- Calibrate small doses into a cup before supervised plant watering. Missing
+  sensor or communication cannot permit uncontrolled watering. Do not fake
+  required tank/leak health. No unattended watering until essential fail-safes
+  have been demonstrated. Scope claims as prototype tested, not production validated.
 
-## Issue workflow
+## Proportional testing
 
-Work one issue at a time unless the user explicitly requests a larger issue set:
+Follow [testing policy](docs/testing/strategy.md). Run relevant unit tests and a
+basic integration smoke; add tests for important behavior, regressions and
+realistic failures. Use real Mosquitto/SQLite for integration claims; enable
+`RHIZO_REQUIRE_BROKER=1` for selected broker tests so absence is not a pass.
+Use the separate `firmware/node-app` host suite for firmware application logic.
 
-1. Read the whole issue and its dependencies.
-2. Confirm dependencies are complete in the repository.
-3. Implement only the issue scope; do not leak later milestone behavior.
-4. Add the required unit, integration, property, or real-broker tests.
-5. Run the issue's literal `Verification` commands.
-6. Fix failures before continuing.
-7. Tick only acceptance criteria actually demonstrated.
-8. Keep factual documentation synchronized with behavior.
+Do not routinely rerun full suites, mutation campaigns, endurance/HIL matrices
+or power profiling. Broaden only for a relevant change, failure or concrete
+risk. Preserve existing CI and lint constraints; CI coverage is not a command
+to repeat every job locally. SQLx changes use the documented prepare/check flow.
+Documentation-only changes need `cargo run -p rhizo-docscheck` and a diff review.
 
-Compilation alone never completes an issue or milestone. A milestone becomes DONE only after all current issues and ROADMAP exit criteria are demonstrably green, its report is recorded, and milestone/status pointers are synchronized.
-
-## Rust and toolchain policy
-
-Use workspace dependencies and lints. Preserve explicit error classification, `-D warnings`, the clock restrictions in `clippy.toml`, and `no_std` compatibility. Do not introduce an ORM over SQLx or weaken lint/test configuration to obtain green output. Keep files LF and do not bulk-regenerate issue files.
-
-## Testing and verification
-
-Run each issue's commands plus the current project gate before milestone completion:
-
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build -p rhizo-mqtt-contract --no-default-features --target thumbv7em-none-eabi
-cargo build -p rhizo-policy --no-default-features --target thumbv7em-none-eabi
-docker compose -f deploy/docker-compose.yml config
-cargo run -p rhizo-docscheck
-```
-
-When SQLx query macros or migrations change, run the repository's documented `cargo sqlx prepare --workspace --check` flow; never hand-edit `.sqlx` metadata.
-
-Broker-dependent verification must use real Mosquitto. For required integration/milestone verification, set `RHIZO_REQUIRE_BROKER=1` and run the applicable broker suites so missing infrastructure fails rather than silently skips. Do not replace broker/SQLite integration tests with mocks or weaken/ignore tests merely to make a milestone green. After safety-domain changes, run `cargo test safety_` and any named invariant tests.
-
-## Documentation discipline
-
-Reference architecture, ADRs, PRDs, protocols, issues, and tests rather than duplicating them here. Update factual docs in the same change as behavior. Do not rewrite accepted ADRs for implementation detail unless a real contradiction or open decision is resolved. Run docscheck after changing identifiers, links, issue state, or milestone state. Never claim a command ran when it did not.
+Mark only demonstrated acceptance criteria complete. Deferred scope stays open
+and linked from the roadmap. Keep documentation concise, files LF, toolchains
+pinned and local inventory/instructions untracked. Do not bulk regenerate issues.
 
 ## Git rules
 
 Read-only Git inspection and requested working-tree edits are allowed. Preserve unrelated user changes. Unless the user explicitly requests it, do not run `git commit`, `git push`, `git tag`, `git rebase`, `git reset --hard`, `git cherry-pick`, force-push, create a PR/release, or rewrite history.
-
-At the end of substantial work, report Git status, files changed, actual tests/commands run, deviations, and a suggested commit message when useful. Do not execute the commit.
-
-## Milestone boundaries
-
-Use `ROADMAP.md` and dependency declarations rather than numeric intuition to choose executable work. Keep READY/PLANNED milestones free of production implementation until explicitly requested. After completing the requested issue or milestone, report the exact next executable issue from the dependency graph and **STOP**; do not automatically begin it.

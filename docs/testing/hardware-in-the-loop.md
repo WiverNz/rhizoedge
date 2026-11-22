@@ -1,7 +1,18 @@
 # Hardware-in-the-Loop Testing
 
+> **Scope revised 2026-11-22:** [Testing policy](strategy.md) and
+> [ROADMAP](../../ROADMAP.md) govern execution. This detailed catalogue is a
+> reference for targeted checks and deferred hardening, not a mandatory full
+> campaign before the next feature. Essential electrical/startup/control safety,
+> bounded cup watering and fault/stop checks remain required before plant use.
+> Historical repetition counts and week/month observation periods do not gate
+> the first supervised experiment. Record only the coverage actually observed.
+
+
 Applies from M9 onward. These tests are manual, checklist-driven, and performed
-in a fixed order. Each stage gates the next.
+in the order needed for the current operation. Sensor telemetry can precede
+pump checks while pump power is disconnected; essential pump checks precede
+cup watering, which precedes plant watering. The full campaign below is deferred.
 
 For reproducible scope setup and capture tooling, use the
 [PicoScope 2205A runbook](../hardware/picoscope-2205a.md). Instrument validation

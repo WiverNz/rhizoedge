@@ -1,6 +1,9 @@
 # Issue M11-005 — Implement the tank level sensor adapter
 
-**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M10-013
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M9-005, M9-012
 
 ## Context
 
@@ -25,7 +28,8 @@ Read a real reservoir level sensor.
 
 ## Dependencies
 
-- M10-013
+- M9-005
+- M9-012
 
 ## Implementation notes
 

@@ -1,5 +1,12 @@
 # Issue M9-022 — M9 verification and exit criteria
 
+> **Disposition, 2026-11-22:** Still incomplete; preserve every existing
+> checkbox and the frozen evidence. This is broader M9 closure, no longer an
+> entry gate for M10. Relevant sensing/actuation safety defects must be resolved
+> before use; remaining conformance, battery/endurance and audit/CI coverage is
+> deferred under [ROADMAP](../../../ROADMAP.md). No result was changed to passed.
+
+
 **Milestone:** M9 · **PRD:** [PRD 090](../../prd/090-esp32-rust-firmware.md) · **Depends on:** M9-001, M9-002, M9-003, M9-004, M9-005, M9-006, M9-007, M9-008, M9-009, M9-010, M9-011, M9-012, M9-013, M9-014, M9-015, M9-016, M9-017, M9-018, M9-019, M9-020, M9-021
 
 ## Context

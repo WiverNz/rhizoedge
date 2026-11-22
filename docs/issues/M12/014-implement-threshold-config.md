@@ -1,5 +1,8 @@
 # Issue M12-014 — Implement threshold and alert configuration
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-013
 
 ## Context
@@ -38,6 +41,10 @@ cause watering. An operator who assumes the system will "do something" about a
 cold room is an operator who will not act themselves.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] Bands are editable and rendered as a visual preview.
 - [ ] The current value is shown against its bands.

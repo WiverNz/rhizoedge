@@ -1,5 +1,8 @@
 # System Overview
 
+> **Prototype priority (2026-11-22):** [ROADMAP](../../ROADMAP.md) defines current scope. Reuse existing functionality; M10 starts without full M9 closure. Run focused tests and one relevant smoke, not every command in this reference. Preserve essential pre-power and watering safety.
+
+
 ## 1. What Rhizo Edge is
 
 Rhizo Edge is an **offline-first soil monitoring and fail-safe irrigation platform**.

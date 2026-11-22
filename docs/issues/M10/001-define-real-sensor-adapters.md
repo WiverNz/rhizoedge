@@ -1,6 +1,9 @@
 # Issue M10-001 — Define the real sensor adapter structure
 
-**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M9-022
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
+**Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M9-005, M9-010, M9-012
 
 ## Context
 
@@ -24,13 +27,15 @@ Establish the adapter selection mechanism.
 
 ## Dependencies
 
-- M9-022
+- M9-005
+- M9-010
+- M9-012
 
 ## Implementation notes
 
-If the trait needs changing here, that is a signal M9's abstraction was
-wrong — investigate rather than widening it. The measure of M9's success is that
-M10 changes no edge code and no trait.
+Reuse the existing trait and Edge path. Inspect only the relevant adapter and
+configuration code; fix concrete integration defects without redesigning the
+architecture or treating zero Edge changes as an acceptance gate.
 
 ## Acceptance criteria
 

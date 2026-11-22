@@ -1,5 +1,11 @@
 # Claude Code Planning Prompt — Rhizo Edge
 
+> **Historical input:** Execution priority and validation gates are superseded
+> by the permanent 2026-11-22 strategy in [ROADMAP](../ROADMAP.md) and
+> [agent instructions](../AGENTS.md). Preserve this document as provenance;
+> do not follow its old sequencing or exhaustive verification mandates.
+
+
 You are working on a new project called **Rhizo Edge**.
 
 This is **PLANNING PHASE ONLY**.

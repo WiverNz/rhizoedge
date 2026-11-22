@@ -1,5 +1,14 @@
 # Mutation verification of the safety suite (M8-013, M8-017)
 
+> **Scope revised 2026-11-22:** [Testing policy](strategy.md) and
+> [ROADMAP](../../ROADMAP.md) govern execution. This detailed catalogue is a
+> reference for targeted checks and deferred hardening, not a mandatory full
+> campaign before the next feature. Essential electrical/startup/control safety,
+> bounded cup watering and fault/stop checks remain required before plant use.
+> Historical repetition counts and week/month observation periods do not gate
+> the first supervised experiment. Record only the coverage actually observed.
+
+
 **Milestone:** M8 · **PRD:** [PRD 080](../prd/080-end-to-end-test-environment.md)
 §Testing strategy · **Issues:** [M8-013](../issues/M8/013-add-mutation-verification.md),
 [M8-017](../issues/M8/017-implement-battery-and-sleep-scenarios.md)

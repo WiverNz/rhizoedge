@@ -1,28 +1,25 @@
 # Issue M11-010 — Run HIL-3 pump calibration
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M11 · **PRD:** [PRD 110](../../prd/110-real-pump-and-safety-hardware.md) · **Depends on:** M11-009, M11-004
 
 ## Context
 
-First water in the system, into a measuring cup. Establishes the
-`ml_per_second` everything downstream depends on.
+Targeted prototype hardware check under PRD 110 and the testing policy. The full HIL catalogue remains deferred reference, not a mandatory repetition matrix.
 
 ## Goal
 
-Calibrate delivery and verify accuracy.
+Establish a conservative small-dose calibration.
 
 ## Scope
 
-- Prime the line; confirm no leaks at any joint
-- Five 10-second runs with measured volumes
-- Mean and standard deviation computed
-- `ml_per_second` stored
-- A 40 ml request verified by measurement
-- All raw measurements recorded
+Perform and record the acceptance checks below on the actual setup. Reuse valid previous evidence when wiring and relevant firmware have not changed.
 
 ## Non-goals
 
-- Any plant.
+Extended repetition campaigns, exhaustive fault injection and production validation.
 
 ## Dependencies
 
@@ -31,34 +28,26 @@ Calibrate delivery and verify accuracy.
 
 ## Implementation notes
 
-Recording all five raw measurements, not just the mean, is what makes drift
-detectable in a year's time. The historical record is the artefact.
-
-σ above 5% of the mean means investigate rather than average: air lock,
-occlusion, or a failing pump head.
+Keep the pump disabled until essential electrical/control checks pass. Start with a cup and a reachable power disconnect. Record actual observations briefly; no new full campaign report is needed.
 
 ## Acceptance criteria
 
-- [ ] Five runs recorded with raw volumes.
-- [ ] σ is below 5% of the mean.
-- [ ] `ml_per_second` is stored in device config.
-- [ ] A 40 ml request delivers within ±10%, measured.
-- [ ] No leaks at any joint.
-- [ ] The calibration date is recorded.
+- [ ] Small measured cup doses establish a conservative ml_per_second for the intended setup.
+- [ ] A subsequent bounded dose agrees with the chosen conservative estimate; inconsistent delivery is investigated.
+- [ ] Calibration and date are stored; no leaks or unintended siphoning are observed.
+- [ ] Duration/volume settings remain small for the first plant experiment.
 
 ## Verification
 
-```bash
-# manual: HIL-3 checklist with a measuring cup
-```
+Perform the specific physical checks above with human supervision; record actual setup, observations and remaining limits in this issue. Full HIL repetitions are deferred.
 
 ## Tests required
 
-- The HIL-3 checklist.
+The essential prototype checks above only, plus a relevant regression if a defect is fixed.
 
 ## Documentation impact
 
-- hil-runs record with all raw measurements.
+Short issue result; retain earlier evidence and do not mark extended HIL passed.
 
 ## Files likely affected
 

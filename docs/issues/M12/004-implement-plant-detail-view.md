@@ -1,5 +1,8 @@
 # Issue M12-004 — Implement the plant detail view
 
+> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+
+
 **Milestone:** M12 · **PRD:** [PRD 120](../../prd/120-rust-ui.md) · **Depends on:** M12-002
 
 ## Context
@@ -40,6 +43,10 @@ Reasons are rendered from the API's structured values — the UI does not
 recompute them.
 
 ## Acceptance criteria
+
+Apply the prototype subset specified in the milestone PRD. Leave any broader
+criterion unchecked and explicitly deferred; completion of this slice does not
+claim the deferred full scope passed.
 
 - [ ] All current values render with their age.
 - [ ] **Stale values are visibly greyed with the age shown.**
