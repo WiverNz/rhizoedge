@@ -73,3 +73,6 @@ AGENTS.override.md
 
 # Local waveform data, driver diagnostics and capture metadata
 /local/evidence/
+
+# Private hardware inventory and internal reference documents
+/docs/internal/
