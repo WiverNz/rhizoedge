@@ -51,6 +51,8 @@ const TICK_MS: u32 = 250;
 
 /// Everything the loop needs that is not a peripheral.
 pub struct Context<'a, N: NvsStore, P: Pump> {
+    /// Boot-selected soil adapters, shared by connected and isolated sampling.
+    pub soil: &'a mut rhizo_node_app::sensors::SoilAdapters,
     /// Persisted state.
     pub state: &'a mut PersistedState,
     /// Durable storage.
@@ -556,7 +558,10 @@ fn status_for<N: NvsStore, P: Pump>(
             battery_mv: None,
             awake_ms: Some(cycle.awake_ms(now_mono)),
         })),
-        capabilities: rhizo_mqtt_contract::payload::DeviceCapabilities::default(),
+        capabilities: rhizo_mqtt_contract::payload::DeviceCapabilities {
+            sensors: context.soil.capabilities(),
+            actuators: Vec::new(),
+        },
         limits: Some(rhizo_node_app::reported_limits()),
     }
 }
@@ -583,7 +588,7 @@ fn publish_online_status<N: NvsStore, P: Pump>(
 /// The explicit bench-sensors build feeds advisory fake samples through this
 /// same path. The default build reports no sensors until physical ones exist.
 fn read_batch<N: NvsStore, P: Pump>(
-    context: &Context<'_, N, P>,
+    context: &mut Context<'_, N, P>,
     now_mono: u64,
 ) -> Option<TelemetryBatch> {
     #[cfg(not(feature = "bench-sensors"))]
@@ -602,6 +607,22 @@ fn read_batch<N: NvsStore, P: Pump>(
     #[cfg(feature = "bench-sensors")]
     let (batch, errors) =
         telemetry::bench_sample(batch_id, context.state.config.map_or_default(|c| c.sensors));
+    let mut batch = batch;
+    // Explicit provisioning takes precedence over the legacy bench feature.
+    if context.state.provisioning.soil.kind != "none" {
+        batch.samples.retain(|sample| {
+            !matches!(
+                sample.kind,
+                rhizo_mqtt_contract::payload::MeasurementKind::SoilMoisture
+                    | rhizo_mqtt_contract::payload::MeasurementKind::SoilTemperature
+                    | rhizo_mqtt_contract::payload::MeasurementKind::SoilEc
+            )
+        });
+    }
+    let soil_errors = context.soil.sample(&mut batch);
+    if soil_errors.total() > 0 {
+        log::warn!("soil sensor errors this cycle: {soil_errors:?}");
+    }
     if errors.total() > 0 {
         log::warn!("sensor errors this cycle: {errors:?}");
     }

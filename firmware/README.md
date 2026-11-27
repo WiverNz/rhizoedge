@@ -251,7 +251,7 @@ Use `--features bench-sensors` only for the M9 fake-sensor path. Configured
 channels publish at point `m9-bench`; scalar values are `uncalibrated`, leak is
 `null/fault`, and firmware status has a `-bench` suffix. These measurements are
 advisory and cannot establish safe sensor conditions for actuation. The default
-build still has no physical sensor adapters. Keep the pump disabled.
+build supports provisioned SEN0601 adapters as described below. Keep the pump disabled.
 
 `bench-accounting` additionally enables the pre-network serial command
 `bench seed-accounting`: it requires a disabled pump and no in-flight dose,
@@ -302,3 +302,54 @@ or supply `--partition-table firmware/esp32-node/partitions.csv
 The 192 KiB NVS partition is required for the durable ledger. Previously flashed
 boards using the default 24 KiB NVS require a preserved-state migration first;
 see M9 report §13. Never erase NVS to make saturation pass.
+
+
+## SEN0601 prototype configuration (M10-001)
+
+The same default `board-devkitm1` image selects soil adapters from local NVS
+provisioning. In the existing pre-network serial console, run:
+
+```text
+provision soil sen0601 1
+provision show
+provision commit
+```
+
+Reboot to apply. Omitted addresses default to `1`. For three sensors already
+assigned distinct addresses, use `provision soil sen0601 1 2 3`. The accepted
+range is 1–254, with at most three unique addresses. This selects polling
+addresses; it does **not** reprogram sensors. Assign each sensor its own address
+individually before sharing the bus (for example using FIT0737 independently).
+Use `provision soil fake 1` for host/bench development, or `provision soil none`
+to disable the adapters; commit and reboot after either. Invalid kinds and
+addresses are rejected, and old NVS records default to `none`. The legacy
+`bench-sensors` feature remains available; explicit soil provisioning replaces
+its soil samples. The no-peripheral `bench-virtual-actuator` profile cannot
+initialize a real UART and rejects `sen0601` at boot.
+
+The adapter uses UART1 at **9600 baud, 8N1** with DFR0845 automatic direction,
+function 03 and registers 0x0000–0x0002. Moisture and signed Celsius temperature
+are divided by ten; EC is µS/cm, per the
+[DFRobot SEN0601 register reference](https://wiki.dfrobot.com/sen0601/docs/21001).
+Transactions have a 300 ms response deadline and validate address, function,
+length and CRC. Errors publish null/fault for all three channels, never cached
+values. Existing telemetry cadence, MQTT topics, buffering and Edge ingestion
+are reused. Status capabilities and sample sensor IDs/points are `soil-1`,
+`soil-2`, etc., following the configured address. Bind plants to those IDs/points.
+Values are `uncalibrated`: manufacturer-scaled moisture uses the existing
+`vwc_percent` channel but is not soil-specific validated VWC; `calibrated=false`
+and no calibration reference is claimed. These advisory samples cannot satisfy
+an automatic-watering gate.
+
+Use always-on, externally powered sensors and transceiver for this prototype;
+this adapter does not enable switched power rails. Allow the probe to settle
+before judging measurements. Battery/duty-cycled sensor power is not verified.
+The existing board allocation is UART1 **TX GPIO18 / RX GPIO19**, not proof of
+actual wiring. UART pins are constructed only when `sen0601` is selected.
+Before connecting or powering hardware, verify board revision, actual pin
+assignments, 3.3 V logic, supply polarity and RS485 isolation. Keep pump power
+disconnected. No physical wiring, flash or real sensor measurements were verified
+as part of this software implementation.
+
+Focused hardware-free checks: in `firmware/node-app`, run
+`cargo test --lib sensors` and `cargo test --lib provision`.

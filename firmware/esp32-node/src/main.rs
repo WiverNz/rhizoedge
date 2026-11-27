@@ -156,6 +156,30 @@ fn main() {
 
     hal::console::before_network(&mut state, &mut nvs, &mut watchdog);
 
+    let soil_config = state.provisioning.soil.clone();
+    if let Err(error) = soil_config.validate() {
+        log::error!("soil configuration: {error}");
+        halt();
+    }
+    let bus = if soil_config.kind == "sen0601" {
+        match board.soil_bus.take().map(|factory| factory()) {
+            Some(Ok(bus)) => Some(bus),
+            _ => {
+                log::error!("SEN0601 UART unavailable on this board profile");
+                halt();
+            }
+        }
+    } else {
+        None
+    };
+    let mut soil = match rhizo_node_app::sensors::SoilAdapters::new(soil_config, bus) {
+        Ok(soil) => soil,
+        Err(error) => {
+            log::error!("soil adapter: {error}");
+            halt();
+        }
+    };
+
     // ---------------------------------------------------------------- STEP 6
     // Network. Everything above this line has already happened whether or not
     // there is a router in the building.
@@ -240,6 +264,7 @@ fn main() {
         };
 
         let mut context = run::Context {
+            soil: &mut soil,
             state: &mut state,
             nvs: &mut nvs,
             pump: &mut pump,

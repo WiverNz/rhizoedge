@@ -20,4 +20,6 @@ pub mod rail;
 pub mod rng;
 pub mod rtc_store;
 pub mod sleep;
+#[cfg(not(feature = "bench-virtual-actuator"))]
+pub mod soil_bus;
 pub mod watchdog;

@@ -104,11 +104,14 @@ pub trait BoardProfile: Sized {
     fn take(peripherals: Peripherals) -> Result<Board<Self>, esp_idf_sys::EspError>;
 }
 
-/// Everything a board hands upward.
-///
-/// Note what is **not** here: no pin numbers, no polarity, no peripheral
-/// handles. Consumers get behaviour.
+/// Deferred construction keeps UART pins untouched in fake/absent modes.
+pub type SoilBusFactory =
+    Box<dyn FnOnce() -> Result<Box<rhizo_node_app::sensors::Exchange>, esp_idf_sys::EspError>>;
+
+/// Everything a board hands upward: constructed behavior, not pin assignments.
 pub struct Board<P: BoardProfile> {
+    /// Board-owned UART construction, invoked only for a configured real sensor.
+    pub soil_bus: Option<SoilBusFactory>,
     /// The pump, de-energised.
     pub pump: P::Pump,
     /// The sensor supply, where this board has one.

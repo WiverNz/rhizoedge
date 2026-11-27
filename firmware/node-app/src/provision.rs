@@ -142,6 +142,27 @@ impl Console {
                 }
                 None => ConsoleResponse::Unknown(trimmed.to_owned()),
             },
+            Some("soil") => {
+                let kind = parts.next().unwrap_or("");
+                let addresses = parts.map(str::parse::<u8>).collect::<Result<Vec<_>, _>>();
+                let Ok(mut addresses) = addresses else {
+                    return ConsoleResponse::Unknown(
+                        "soil addresses must be integers in 1..=254".into(),
+                    );
+                };
+                if addresses.is_empty() {
+                    addresses.push(1);
+                }
+                let config = crate::sensors::SoilConfig {
+                    kind: kind.into(),
+                    addresses,
+                };
+                if let Err(error) = config.validate() {
+                    return ConsoleResponse::Unknown(error.into());
+                }
+                self.staged.soil = config;
+                ConsoleResponse::Staged("soil (takes effect on reboot)".into())
+            }
             Some("show") => ConsoleResponse::Shown(self.redacted()),
             Some("commit") => {
                 state.provisioning = self.staged.clone();
@@ -161,13 +182,15 @@ impl Console {
             if value.is_some() { "<set>" } else { "<unset>" }
         }
         format!(
-            "device-id {}\nwifi_ssid {}\nwifi_psk {}\nmqtt_host {}\nmqtt_user {}\nmqtt_pass {}",
+            "device-id {}\nwifi_ssid {}\nwifi_psk {}\nmqtt_host {}\nmqtt_user {}\nmqtt_pass {}\nsoil {} {:?}",
             shown(self.staged.device_id.as_ref()),
             shown(self.staged.wifi_ssid.as_ref()),
             hidden(self.staged.wifi_psk.as_ref()),
             shown(self.staged.mqtt_host.as_ref()),
             shown(self.staged.mqtt_user.as_ref()),
             hidden(self.staged.mqtt_pass.as_ref()),
+            self.staged.soil.kind,
+            self.staged.soil.addresses,
         )
     }
 }

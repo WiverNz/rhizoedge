@@ -9,7 +9,8 @@
 //!
 //! # The pin plan (2026-10-23)
 //!
-//! This profile **constructs** only GPIO5, 6 and 7 today. The rest of the table
+//! This profile constructs GPIO5, 6 and 7 at boot; configured SEN0601 also
+//! constructs UART1 on GPIO18/19. The rest of the table
 //! is the permanent allocation the later adapters must use, so that every
 //! peripheral below can be wired at once with no replugging and no second
 //! profile. Rationale, datasheet references and wiring are in
@@ -133,7 +134,32 @@ impl BoardProfile for Devkitm1 {
             RS485_RAIL_GPIO,
         )?;
 
+        let soil_bus: super::SoilBusFactory = Box::new(move || {
+            use esp_idf_hal::{
+                gpio::AnyIOPin,
+                uart::{
+                    config::{Config, DataBits, StopBits},
+                    UartDriver,
+                },
+                units::Hertz,
+            };
+            // Existing board allocation, NOT evidence of verified physical wiring.
+            let uart = UartDriver::new(
+                peripherals.uart1,
+                pins.gpio18,
+                pins.gpio19,
+                None::<AnyIOPin>,
+                None::<AnyIOPin>,
+                &Config::default()
+                    .baudrate(Hertz(9600))
+                    .data_bits(DataBits::DataBits8)
+                    .parity_none()
+                    .stop_bits(StopBits::STOP1),
+            )?;
+            Ok(crate::hal::soil_bus::exchange(uart))
+        });
         Ok(Board {
+            soil_bus: Some(soil_bus),
             pump,
             sensor_rail: Some(sensor_rail),
             rs485_rail: Some(rs485_rail),

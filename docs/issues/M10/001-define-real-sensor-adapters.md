@@ -1,6 +1,6 @@
 # Issue M10-001 — Define the real sensor adapter structure
 
-> **Execution scope, 2026-11-22:** **Status: PLANNED — prototype slice.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
+> **Execution scope, 2026-11-22:** **Status: IMPLEMENTED — software prototype; physical verification pending.** Apply the current milestone PRD prototype scope and [testing policy](../../testing/strategy.md). Only relevant tests and a basic smoke are required; extended campaigns below are backlog reference, not mandatory local reruns. See [ROADMAP](../../../ROADMAP.md).
 
 
 **Milestone:** M10 · **PRD:** [PRD 100](../../prd/100-real-soil-sensor.md) · **Depends on:** M9-005, M9-010, M9-012
@@ -21,9 +21,20 @@ Establish the adapter selection mechanism.
 - The `SoilSensor` trait **unchanged** from M9
 - Fake adapters retained for host tests
 
+## Implemented prototype slice
+
+Runtime NVS provisioning selects absent, fake or SEN0601 soil adapters without
+changing `SoilSensor`. The requested slice also implements SEN0601 function-03
+reads, CRC/frame validation, signed temperature decoding, and up to three unique
+addresses on the board UART. Existing telemetry/MQTT paths carry stable sensor
+IDs and points; measurements remain uncalibrated. See the
+[firmware configuration instructions](../../../firmware/README.md#sen0601-prototype-configuration-m10-001).
+Focused host tests and the ESP32 release build pass. Wiring and real measurements
+remain unverified; this does not close M10's physical acceptance criteria.
+
 ## Non-goals
 
-- The adapters themselves (M10-004, M10-005).
+- Generic register maps, analogue adapters, calibration campaigns and pump control.
 
 ## Dependencies
 
@@ -39,15 +50,17 @@ architecture or treating zero Edge changes as an acceptance gate.
 
 ## Acceptance criteria
 
-- [ ] Sensor kind is configuration-selected.
-- [ ] The trait is unchanged from M9.
-- [ ] Fakes still work for host tests.
-- [ ] An unknown kind fails at startup with a clear message.
+- [x] Sensor kind is configuration-selected.
+- [x] The trait is unchanged from M9.
+- [x] Fakes still work for host tests.
+- [x] An unknown kind fails at startup with a clear message.
 
 ## Verification
 
 ```bash
-cd firmware/esp32-node && cargo test sensors::factory
+cd firmware/node-app
+cargo test --lib sensors
+cargo test --lib provision
 ```
 
 ## Tests required
@@ -57,10 +70,11 @@ cd firmware/esp32-node && cargo test sensors::factory
 
 ## Documentation impact
 
-- None.
+- Firmware README: serial configuration and physical-verification limits.
 
 ## Files likely affected
 
 ```text
-firmware/esp32-node/src/sensors/factory.rs
+firmware/node-app/src/sensors.rs
+firmware/esp32-node/src/hal/soil_bus.rs
 ```

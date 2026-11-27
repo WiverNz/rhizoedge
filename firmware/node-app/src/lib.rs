@@ -83,6 +83,7 @@ pub mod power;
 pub mod provision;
 pub mod recovery;
 pub mod sampling;
+pub mod sensors;
 pub mod telemetry;
 
 /// The firmware version reported in `device.status`.

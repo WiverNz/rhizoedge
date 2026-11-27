@@ -25,6 +25,9 @@ use crate::ledger::PendingLedger;
 /// Credentials and identity written by serial provisioning (M9-006).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provisioning {
+    /// Local soil adapter selection; old NVS records retain absent-sensor behavior.
+    #[serde(default)]
+    pub soil: crate::sensors::SoilConfig,
     /// Explicit identity override; absent means derive from the MAC.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,

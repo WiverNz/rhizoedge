@@ -12,6 +12,7 @@ impl BoardProfile for Devkitm1 {
     const PROFILE: &'static str = "devkitm1-VIRTUAL-ACTUATOR-BENCH";
     fn take(peripherals: Peripherals) -> Result<Board<Self>, esp_idf_sys::EspError> {
         Ok(Board {
+            soil_bus: None,
             pump: VirtualPump::default(),
             sensor_rail: None,
             rs485_rail: None,
