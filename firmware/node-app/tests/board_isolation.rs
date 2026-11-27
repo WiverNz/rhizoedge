@@ -233,6 +233,43 @@ fn exactly_one_deep_sleep_call_site() {
     assert!(sites[0].starts_with("hal/sleep.rs:"), "{}", sites[0]);
 }
 
+// Sensor names are valid in adapter selection and diagnostics. The forbidden
+// value is a numeric warm-up assignment, including a typed constant.
+fn has_literal_warmup(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    let Some((_, rest)) = lower.split_once("warmup_ms") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let value = rest.strip_prefix('=').or_else(|| {
+        rest.strip_prefix(':').map(|value| {
+            value
+                .split_once('=')
+                .map_or(value, |(_, assigned)| assigned)
+        })
+    });
+    value.is_some_and(|value| value.trim_start().starts_with(|c: char| c.is_ascii_digit()))
+}
+
+#[test]
+fn warmup_scan_allows_adapter_names_but_rejects_literal_delays() {
+    for line in [
+        r#"let bus = if soil_config.kind == "sen0601" {"#,
+        r#"log::error!("SEN0601 UART unavailable on this board profile");"#,
+        "fn sample(warmup_ms: u32) {",
+        "let warmup_ms = config::sensor_warmup_ms(state);",
+    ] {
+        assert!(!has_literal_warmup(line), "allowed: {line}");
+    }
+    for line in [
+        "let warmup_ms = 2500;",
+        "warmup_ms: 2500,",
+        "const SEN0601_WARMUP_MS: u32 = 2500;",
+    ] {
+        assert!(has_literal_warmup(line), "forbidden: {line}");
+    }
+}
+
 /// F-090-56. No stabilisation constant for any specific sensor part.
 ///
 /// M10-011 measures the real figure for whatever probe is fitted; a hardcoded
@@ -243,19 +280,8 @@ fn no_hardcoded_sensor_warmup_constant() {
     let mut offences = Vec::new();
     for (path, text) in firmware_sources() {
         for (number, line) in code_lines(&text) {
-            let lower = line.to_ascii_lowercase();
-            if lower.contains("sen0601") {
-                offences.push(format!("{path}:{}: names a specific part", number + 1));
-            }
-            // `warmup_ms = 2500` or `warmup_ms: 2500` — a literal bound to the
-            // name. A parameter named `warmup_ms` is fine; a number is not.
-            if let Some(rest) = lower.split_once("warmup_ms").map(|(_, rest)| rest) {
-                let rest = rest.trim_start();
-                if let Some(value) = rest.strip_prefix(':').or_else(|| rest.strip_prefix('='))
-                    && value.trim_start().starts_with(|c: char| c.is_ascii_digit())
-                {
-                    offences.push(format!("{path}:{}: {}", number + 1, line.trim()));
-                }
+            if has_literal_warmup(line) {
+                offences.push(format!("{path}:{}: {}", number + 1, line.trim()));
             }
         }
     }
